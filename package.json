@@ -1,0 +1,54 @@
+{
+  "name": "print-agent",
+  "productName": "Print Agent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Windows x64 Electron print agent for the restaurant SaaS (outbound-only, ESC/POS).",
+  "type": "module",
+  "main": "./out/main/main.js",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -b tsconfig.node.json tsconfig.web.json",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "fuse:dev": "node scripts/flip-fuses.mjs",
+    "no-listen": "node scripts/no-listen-smoke.mjs"
+  },
+  "dependencies": {
+    "electron-log": "5.4.4",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@electron/fuses": "2.1.3",
+    "@swc/core": "1.16.20",
+    "@types/node": "24.19.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "6.1.2",
+    "electron": "45.0.0",
+    "electron-vite": "6.0.0",
+    "eslint": "10.13.0",
+    "prettier": "3.9.10",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.72.0",
+    "vite": "8.3.5",
+    "vitest": "5.0.5"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "electron",
+      "esbuild"
+    ]
+  }
+}
