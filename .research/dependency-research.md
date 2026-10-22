@@ -1,0 +1,84 @@
+# Dependency Research — Electron Print Agent (Windows x64, ESC/POS)
+
+Researched: 2026-10-22. Versions/licenses verified live against the npm registry (`npm view`), GitHub API, and unpkg. All data current as of this date.
+
+## Summary Table
+
+| # | Package | Latest ver | Last publish | License | Maintained? | Electron/Win notes | Verdict |
+|---|---------|-----------|--------------|---------|-------------|--------------------|---------|
+| 1 | electron | 45.0.0 | 2026-10-21 (mod.) | MIT | Yes (very active) | Bundles Chromium 152 + Node 24.x | Use; pin exact minor, stay within last 3 majors |
+| 2 | electron-builder | 26.15.3 | 2026-10-21 (mod.) | MIT | Yes | Runs @electron/rebuild automatically | Recommended for Windows installer + updater |
+| 2a | @electron/packager | 20.3.0 | 2026-08 (mod.) | BSD-2-Clause | Yes | Packaging only; no installer/updater | OK alternative, less complete |
+| 2b | @electron-forge/cli | 8.0.1 | 2026-09-29 | MIT | Yes | Official toolkit | OK alt. WARNING: npm name `electron-forge` is a stale 5.2.4 package (2022) — trap |
+| 3 | electron-updater | 6.8.9 | 2026-10-21 (mod.) | MIT | Yes | GHSA-9jxc-qjr9-vjxq (Win sig-verif bypass) fixed; v6.x+ verifies Ed25519-signed manifests | Use >= 6.6, code-sign your app, HTTPS update host |
+| 4 | node-thermal-printer | 4.6.1 | 2026-08-18 | ISC (npm) / MIT (repo LICENSE.md) | Yes (repo pushed 2026-08-24) | Transports: TCP (`tcp://ip:9100`), file/COM (`\\.\COMx`), `printer:` (requires injected driver module — `printer`/`electron-printer`, both dead). No built-in USB | Recommended ESC/POS engine (see notes) |
+| 5 | escpos / escpos-usb / escpos-network | 3.0.0-alpha.6 / .4 / .5 | ~2020 | MIT | NO — abandoned ~6 yrs | Stuck at v3 alphas; adapters split out and never stabilized | DO NOT USE |
+| 6 | usb (node-usb) | 3.2.1 | 2026-10-04 | MIT | Yes (repo pushed 2026-10-22) | v3 is N-API with prebuilt binaries — usually works in Electron with no rebuild; ia32 edge cases exist | Fine if direct-USB is required |
+| 7 | serialport | 13.0.0 | 2024-12-24 | MIT | Maintained, slow cadence (~22 mo since release) | N-API prebuilds since v10 — works in Electron without rebuild | Fine for serial/COM printers |
+| 8 | better-sqlite3 | 13.0.3 | 2026-08-05 | MIT | Yes | **v13.0.0 (Jul 2026) migrated to N-API**; prebuilds now bundled in the npm package, work across Node AND Electron without @electron/rebuild | Recommended store |
+| 8a | node:sqlite (built-in) | Node 24.x in Electron 45 | n/a | Node license | Node core | Available in Node >= 22.5 (experimental); unflagged since Node 23.4. Present in Electron 45's Node 24 — verify at runtime, still emits ExperimentalWarning | Viable zero-dependency fallback; not yet "stable" |
+| 8b | sql.js | (WASM SQLite) | n/a | MIT | Dormant-ish but WASM is frozen/stable | No native module at all | Fallback only (persistence code needed) |
+| 9 | ws | 8.22.0 | 2026-09-26 | MIT | Yes | Pure JS, zero issues. Alternative: Electron main has Node's built-in `fetch`/undici; raw `net` for TCP 9100 | Use ws for WS; use node `net` for raw TCP printing |
+| 10 | zod | 4.6.7 | 2026-10-12 | MIT | Yes (very active) | Pure JS | Recommended for job/IPC payload validation |
+| 11 | qrcode | 1.5.4 | 2024-08-05 | MIT | Stable/dormant (pure JS, feature-complete) | Pure JS | Fine. Note: node-thermal-printer can emit QR natively via ESC/POS `GS ( k` — often no PNG QR needed |
+| 11a | pngjs | 7.0.0 | 2023-02-20 | MIT | Dormant but tiny/stable pure JS | None | Fine for PNG encode/decode for `printImage()` |
+| 11b | sharp | 0.35.5 | 2026-09-27 | Apache-2.0 | Yes | Prebuilt N-API binaries via optional deps (`@img/sharp-win32-x64`); works in Electron; add `.node`/dlls to `asarUnpack`. Bundles libvips (LGPL-2.1+) as separate DLLs — LGPL OK for closed-source commercial via unmodified prebuilt DLLs | Heaviest option; only if you need fast image resize/dither |
+| 11c | @napi-rs/canvas | 1.0.13 | 2026-10-21 | MIT | Yes (very active) | Prebuilt N-API, zero system deps — best Electron packaging story of the canvas options | Recommended for rasterizing receipt layout → PNG |
+| 11d | canvas (node-canvas) | 3.2.3 | 2026-08-15 | MIT | Yes | Heavier; historically GTK-based native deps (v3 has prebuilds incl. Windows) | @napi-rs/canvas preferred |
+| 12 | electron-log | 5.4.4 | 2026-05-14 | MIT | Yes (cadence slowing but active) | Main+renderer logging, file rotation, IPC | Recommended |
+
+## Raw ESC/POS from Electron — verified answer
+
+**`webContents.print()` cannot send raw ESC/POS bytes.** Chromium's print pipeline rasterizes the page (GDI/XPS on Windows); the API accepts only `silent`, `deviceName`, margins, etc. — no byte passthrough. ([Electron webContents docs](https://electronjs.org/docs/latest/api/web-contents), [r/electronjs thread](https://www.reddit.com/r/electronjs/comments/uuc862/printing_directly_to_a_thermal_printer))
+
+Realistic paths, ranked for this project:
+
+1. **TCP 9100 direct (recommended for kitchen/EPSON-class printers)** — `node-thermal-printer` over `net` sockets. No drivers, no native modules, most restaurant kitchens are wired for 9100.
+2. **Windows spooler RAW passthrough** — `OpenPrinter` → `StartDocPrinter(pDatatype="RAW")` → `WritePrinter` → `EndPagePrinter` → `ClosePrinter`. Requires the printer installed on Windows with a driver that passes RAW (vendor ESC/POS driver or "Generic / Text Only").
+3. **Direct USB via `usb` (node-usb)** — claim interface + bulk OUT to the printer endpoint. Works but needs Vid/Pid handling, driver conflicts (WinUSB/Zadig or vendor driver ownership), and admin/USB permission edge cases.
+4. **Serial/COM via `serialport`** — for legacy COM-attached printers.
+
+### Windows-spooler npm options checked
+
+| Package | Status | License | Notes |
+|---------|--------|---------|-------|
+| `node-printer` | **Abandoned** — last publish 2022 (1.0.4), pre-N-API era | (unlisted) | Won't build against modern Electron without patches. DO NOT USE |
+| `@thiagoelg/node-printer` | **Abandoned** — 0.6.2, Apr 2022 fork | MIT | Same fate |
+| `pdf-to-printer` | Active — 5.8.1, 2026-08-30 | **MIT wrapper — but bundles `dist/SumatraPDF-3.4.6-32.exe`** | ⚠️ **GPLv3 flag**: SumatraPDF is GPLv3. Shipping its binary inside your commercial installer requires GPLv3 compliance for that binary (source offer; many legal teams treat bundling a GPLv3 exe in a proprietary app as unacceptable). Also: it prints PDFs/images, **not raw ESC/POS** — it is a raster path, not an ESC/POS path. A usable `sumatraPdfPath` option lets you point at your own legally-separated copy, but for receipts you don't want PDF→raster anyway |
+| `ipp` (Internet Printing Protocol) | Dormant — 2.0.1, 2022 | MIT | Only relevant for IPP-capable printers; skip |
+| Nothing maintained | — | — | **There is no maintained npm package calling the Win32 spooler RAW API.** If route 2 is required, write a ~50–100 line N-API addon (node-addon-api) or a tiny C# helper invoked via `child_process`. This is small, well-documented Win32 surface |
+
+### GPL/AGPL incompatibility flags (do not ship these)
+
+- **SumatraPDF (GPLv3)** — bundled inside `pdf-to-printer` (⚠️ see above). Either avoid the package entirely, or vendor/point to Sumatra separately with legal review.
+- **escpos ecosystem** — MIT, but abandoned (avoid for engineering, not license, reasons).
+
+## Key findings / notes
+
+1. **Electron support policy**: latest **3 stable majors** supported; new major every ~8 weeks (every other Chromium). Electron 42 EOL'd 2026-10-20; 43/44/45 currently supported. Plan a quarterly upgrade cadence in a commercial product. Sources: [Electron timelines](https://electronjs.org/docs/latest/tutorial/electron-timelines), [endoflife.date/electron](https://endoflife.date/electron).
+2. **electron-updater mechanics**: polls a `latest.yml` manifest (GitHub Releases, generic HTTPS, S3, Keygen), verifies Ed25519 manifest signature (new default in electron-builder 26) plus Windows Authenticode signature of the downloaded exe; supports differential blockmap downloads and staged rollouts. Historic vulnerability **GHSA-9jxc-qjr9-vjxq** (Jul 2024): Windows executable signature verification bypass — fixed in releases after that date. Requirements for production: code-signing certificate (SmartScreen), HTTPS-only feed, updater ≥ 6.6, `publisherName` configured. Sources: [GHSA-9jxc-qjr9-vjxq](https://github.com/advisories/GHSA-9jxc-qjr9-vjxq), [electron.build security](https://www.electron.build/docs/features/security).
+3. **node-thermal-printer is the best ESC/POS engine but is transport-incomplete**: escpos command generation (text, `printImage`, `qr`, `barcode`, `cut`, `cashDrawer`, beeps; Epson/Star/Tanca/Daruma/Brother/Custom) is solid and TypeScript-typed, releases are steady (4.6.0 Jan 2026, 4.6.1 Aug 2026). But the `printer:` connection delegates to an external driver module you must inject — and the conventional choices (`printer`, `electron-printer`) are dead. **Recommended architecture: node-thermal-printer for command generation + your own thin transport layer** (node `net` for TCP 9100; `serialport` for COM; optionally `usb`; optionally custom spooler-RAW addon). This is exactly what `setPrinterDriver()`/`driver:` is designed for.
+4. **Native modules are far less painful in 2026 than the folklore suggests**: `usb` v3, `serialport` ≥ 10, and `better-sqlite3` ≥ 13 are all N-API with prebuilds that work in Electron without `@electron/rebuild`. Keep `@electron/rebuild` + VS Build Tools in CI as the fallback for the ia32/edge cases and for `better-sqlite3` on platforms without prebuilds (it compiles on install). Source: [Electron native modules doc](https://electronjs.org/docs/latest/tutorial/using-native-node-modules).
+5. **`node:sqlite` is usable but not yet the safe default**: present and unflagged in Node 23.4+/24; Electron 45 ships Node 24, so it works — but it still emits an ExperimentalWarning and Electron availability should be smoke-tested at runtime. `better-sqlite3` v13 (N-API, bundled prebuilds, sync API, MIT, released Aug 2026) is the lower-risk production choice. Sources: [better-sqlite3 v13.0.0 release](https://github.com/WiseLibs/better-sqlite3/releases/tag/v13.0.0), [node:sqlite docs](https://nodejs.org/api/sqlite.html).
+6. **Receipt image rendering**: `@napi-rs/canvas` (MIT, prebuilt N-API, updated weekly-ish) is the packaging-cleanest way to render a receipt layout to PNG for `printImage()`. `sharp` (Apache-2.0) is fine license-wise and Electron-compatible but drags libvips DLLs into the asar-unpack surface — only worth it for heavy resize/dither work. `qrcode` (MIT) is dormant since Aug 2024 but pure-JS and feature-complete; prefer ESC/POS-native QR (`printer.qr()`) when the printer supports `GS ( k`.
+7. **electron-log 5.4.4** (MIT, May 2026) covers main/renderer/file rotation; slow but healthy cadence. No better maintained MIT alternative needed.
+8. **Do not use**: `escpos`/`escpos-*` (abandoned ~2020, stuck on v3 alphas), `node-printer` / `@thiagoelg/node-printer` (abandoned 2022, no N-API), the npm package literally named `electron-forge` (stale shadow of `@electron-forge/cli`), `ipp` (dormant).
+9. **Suggested dependency set**: `electron@45` + `electron-builder@26` + `electron-updater@6` + `node-thermal-printer@4` (commands) + own transports (`net`/`serialport@13`/`usb@3`) + optional tiny spooler-RAW N-API addon + `better-sqlite3@13` + `zod@4` + `ws@8` + `@napi-rs/canvas` + `electron-log@5`. **Zero GPL/AGPL, zero paid middleware.**
+
+## Sources
+
+- npm registry (live queries, 2026-10-22): registry.npmjs.org — versions, licenses, publish dates for all packages above
+- https://electronjs.org/docs/latest/tutorial/electron-timelines — support policy
+- https://endoflife.date/electron — EOL dates
+- https://electronjs.org/docs/latest/api/web-contents — print() API (no raw byte option)
+- https://electronjs.org/docs/latest/tutorial/using-native-node-modules — N-API/prebuild guidance
+- https://github.com/advisories/GHSA-9jxc-qjr9-vjxq — electron-updater Windows signature bypass (2024)
+- https://www.electron.build/docs/features/security — Ed25519-signed update manifests
+- https://github.com/Klemen1337/node-thermal-printer — transports, `printer:` driver injection (pushed 2026-08-24)
+- https://github.com/node-usb/node-usb — v3 N-API prebuilds (pushed 2026-10-22)
+- https://serialport.io/docs/guide-installation — N-API prebuilds, Electron support
+- https://github.com/WiseLibs/better-sqlite3/releases/tag/v13.0.0 — N-API migration, bundled prebuilds
+- https://unpkg.com/pdf-to-printer@5.8.1/ — file listing showing bundled `dist/SumatraPDF-3.4.6-32.exe`
+- https://github.com/sumatrapdfreader/sumatrapdf — SumatraPDF GPLv3 license
+- https://www.npmjs.com/package/escpos — last publish ~2020 (3.0.0-alpha.6)
+- https://www.reddit.com/r/electronjs/comments/uuc862/printing_directly_to_a_thermal_printer — community confirmation of Chromium rasterization
