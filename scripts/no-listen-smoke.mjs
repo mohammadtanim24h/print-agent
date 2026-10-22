@@ -19,14 +19,14 @@ function fail(message) {
 function electronPids() {
   const out = require('node:child_process').execSync(
     'tasklist /FI "IMAGENAME eq electron.exe" /FO CSV /NH',
-    { encoding: 'utf8' }
+    { encoding: 'utf8' },
   );
   return new Set(
     out
       .split(/\r?\n/)
       .filter((l) => l.startsWith('"electron.exe"'))
       .map((l) => l.split('","')[1])
-      .filter(Boolean)
+      .filter(Boolean),
   );
 }
 

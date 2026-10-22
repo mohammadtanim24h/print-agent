@@ -33,8 +33,7 @@ async function start(): Promise<void> {
 
   await app.whenReady();
 
-  const devServerUrl =
-    !app.isPackaged ? process.env['ELECTRON_RENDERER_URL'] : undefined;
+  const devServerUrl = !app.isPackaged ? process.env['ELECTRON_RENDERER_URL'] : undefined;
   if (!app.isPackaged && devServerUrl === undefined) {
     log.warn('dev mode without ELECTRON_RENDERER_URL; loading bundled files');
   }
@@ -42,15 +41,15 @@ async function start(): Promise<void> {
   const settings = await createSettingsStore({
     filePath: join(app.getPath('userData'), 'settings.json'),
     adapter: createNodeSettingsAdapter(),
-    report: (message) => log.warn(message),
+    report: (message) => {
+      log.warn(message);
+    },
   });
   applyLaunchAtLogin(app, settings.get().launchAtLogin);
 
-  const window = createMainWindow(
-    log,
-    devServerUrl !== undefined ? { devServerUrl } : {},
-    { shouldCloseToTray: () => !quitting }
-  );
+  const window = createMainWindow(log, devServerUrl !== undefined ? { devServerUrl } : {}, {
+    shouldCloseToTray: () => !quitting,
+  });
 
   const tray: TrayController = createTray({
     app,
@@ -58,22 +57,32 @@ async function start(): Promise<void> {
     setLaunchAtLogin: (enabled) => {
       void settings
         .set({ launchAtLogin: enabled })
-        .then(() => applyLaunchAtLogin(app, enabled))
-        .catch((error: unknown) => log.error('failed to persist launch-at-login', error));
+        .then(() => {
+          applyLaunchAtLogin(app, enabled);
+        })
+        .catch((error: unknown) => {
+          log.error('failed to persist launch-at-login', error);
+        });
     },
     showWindow: () => {
       window.show();
       window.focus();
     },
-    log: (message) => log.info(message),
+    log: (message) => {
+      log.info(message);
+    },
   });
 
   // Trust boundary: only our own bundled/dev-server renderer may call IPC.
   const filePrefix = `file:///${app.getAppPath().replace(/\\/g, '/').replace(/\/+$/, '')}/`;
   const guard = createSenderGuard({
     allowedUrlPrefixes:
-      devServerUrl !== undefined ? [`${devServerUrl.replace(/\/+$/, '')}/`, filePrefix] : [filePrefix],
-    log: (message) => log.warn(message),
+      devServerUrl !== undefined
+        ? [`${devServerUrl.replace(/\/+$/, '')}/`, filePrefix]
+        : [filePrefix],
+    log: (message) => {
+      log.warn(message);
+    },
   });
 
   const router = createIpcRouter({
@@ -93,20 +102,24 @@ async function start(): Promise<void> {
         log.info('launch-at-login changed', { enabled });
         return next;
       },
-      [Channel.HideWindow]: () => window.hide(),
+      [Channel.HideWindow]: () => {
+        window.hide();
+      },
       [Channel.QuitApp]: () => {
         log.info('quit requested from renderer');
         app.quit();
       },
     },
-    log: (message) => log.warn(message),
+    log: (message) => {
+      log.warn(message);
+    },
   });
 
   for (const channel of Object.values(Channel)) {
     ipcMain.handle(channel, (event, payload: unknown) =>
       router.dispatch(channel, payload, {
         senderFrame: event.senderFrame ? { url: event.senderFrame.url } : null,
-      })
+      }),
     );
   }
 
@@ -128,4 +141,3 @@ async function start(): Promise<void> {
     launchAtLogin: settings.get().launchAtLogin,
   });
 }
-

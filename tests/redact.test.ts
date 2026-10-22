@@ -7,27 +7,21 @@ describe('redactString', () => {
   });
 
   it('redacts JWTs standalone', () => {
-    expect(redactString('eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig_nonce')).toBe(
-      '[REDACTED:token]'
-    );
+    expect(redactString('eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig_nonce')).toBe('[REDACTED:token]');
   });
 
   it('redacts key-ish JSON fields with values', () => {
     expect(redactString('{"deviceKey":"a1b2c3","password":"hunter2"}')).toBe(
-      '{[REDACTED:field]:[REDACTED:value],[REDACTED:field]:[REDACTED:value]}'
+      '{[REDACTED:field]:[REDACTED:value],[REDACTED:field]:[REDACTED:value]}',
     );
   });
 
   it('redacts email addresses (PII)', () => {
-    expect(redactString('contact john.doe@example.co.uk now')).toBe(
-      'contact [REDACTED:email] now'
-    );
+    expect(redactString('contact john.doe@example.co.uk now')).toBe('contact [REDACTED:email] now');
   });
 
   it('redacts long hex secrets', () => {
-    expect(redactString('key=0123456789abcdef0123456789abcdef')).toBe(
-      'key=[REDACTED:hex-secret]'
-    );
+    expect(redactString('key=0123456789abcdef0123456789abcdef')).toBe('key=[REDACTED:hex-secret]');
   });
 
   it('leaves normal receipt text untouched', () => {
@@ -37,7 +31,7 @@ describe('redactString', () => {
 
   it('leaves ordinary technical strings untouched', () => {
     expect(redactString('wss://saas.example.com/api/agent/ws')).toBe(
-      'wss://saas.example.com/api/agent/ws'
+      'wss://saas.example.com/api/agent/ws',
     );
   });
 });

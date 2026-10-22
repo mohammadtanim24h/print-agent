@@ -23,22 +23,22 @@ rejected, not ignored, within `data` payloads (envelope may gain additive fields
 ```jsonc
 {
   "envelope_version": 1,
-  "type": "print_job",          // | "config_update" | "revoke" | "ping"
+  "type": "print_job", // | "config_update" | "revoke" | "ping"
   "job": {
-    "job_id": "018f3c2e-...",          // uuidv7
+    "job_id": "018f3c2e-...", // uuidv7
     "idempotency_key": "ord_8842-receipt-1",
     "tenant_id": "018f...",
     "restaurant_id": "018f...",
-    "printer_id": "018f...",           // must be bound to this agent
-    "priority": 5,                     // 1 (highest) .. 9; kitchen tickets typically 1-2
-    "copies": 1,                       // 1..4
-    "doc_type": "customer_receipt",    // | "kitchen_ticket" | "bar_ticket" | "station_ticket"
+    "printer_id": "018f...", // must be bound to this agent
+    "priority": 5, // 1 (highest) .. 9; kitchen tickets typically 1-2
+    "copies": 1, // 1..4
+    "doc_type": "customer_receipt", // | "kitchen_ticket" | "bar_ticket" | "station_ticket"
     "doc_version": 1,
     "issued_at": "2026-10-22T10:00:00Z",
     "expires_at": "2026-10-22T10:10:00Z",
-    "payload": { /* doc model v1, §4 — structured, never raw ESC/POS bytes */ }
+    "payload": {/* doc model v1, §4 — structured, never raw ESC/POS bytes */},
   },
-  "sig": "base64url(ed25519(server-signing-key, canonical_json(job)))"
+  "sig": "base64url(ed25519(server-signing-key, canonical_json(job)))",
 }
 ```
 
@@ -93,14 +93,14 @@ strips/escapes any bytes in `0x00–0x1F` and `0x7F` before ESC/POS encoding (T2
 
 **Semantic contract (normative):**
 
-| Ack status | Server UI wording | Meaning |
-|---|---|---|
-| `accepted` | "Queued on device" | Stored durably on the agent |
-| `rejected` | "Rejected by device" | Failed validation/expiry/scope; never prints |
-| `sent_to_printer` | "Sent to printer" | Bytes handed to transport — **no print guarantee** |
-| `completed` | "Sent to printer" (✓ hand-off) | Driver/OS accepted the job. **Not "printed"** |
-| `failed` | "Failed" | Terminal after bounded retries; manual reprint available |
-| `ambiguous` | "Outcome unknown — verify" | Crash/timeout window; operator resolves or policy reprints |
+| Ack status        | Server UI wording              | Meaning                                                    |
+| ----------------- | ------------------------------ | ---------------------------------------------------------- |
+| `accepted`        | "Queued on device"             | Stored durably on the agent                                |
+| `rejected`        | "Rejected by device"           | Failed validation/expiry/scope; never prints               |
+| `sent_to_printer` | "Sent to printer"              | Bytes handed to transport — **no print guarantee**         |
+| `completed`       | "Sent to printer" (✓ hand-off) | Driver/OS accepted the job. **Not "printed"**              |
+| `failed`          | "Failed"                       | Terminal after bounded retries; manual reprint available   |
+| `ambiguous`       | "Outcome unknown — verify"     | Crash/timeout window; operator resolves or policy reprints |
 
 The contract deliberately has **no `printed: true`** in v1. If physical-print
 confirmation is later added (printer-dependent DLE EOT / ASB), it arrives as an
@@ -110,25 +110,29 @@ overloading `completed`.
 ### 3.2 Heartbeat (WSS, every 30 s ± jitter)
 
 ```jsonc
-{ "type": "heartbeat", "agent_version": "1.4.2", "uptime_s": 8452,
-  "queue_depth": 2, "connection": "wss",
-  "printers": [ { "printer_id": "018f...", "health": "ok",
-                  "last_print_at": "...?" } ] }
+{
+  "type": "heartbeat",
+  "agent_version": "1.4.2",
+  "uptime_s": 8452,
+  "queue_depth": 2,
+  "connection": "wss",
+  "printers": [{ "printer_id": "018f...", "health": "ok", "last_print_at": "...?" }],
+}
 ```
 
 Missed heartbeats (≥ 3) mark the agent `offline` server-side.
 
 ### 3.3 REST endpoints (fallback + control plane)
 
-| Method | Path | Purpose |
-|---|---|---|
-| `POST` | `/pair` | Exchange pairing code (once, pre-token) |
-| `POST` | `/token/refresh` | Rotate device token |
-| `GET` | `/jobs?since=<cursor>&limit=100` | Fallback long-poll/pull of pending jobs |
-| `POST` | `/acks` | Batch acks (idempotent, keyed by `job_id`+`attempt`) |
-| `GET` | `/config` | Printer/station config snapshot + `config_version` |
-| `POST` | `/diagnostics` | Upload redacted log bundle (support-initiated, agent-user-confirmed) |
-| `GET` | `/server-keys` | Current server signing public key(s), pinned at pairing |
+| Method | Path                             | Purpose                                                              |
+| ------ | -------------------------------- | -------------------------------------------------------------------- |
+| `POST` | `/pair`                          | Exchange pairing code (once, pre-token)                              |
+| `POST` | `/token/refresh`                 | Rotate device token                                                  |
+| `GET`  | `/jobs?since=<cursor>&limit=100` | Fallback long-poll/pull of pending jobs                              |
+| `POST` | `/acks`                          | Batch acks (idempotent, keyed by `job_id`+`attempt`)                 |
+| `GET`  | `/config`                        | Printer/station config snapshot + `config_version`                   |
+| `POST` | `/diagnostics`                   | Upload redacted log bundle (support-initiated, agent-user-confirmed) |
+| `GET`  | `/server-keys`                   | Current server signing public key(s), pinned at pairing              |
 
 ### 3.4 Pairing flow
 

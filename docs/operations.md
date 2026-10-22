@@ -31,13 +31,13 @@ Site network prerequisites: outbound TCP 443 (wss+https) to `*.saas-host`; outbo
 
 ## 3. Updates
 
-| Aspect | Policy |
-|---|---|
-| Channel | Stable only; staged rollout 5% → 25% → 100% over 72 h |
-| Feed | HTTPS feed, append-only `latest.yml`, publisher-signed installer |
-| Downgrades | Refused by agent (T6) |
-| Kill switch | Feed can pin `max_version`; support can freeze a broken release |
-| Pre-req | Electron major upgrades (8-week cadence) tested against our contract test suite before release-train inclusion |
+| Aspect      | Policy                                                                                                         |
+| ----------- | -------------------------------------------------------------------------------------------------------------- |
+| Channel     | Stable only; staged rollout 5% → 25% → 100% over 72 h                                                          |
+| Feed        | HTTPS feed, append-only `latest.yml`, publisher-signed installer                                               |
+| Downgrades  | Refused by agent (T6)                                                                                          |
+| Kill switch | Feed can pin `max_version`; support can freeze a broken release                                                |
+| Pre-req     | Electron major upgrades (8-week cadence) tested against our contract test suite before release-train inclusion |
 
 Rollback procedure: kill switch to previous manifest + silent reinstall of prior
 signed installer (downgrade-guard override is a support-tool flag, never a default).
@@ -45,11 +45,13 @@ signed installer (downgrade-guard override is a support-tool flag, never a defau
 ## 4. Diagnostics & support runbooks
 
 ### 4.1 Diagnostics surface (local UI)
+
 Tray menu: agent status, connection state, queue depth, per-printer last outcome,
 "Export diagnostics bundle" (zip: redacted logs, config snapshot without secrets,
 recent 50 job outcomes, OS/print-driver inventory). Upload is user-confirmed.
 
 ### 4.2 Runbook: printer not printing
+
 1. Web app: job status? `failed` → error code; `sent_to_printer` stuck → §4.3;
    `ambiguous` → resolve prompt.
 2. Agent tray → printer health; run Test print.
@@ -59,6 +61,7 @@ recent 50 job outcomes, OS/print-driver inventory). Upload is user-confirmed.
 6. Collect diagnostics bundle → attach to ticket.
 
 ### 4.3 Runbook: jobs stuck in "sent_to_printer" / duplicated
+
 - Known physical ambiguity (PRD G8): a stuck `sent_to_printer` with a healthy printer
   usually means paper-out mid-stream — check printer, use manual reprint.
 - Duplicates: capture job `idempotency_key` + `attempt` values from the web app job
@@ -66,25 +69,27 @@ recent 50 job outcomes, OS/print-driver inventory). Upload is user-confirmed.
   diagnostics bundle.
 
 ### 4.4 Runbook: compromised/lost device
+
 1. Web app → Agents → **Revoke** (immediate server-side enforcement).
 2. If device returns: fresh install + re-pair; local wipe happens on next connect of
    the old install (or uninstall manually).
 3. Rotate nothing on the SaaS side beyond the agent identity (tenants are unaffected).
 
 ### 4.5 Runbook: restaurant network blocks WSS
+
 - Fallback REST polling engages automatically (60 s interval, degraded latency).
 - Ask site IT to allow outbound 443 to the SaaS host; proxy with TLS interception is
   unsupported for WSS (cert pinning) — REST polling still works.
 
 ## 5. Monitoring (SaaS side)
 
-| Signal | Alert |
-|---|---|
-| Agent heartbeat absent ≥ 5 min | Warn (per agent) |
-| `failed` ack rate > 5% / 15 min per restaurant | Page |
-| `ambiguous` rate > 2% | Page (indicates crashes/power loss) |
-| Queue age (issued → accepted) > 60 s with agent online | Warn |
-| Token-refresh conflicts (possible theft, T1) | Immediate revoke + notify |
+| Signal                                                 | Alert                               |
+| ------------------------------------------------------ | ----------------------------------- |
+| Agent heartbeat absent ≥ 5 min                         | Warn (per agent)                    |
+| `failed` ack rate > 5% / 15 min per restaurant         | Page                                |
+| `ambiguous` rate > 2%                                  | Page (indicates crashes/power loss) |
+| Queue age (issued → accepted) > 60 s with agent online | Warn                                |
+| Token-refresh conflicts (possible theft, T1)           | Immediate revoke + notify           |
 
 ## 6. Build & release checklist
 

@@ -3,7 +3,9 @@ import type { TypedError } from '../../shared/errors';
 export class ListenForbiddenError extends Error implements TypedError {
   readonly code = 'LISTEN_FORBIDDEN';
   constructor() {
-    super('Inbound listeners are forbidden (PRD AC-4, architecture.md §8: "Nothing listens. Ever.")');
+    super(
+      'Inbound listeners are forbidden (PRD AC-4, architecture.md §8: "Nothing listens. Ever.")',
+    );
     this.name = 'ListenForbiddenError';
   }
 }

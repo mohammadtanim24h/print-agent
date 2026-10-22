@@ -35,7 +35,8 @@ const MAX_INPUT_LENGTH = 1024 * 1024;
 const MAX_DEPTH = 8;
 
 export function redactString(input: string): string {
-  let out = input.length > MAX_INPUT_LENGTH ? input.slice(0, MAX_INPUT_LENGTH) + REDACTED.truncated : input;
+  let out =
+    input.length > MAX_INPUT_LENGTH ? input.slice(0, MAX_INPUT_LENGTH) + REDACTED.truncated : input;
   for (const [re, replacement] of STRING_PATTERNS) {
     out = out.replace(re, replacement);
   }

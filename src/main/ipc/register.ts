@@ -11,7 +11,7 @@ export interface IpcRouter {
   dispatch(
     channel: string,
     payload: unknown,
-    sender: { readonly senderFrame?: { readonly url: string } | null }
+    sender: { readonly senderFrame?: { readonly url: string } | null },
   ): Promise<unknown>;
 }
 
@@ -27,7 +27,7 @@ export function createIpcRouter(options: {
   /** Exact channel -> request schema map (from shared/ipc-contract). */
   schemas: Readonly<Record<string, ZodType>>;
   /** Exact channel -> handler. Channels with a schema but no handler reject. */
-  handlers: Readonly<Record<string, (payload: never) => Promise<unknown> | unknown>>;
+  handlers: Readonly<Record<string, (payload: never) => unknown>>;
   /** Rejection sink (redacted logger); payloads are never logged. */
   log?: (message: string) => void;
 }): IpcRouter {

@@ -11,7 +11,7 @@ import type { Logger } from './services/logger/logger';
 export function createMainWindow(
   log: Logger,
   env: { readonly devServerUrl?: string },
-  lifecycle: { readonly shouldCloseToTray: () => boolean }
+  lifecycle: { readonly shouldCloseToTray: () => boolean },
 ): BrowserWindow {
   const preloadPath = join(__dirname, '../preload/index.cjs');
   const window = new BrowserWindow(getWindowOptions(preloadPath, env));
@@ -20,7 +20,10 @@ export function createMainWindow(
   // the renderer's index.html carries the same policy as a <meta> tag.
   window.webContents.session.webRequest.onHeadersReceived((details, callback) => {
     callback({
-      responseHeaders: { ...details.responseHeaders, 'Content-Security-Policy': [getCsp()] },
+      responseHeaders: {
+        ...details.responseHeaders,
+        'Content-Security-Policy': [getCsp({ dev: env.devServerUrl !== undefined })],
+      },
     });
   });
 
@@ -38,7 +41,9 @@ export function createMainWindow(
     return { action: 'deny' };
   });
 
-  window.once('ready-to-show', () => window.show());
+  window.once('ready-to-show', () => {
+    window.show();
+  });
 
   window.on('close', (event) => {
     // Minimize-to-tray: closing the window must not stop the core process.

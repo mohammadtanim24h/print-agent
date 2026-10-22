@@ -12,18 +12,24 @@ export function App(): React.JSX.Element {
     void window.printAgent
       .getAgentInfo()
       .then(setInfo)
-      .catch((e: unknown) => setError(String(e)));
+      .catch((e: unknown) => {
+        setError(String(e));
+      });
     void window.printAgent
       .getSettings()
       .then(setSettings)
-      .catch((e: unknown) => setError(String(e)));
+      .catch((e: unknown) => {
+        setError(String(e));
+      });
   }, []);
 
   const toggleLaunchAtLogin = (enabled: boolean): void => {
     void window.printAgent
       .setLaunchAtLogin(enabled)
       .then(setSettings)
-      .catch((e: unknown) => setError(String(e)));
+      .catch((e: unknown) => {
+        setError(String(e));
+      });
   };
 
   return (
@@ -52,7 +58,9 @@ export function App(): React.JSX.Element {
             <input
               type="checkbox"
               checked={settings.launchAtLogin}
-              onChange={(e) => toggleLaunchAtLogin(e.target.checked)}
+              onChange={(e) => {
+                toggleLaunchAtLogin(e.target.checked);
+              }}
             />
             Start Print Agent when I log in
           </label>

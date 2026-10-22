@@ -45,18 +45,18 @@ port on the cashier PC — not even on localhost — so nothing on the LAN can c
 
 ## 2. Technology choices (evidence in `adr.md` + `.research/`)
 
-| Concern | Choice | Alternative rejected / deferred |
-|---|---|---|
-| Shell | Electron 45 (MIT) — Node 24 runtime, mature auto-update, USB/serial access | Tauri (WebView2 variance, weaker native-module story for usb/serial); plain Node service (no local UI) |
-| ESC/POS generation | `node-thermal-printer` 4.x (MIT, active Aug 2026) for byte generation | `escpos`* packages (abandoned ~2020, alphas only) |
-| Transports | Own thin adapters: Node `net` (TCP 9100), custom Win32 spooler-RAW N-API shim (~100 lines, `OpenPrinter→StartDocPrinter("RAW")→WritePrinter`), `usb` 3.x (v1.1) | No maintained npm package wraps Win32 RAW spooler (verified); `pdf-to-printer` bundles GPLv3 SumatraPDF → **license-incompatible, rejected** |
-| Local store | `better-sqlite3` 13.x (MIT, N-API prebuilds — no electron-rebuild) | `sql.js` (WASM, slower, no true durability guarantees) |
-| Schema validation | `zod` 4.x at every trust boundary (WS messages, IPC, config files) | Hand-rolled validators (error-prone) |
-| Socket | `ws` 8.x (MIT) client in main process | Browser WebSocket in renderer (breaks isolation) |
-| Packaging/update | `electron-builder` 26.x + `electron-updater` (signed) | `@electron/forge` (equivalent viable; builder chosen for auto-update maturity) |
-| Images (logo/QR preview) | `@napi-rs/canvas` + `qrcode` | `sharp` (heavier native deps), `node-canvas` (build friction) |
-| Virtual printer | `escpos-emulator` (MIT, 2026): TCP :9100 + REST for assertions | USB device emulation (not CI-feasible; optional Pi-Zero gadget for manual smoke tests) |
-| Logging | `electron-log` (MIT) structured + rotation | — |
+| Concern                  | Choice                                                                                                                                                          | Alternative rejected / deferred                                                                                                              |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Shell                    | Electron 45 (MIT) — Node 24 runtime, mature auto-update, USB/serial access                                                                                      | Tauri (WebView2 variance, weaker native-module story for usb/serial); plain Node service (no local UI)                                       |
+| ESC/POS generation       | `node-thermal-printer` 4.x (MIT, active Aug 2026) for byte generation                                                                                           | `escpos`* packages (abandoned ~2020, alphas only)                                                                                            |
+| Transports               | Own thin adapters: Node `net` (TCP 9100), custom Win32 spooler-RAW N-API shim (~100 lines, `OpenPrinter→StartDocPrinter("RAW")→WritePrinter`), `usb` 3.x (v1.1) | No maintained npm package wraps Win32 RAW spooler (verified); `pdf-to-printer` bundles GPLv3 SumatraPDF → **license-incompatible, rejected** |
+| Local store              | `better-sqlite3` 13.x (MIT, N-API prebuilds — no electron-rebuild)                                                                                              | `sql.js` (WASM, slower, no true durability guarantees)                                                                                       |
+| Schema validation        | `zod` 4.x at every trust boundary (WS messages, IPC, config files)                                                                                              | Hand-rolled validators (error-prone)                                                                                                         |
+| Socket                   | `ws` 8.x (MIT) client in main process                                                                                                                           | Browser WebSocket in renderer (breaks isolation)                                                                                             |
+| Packaging/update         | `electron-builder` 26.x + `electron-updater` (signed)                                                                                                           | `@electron/forge` (equivalent viable; builder chosen for auto-update maturity)                                                               |
+| Images (logo/QR preview) | `@napi-rs/canvas` + `qrcode`                                                                                                                                    | `sharp` (heavier native deps), `node-canvas` (build friction)                                                                                |
+| Virtual printer          | `escpos-emulator` (MIT, 2026): TCP :9100 + REST for assertions                                                                                                  | USB device emulation (not CI-feasible; optional Pi-Zero gadget for manual smoke tests)                                                       |
+| Logging                  | `electron-log` (MIT) structured + rotation                                                                                                                      | —                                                                                                                                            |
 
 ## 3. Module boundaries (main process)
 
@@ -65,6 +65,7 @@ communicate via injected interfaces or an in-process event bus — never via amb
 requires reaching into another module's internals.
 
 ### 3.1 `cloud-client`
+
 - Owns the outbound `wss` connection (with exponential-backoff reconnect + jitter),
   REST fallback polling, TLS, auth token attach/rotation, and outbound/inbound message
   schema validation (zod).
@@ -72,6 +73,7 @@ requires reaching into another module's internals.
 - Exposes: `send(msg)`, `connectionState$`. Knows nothing about printing.
 
 ### 3.2 `job-engine`
+
 - The state machine owner (§5). Consumes `job.received`; validates + persists jobs in
   `local-store`; schedules execution; invokes `renderer` then `transport-registry`;
   records transitions; reports acks via `cloud-client`.
@@ -80,12 +82,14 @@ requires reaching into another module's internals.
   moved to `ambiguous`), and duplicate-reprint policy.
 
 ### 3.3 `renderer`
+
 - Pure function: validated doc model (JSON) → ESC/POS command stream (Buffer) via
   `node-thermal-printer`, plus a preview (raster via `@napi-rs/canvas`) for the local UI.
 - Doc version v1 only; unknown versions rejected upstream. Deterministic, unit-testable,
   no I/O except reading logo assets from the local store.
 
 ### 3.4 `transport-registry` + transports
+
 - `Transport` interface: `open()`, `write(bytes)`, `status?()` (best-effort DLE EOT),
   `close()`, `healthCheck()`. `write()` resolves on kernel/driver acceptance — this is
   by definition "sent to printer", never "physically printed".
@@ -98,25 +102,30 @@ requires reaching into another module's internals.
   virtual printer.
 
 ### 3.5 `local-store`
+
 - SQLite (WAL mode) via `better-sqlite3`. Tables: `jobs`, `printers` (cached config),
   `identity` (device keys, tokens — see threat model §T1 for at-rest handling),
   `settings`, `logs_meta`. Single owner of all disk I/O; other modules use its API.
 
 ### 3.6 `pairing` & `config-sync`
+
 - Pairing: device keypair generation, pairing-code exchange, token storage.
 - Config-sync: printer/station config from SaaS → validated (zod) → persisted → applied.
 
 ### 3.7 `diagnostics`
+
 - Heartbeat construction, electron-log setup, redacted log-bundle export, queue
   introspection for the support view.
 
 ### 3.8 `preload` / IPC
+
 - `contextIsolation: true`, `nodeIntegration: false`, sandboxed renderer.
 - Typed, per-channel whitelisted API over `contextBridge`; every message zod-validated
   in the preload/main boundary. The renderer can: show status, run pairing, trigger test
   print, view queue. It cannot: touch filesystem, network, or printers directly.
 
 ### 3.9 `renderer` (UI)
+
 - Local-only UI: tray icon, agent status, pairing wizard, printer test-print buttons,
   ambiguous-job resolution prompt. Reads state via IPC events.
 
@@ -131,7 +140,7 @@ requires reaching into another module's internals.
 6. Optional status poll (`printer_ack`) if transport+printer support it.
 7. Write accepted by OS/driver → status `completed` → ack `job.completed`
    with `status: "completed"` and `printed: false-claim-avoided`: the ack conveys
-   *hand-off success*, never a physical-print guarantee (§5, PRD FR-13/G8).
+   _hand-off success_, never a physical-print guarantee (§5, PRD FR-13/G8).
 
 Failure paths: transport errors → retry N times with backoff → `failed` → report.
 Crash between 5 and 7 → on restart, `sending` rows → `ambiguous` → report + policy.
@@ -167,17 +176,17 @@ Crash between 5 and 7 → on restart, `sending` rows → `ambiguous` → report 
 
 **Semantics (contract with the SaaS):**
 
-| State | Meaning | Physical print guaranteed? |
-|---|---|---|
-| `accepted` | Agent durably stored the job | No |
-| `rejected` | Schema/expiry/tenant check failed | No — never will print |
-| `rendered` | ESC/POS stream produced | No |
-| `sending` | Write in flight (transient; only observable via crash recovery) | Unknown |
-| `sent_to_printer` | Bytes written to transport socket/driver | **No** — printer may be off/paper-jammed |
-| `printer_ack` | Best-effort printer status says "received OK" (DLE EOT) | Likely, not guaranteed |
-| `completed` | Hand-off to printer/driver confirmed | **No — never claimed as proof of print** |
-| `failed` | Terminal error after bounded retries | No |
-| `ambiguous` | Outcome unknown (crash window, timeout on result) | Unknown |
+| State             | Meaning                                                         | Physical print guaranteed?               |
+| ----------------- | --------------------------------------------------------------- | ---------------------------------------- |
+| `accepted`        | Agent durably stored the job                                    | No                                       |
+| `rejected`        | Schema/expiry/tenant check failed                               | No — never will print                    |
+| `rendered`        | ESC/POS stream produced                                         | No                                       |
+| `sending`         | Write in flight (transient; only observable via crash recovery) | Unknown                                  |
+| `sent_to_printer` | Bytes written to transport socket/driver                        | **No** — printer may be off/paper-jammed |
+| `printer_ack`     | Best-effort printer status says "received OK" (DLE EOT)         | Likely, not guaranteed                   |
+| `completed`       | Hand-off to printer/driver confirmed                            | **No — never claimed as proof of print** |
+| `failed`          | Terminal error after bounded retries                            | No                                       |
+| `ambiguous`       | Outcome unknown (crash window, timeout on result)               | Unknown                                  |
 
 Exactly-once physical printing is **impossible** to promise over fire-and-forget
 interfaces (TCP 9100 has no app-level ack; spooler ACK means spooled, not printed).
@@ -223,12 +232,12 @@ Server-side (Laravel) tables are out of scope here except `agents`, `printers`,
 
 ## 8. Connections summary
 
-| Direction | Protocol | Purpose |
-|---|---|---|
-| Agent → SaaS | `wss` :443 (persistent) | Job push, acks, heartbeat, config push, revocation |
-| Agent → SaaS | HTTPS REST (fallback + bulk) | Poll jobs, ack batches, pairing, log upload |
-| Agent → printers | outbound TCP :9100 / spooler / USB | Print streams |
-| Renderer ↔ main | Electron IPC only | UI state and commands |
+| Direction        | Protocol                           | Purpose                                            |
+| ---------------- | ---------------------------------- | -------------------------------------------------- |
+| Agent → SaaS     | `wss` :443 (persistent)            | Job push, acks, heartbeat, config push, revocation |
+| Agent → SaaS     | HTTPS REST (fallback + bulk)       | Poll jobs, ack batches, pairing, log upload        |
+| Agent → printers | outbound TCP :9100 / spooler / USB | Print streams                                      |
+| Renderer ↔ main  | Electron IPC only                  | UI state and commands                              |
 
 Nothing listens. Ever. (Enforced by a startup assertion test, AC-4.)
 

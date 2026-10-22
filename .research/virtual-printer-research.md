@@ -8,9 +8,11 @@ TCP 9100 / USB / Windows spooler transports. All URLs verified via GitHub/npm AP
 ## 1. Raw TCP mock (port 9100)
 
 ### Protocol reality check (verified)
+
 Port 9100 (JetDirect/AppSocket/"RAW") is **not a protocol** — it is a plain TCP socket:
 open socket, write bytes, close. No negotiation, no handshake, **no application-level ACK**
 (fire-and-forget). Sources:
+
 - http://hacking-printers.net/wiki/index.php?title=Port_9100_printing
 - https://www.papercut.com/blog/print_tips/what-is-so-important-about-port-9100
 - https://www.brooksnet.com/port-9100-printing
@@ -23,14 +25,16 @@ Node-thermal-printer's `status`/`isConnected` rely on this. See Epson/Star ESC/P
 manual: https://www.starmicronics.com/support/Mannualfolder/escpos_cm_en.pdf
 
 ### npm tools (checked via registry, 2026-10-22)
-| Package | What it does | Status |
-|---|---|---|
+
+| Package                                                 | What it does                                                                                                                                                                                                                                                                                                                                                                                                                                                            | Status                                    |
+| ------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
 | **escpos-emulator** (v0.3.0, MIT, published 2026-09-16) | TCP listener on :9100, **parses** ESC/POS, live HTML preview, **REST API** for test assertions, WebSocket, Docker image `ghcr.io/lezram/escpos-emulator`. Emulates Epson TM-M30III (42 chars/line, 80mm). REST: `GET /api/printers/:id/receipts/last`, `DELETE /api/printers/:id/receipts`, `POST /api/printers/:id/toggle` (simulate offline). Only dep: `ws`. Repo: github.com/lezram/escpos-emulator (new, 8 stars, no LICENSE file in repo yet — npm declares MIT). | Best fit; run `npx escpos-emulator` in CI |
-| escpos (v3.0.0-alpha.6, MIT) | ESC/POS *generator/driver*, not a simulator. | Not a mock |
+| escpos (v3.0.0-alpha.6, MIT)                            | ESC/POS _generator/driver_, not a simulator.                                                                                                                                                                                                                                                                                                                                                                                                                            | Not a mock                                |
 
 There is no established package literally named `escpos-simulator` on npm.
 
 ### Related non-npm TCP emulators
+
 - **Garletz/escpos-virtual-printer-emulator** — Rust, MIT, 124 stars, pushed 2026-08; GUI, port 9100, Windows installer. https://github.com/Garletz/escpos-virtual-printer-emulator
 - **jflaflamme/escpresso** — Rust, MIT, pushed 2026-09; TCP :9100 + GUI preview. https://github.com/jflaflamme/escpresso
 - **roydejong/EscPosEmulator** — C#, 73 stars, pushed 2025-07, no license file. https://github.com/roydejong/EscPosEmulator
@@ -44,8 +48,8 @@ optionally reply to DLE EOT). Worth having anyway so unit tests don't need an ex
 
 ## 2. USB device simulation (feasibility notes)
 
-- **usbipd-win does NOT create virtual devices.** It shares *real* USB devices attached to
-  Windows out to other machines (WSL2/Hyper-V). It cannot make Windows *see* a fake USB
+- **usbipd-win does NOT create virtual devices.** It shares _real_ USB devices attached to
+  Windows out to other machines (WSL2/Hyper-V). It cannot make Windows _see_ a fake USB
   printer. https://github.com/dorssel/usbipd-win ; https://learn.microsoft.com/en-us/windows/wsl/connect-usb
 - The realistic route is a **USB gadget**: a Linux board (Raspberry Pi Zero) enumerating as a
   USB printer-class device to the Windows host, writing received bytes to `/dev/g_printer0` or a
@@ -71,7 +75,7 @@ test USB with a mocked backend + (optionally) one manual Pi-Zero smoke test.
   (Add Printer → Local Port → `C:\path\out.prn`), the bytes land in a file you can assert on.
   `FILE:` port also works but **prompts for a filename in a GUI dialog** each print — bad for
   automation; use a fixed-path local port instead.
-- **Gotcha:** installing the "Generic / Text Only" driver means the driver *renders* the job
+- **Gotcha:** installing the "Generic / Text Only" driver means the driver _renders_ the job
   (text mangling, CR/LF/backspace translation) — output is **not** guaranteed to be your raw
   ESC/POS bytes. For byte-exact capture you want a raw-capable queue (most 80mm receipt
   drivers install a RAW port monitor) — same technique used to send ZPL/ESC/POS:
@@ -103,7 +107,7 @@ No single dominant npm decoder exists. Options, by practicality:
   https://github.com/thaolt/escpos_parser
 - **maehw/EscPosDecoder** — Python, GPL-3.0, last push 2022 (stale).
   https://github.com/maehw/EscPosDecoder
-- **python-escpos** itself has a `Dummy` connector that *captures* the byte stream in memory
+- **python-escpos** itself has a `Dummy` connector that _captures_ the byte stream in memory
   (great for generator-side tests, not a decoder):
   https://python-escpos.readthedocs.io (see `escpos.printer.Dummy`); PyESCPOS also ships a
   Dummy printer: https://pypi.org/project/PyESCPOS/
@@ -114,14 +118,14 @@ No single dominant npm decoder exists. Options, by practicality:
 
 ## 5. Dedicated virtual-printer projects — status summary
 
-| Project | Lang | License | Last push | Stars | Notes |
-|---|---|---|---|---|---|
-| lezram/escpos-emulator (npm) | TS | MIT (npm; repo file missing) | 2026-09 | 8 | TCP 9100 + REST API; CI-ready |
-| Garletz/escpos-virtual-printer-emulator | Rust | MIT | 2026-08 | 124 | Windows GUI |
-| gilbertfl/escpos-netprinter | Python | AGPL-3.0 | 2026-10 | 61 | Docker, HTML receipts |
-| jflaflamme/escpresso | Rust | MIT | 2026-09 | 26 | GUI preview |
-| Raspberryy/Emulated_USB_Printer | C | GPL-3.0 | 2026-03 | 105 | USB gadget (Pi Zero) |
-| roydejong/EscPosEmulator | C# | none | 2025-07 | 73 | Desktop app |
+| Project                                 | Lang   | License                      | Last push | Stars | Notes                         |
+| --------------------------------------- | ------ | ---------------------------- | --------- | ----- | ----------------------------- |
+| lezram/escpos-emulator (npm)            | TS     | MIT (npm; repo file missing) | 2026-09   | 8     | TCP 9100 + REST API; CI-ready |
+| Garletz/escpos-virtual-printer-emulator | Rust   | MIT                          | 2026-08   | 124   | Windows GUI                   |
+| gilbertfl/escpos-netprinter             | Python | AGPL-3.0                     | 2026-10   | 61    | Docker, HTML receipts         |
+| jflaflamme/escpresso                    | Rust   | MIT                          | 2026-09   | 26    | GUI preview                   |
+| Raspberryy/Emulated_USB_Printer         | C      | GPL-3.0                      | 2026-03   | 105   | USB gadget (Pi Zero)          |
+| roydejong/EscPosEmulator                | C#     | none                         | 2025-07   | 73    | Desktop app                   |
 
 ---
 
@@ -150,7 +154,7 @@ No single dominant npm decoder exists. Options, by practicality:
 Layered, cheapest-first:
 
 1. **Unit level (no process):** define a `Transport` interface (TCP/USB/Spooler implement it).
-   Unit-test ESC/POS *generation* by writing to an in-memory `BufferTransport` (analogous to
+   Unit-test ESC/POS _generation_ by writing to an in-memory `BufferTransport` (analogous to
    python-escpos `Dummy`) and asserting on bytes (`expect(buf).toContain(Buffer.from([0x1b,0x45]))`).
 2. **Integration level (TCP):** run `npx escpos-emulator` (or a 30-line in-house `net` mock) in
    CI; point the agent at `localhost:9100`; assert via its REST API

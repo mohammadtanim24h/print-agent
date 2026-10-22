@@ -20,13 +20,20 @@ export function createTray(options: {
   const rebuild = () => {
     tray.setContextMenu(
       Menu.buildFromTemplate([
-        { label: 'Open Print Agent', click: () => options.showWindow() },
+        {
+          label: 'Open Print Agent',
+          click: () => {
+            options.showWindow();
+          },
+        },
         { type: 'separator' },
         {
           label: 'Launch at login',
           type: 'checkbox',
           checked: options.launchAtLogin(),
-          click: (item) => options.setLaunchAtLogin(item.checked),
+          click: (item) => {
+            options.setLaunchAtLogin(item.checked);
+          },
         },
         { type: 'separator' },
         {
@@ -36,11 +43,13 @@ export function createTray(options: {
             options.app.quit();
           },
         },
-      ])
+      ]),
     );
   };
   rebuild();
 
-  tray.on('click', () => options.showWindow());
+  tray.on('click', () => {
+    options.showWindow();
+  });
   return { refresh: rebuild };
 }

@@ -53,6 +53,7 @@ scripts/no-listen-smoke.mjs   spawns built app, asserts zero LISTEN sockets via 
 ## Tasks
 
 ### Task 1 — Scaffold tooling
+
 - `pnpm init`, add exact-pinned deps (below), set `packageManager`, scripts:
   `dev`, `build`, `start`, `test` (vitest run), `test:watch`, `lint`, `typecheck`, `format`, `no-listen`.
 - tsconfigs: `strict: true`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `isolatedModules`, `noEmit` (electron-vite transforms), separate node (main/preload/tests) and web (renderer) configs.
@@ -60,6 +61,7 @@ scripts/no-listen-smoke.mjs   spawns built app, asserts zero LISTEN sockets via 
 - **Verify:** `pnpm exec tsc -b --dry`, `pnpm lint` on a stub file pass. Commit.
 
 ### Task 2 — Security core (TDD)
+
 - `src/shared/ipc-contract.ts`: channel enum + zod v4 strict schemas (`.strict()`) with `maxSize`-style caps (`.max()` on strings/arrays), e.g. `settings.setLaunchAtLogin {enabled: boolean}`.
 - `src/main/security/window-options.ts`: pure `getWindowOptions(preloadPath, {devServerUrl})` → `{sandbox:true, contextIsolation:true, nodeIntegration:false, webSecurity:true, ...}`; `getCsp()` → `'default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self''`.
 - `src/main/security/sender-guard.ts`: `createSenderGuard({ allowedUrls, log })` → `assertTrusted(sender: {frame?: {url: string}, hostWebContents?: unknown})` throws `IpcAccessError` if URL not in allowlist.
@@ -67,11 +69,13 @@ scripts/no-listen-smoke.mjs   spawns built app, asserts zero LISTEN sockets via 
 - **Verify:** unit tests listed above, all green. Commit.
 
 ### Task 3 — Logger
+
 - `redact.ts`: pure; pattern list (Bearer/JWT, hex/base64-ish `deviceKey`/`token`/`secret`/`password` JSON values, emails) → `[REDACTED:<kind>]`; deep-walks objects (depth-capped, 1 MiB input cap).
 - `logger.ts`: electron-log main scope, JSON-lines format via `log.hooks`, `redact` in hook chain, `file.maxSize = 5*1024*1024` (electron-log rotates), no console transport in packaged builds.
 - **Verify:** redact tests green; logger module typechecks (electron-glue kept thin). Commit.
 
 ### Task 4 — Settings + IPC + preload
+
 - `settings.ts`: `createSettingsStore({ readJson, writeJson, defaults })` — zod strict parse, atomic write (tmp+rename), `get()`, `set(patch)`. Settings: `{ launchAtLogin: boolean }`.
 - `autolaunch.ts`: thin `applyLaunchAtLogin(app, enabled)` via `app.setLoginItemSettings({openAtLogin})` (electron glue; not unit-tested).
 - `ipc/register.ts`: `registerIpc(handlers)` — table-driven; for each channel: `assertTrusted(event)` → schema.parse(payload) → handler; unknown channel rejected. `ipcMain.handle` invoked from `main.ts`.
@@ -79,6 +83,7 @@ scripts/no-listen-smoke.mjs   spawns built app, asserts zero LISTEN sockets via 
 - **Verify:** ipc-contract + settings tests green. Commit.
 
 ### Task 5 — Tray shell + renderer
+
 - `window.ts`: create window from `getWindowOptions`; `close` → `preventDefault(); win.hide()` unless `app.isQuitting` (set in `before-quit`); minimize also hides (tray-only shell).
 - `tray.ts`: tray icon (committed `assets/icon.png`), menu: Open Print Agent / Launch at login (checkbox, wired to settings) / Quit.
 - `main.ts`: `app.enableSandbox()` before ready, `requestSingleInstanceLock` (second instance → show window), `window-all-closed` → no-op (keep running), install no-listen guard, register IPC, apply autolaunch from settings.
@@ -86,27 +91,28 @@ scripts/no-listen-smoke.mjs   spawns built app, asserts zero LISTEN sockets via 
 - **Verify:** `pnpm dev` launches; tray present; close keeps process alive; Quit exits. Commit.
 
 ### Task 6 — Checks + verification
+
 - `pnpm lint && pnpm typecheck && pnpm test` green.
 - `node scripts/no-listen-smoke.mjs` → builds, launches app, parses `netstat -ano` for app PIDs, asserts no LISTEN.
 - Report remaining security limitations.
 
 ## Version pins (exact)
 
-| Package | Version | License | Notes |
-|---|---|---|---|
-| electron | 45.0.0 | MIT | latest stable major (43/44/45 supported; 42 EOL'd 2026-10-20) |
-| electron-vite | 6.0.0 | MIT | requires @swc/core peer |
-| @swc/core | 1.16.20 | Apache-2.0 | electron-vite transform backend |
-| vite | ^8.3.5 (locked) | MIT | |
-| @vitejs/plugin-react | 6.1.2 | MIT | |
-| react / react-dom | 19.3.1 | MIT | |
-| typescript | ~5.9.x (locked) | Apache-2.0 | TS 7 not yet supported by typescript-eslint (<6.1.0) |
-| vitest | 5.0.5 | MIT | |
-| eslint | 10.13.0 | MIT | |
-| typescript-eslint | 8.72.0 | MIT | |
-| prettier | 3.9.10 | MIT | |
-| zod | 4.6.7 | MIT | boundary validation |
-| electron-log | 5.4.4 | MIT | rotation + JSON |
-| @types/node / react / react-dom | latest matching | MIT | |
+| Package                         | Version         | License    | Notes                                                         |
+| ------------------------------- | --------------- | ---------- | ------------------------------------------------------------- |
+| electron                        | 45.0.0          | MIT        | latest stable major (43/44/45 supported; 42 EOL'd 2026-10-20) |
+| electron-vite                   | 6.0.0           | MIT        | requires @swc/core peer                                       |
+| @swc/core                       | 1.16.20         | Apache-2.0 | electron-vite transform backend                               |
+| vite                            | ^8.3.5 (locked) | MIT        |                                                               |
+| @vitejs/plugin-react            | 6.1.2           | MIT        |                                                               |
+| react / react-dom               | 19.3.1          | MIT        |                                                               |
+| typescript                      | ~5.9.x (locked) | Apache-2.0 | TS 7 not yet supported by typescript-eslint (<6.1.0)          |
+| vitest                          | 5.0.5           | MIT        |                                                               |
+| eslint                          | 10.13.0         | MIT        |                                                               |
+| typescript-eslint               | 8.72.0          | MIT        |                                                               |
+| prettier                        | 3.9.10          | MIT        |                                                               |
+| zod                             | 4.6.7           | MIT        | boundary validation                                           |
+| electron-log                    | 5.4.4           | MIT        | rotation + JSON                                               |
+| @types/node / react / react-dom | latest matching | MIT        |                                                               |
 
 Zero runtime deps beyond zod/electron-log/react at this stage. No GPL/AGPL. No postinstall scripts required.

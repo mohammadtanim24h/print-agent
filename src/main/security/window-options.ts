@@ -11,7 +11,7 @@ export interface WindowEnv {
 
 export function getWindowOptions(
   preloadPath: string,
-  env: WindowEnv
+  env: WindowEnv,
 ): BrowserWindowConstructorOptions {
   const isDev = env.devServerUrl !== undefined;
   return {
@@ -37,21 +37,8 @@ export function getWindowOptions(
 }
 
 /**
- * Restrictive CSP, used as a <meta> in index.html. `frame-ancestors` is
- * ignored in meta tags (kept for documentation value); the sandboxed,
- * isolated window is the actual defense there.
+ * Restrictive CSP for the renderer. Lives in src/shared/csp.ts so the vite
+ * config can bake the right variant (strict prod, dev-server variant for HMR)
+ * into index.html.
  */
-export function getCsp(): string {
-  return [
-    "default-src 'self'",
-    "script-src 'self'",
-    "style-src 'self'",
-    "img-src 'self' data:",
-    "font-src 'self'",
-    "connect-src 'self'",
-    "object-src 'none'",
-    "base-uri 'none'",
-    "form-action 'none'",
-    "frame-ancestors 'none'",
-  ].join('; ');
-}
+export { getCsp } from '../../shared/csp';

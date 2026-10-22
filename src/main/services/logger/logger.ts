@@ -31,10 +31,29 @@ export function setupLogging(): void {
 
 export function createLogger(scope: string): Logger {
   const scoped = log.scope(scope);
+  const emit = (
+    level: 'debug' | 'info' | 'warn' | 'error',
+    message: string,
+    data?: unknown,
+  ): void => {
+    if (data === undefined) {
+      scoped[level](message);
+    } else {
+      scoped[level](message, data);
+    }
+  };
   return {
-    debug: (message, data) => (data === undefined ? scoped.debug(message) : scoped.debug(message, data)),
-    info: (message, data) => (data === undefined ? scoped.info(message) : scoped.info(message, data)),
-    warn: (message, data) => (data === undefined ? scoped.warn(message) : scoped.warn(message, data)),
-    error: (message, data) => (data === undefined ? scoped.error(message) : scoped.error(message, data)),
+    debug: (message, data) => {
+      emit('debug', message, data);
+    },
+    info: (message, data) => {
+      emit('info', message, data);
+    },
+    warn: (message, data) => {
+      emit('warn', message, data);
+    },
+    error: (message, data) => {
+      emit('error', message, data);
+    },
   };
 }

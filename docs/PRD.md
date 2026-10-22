@@ -12,16 +12,16 @@ and drives 80mm ESC/POS thermal printers directly.
 
 ## 2. Goals
 
-| # | Goal |
-|---|------|
-| G1 | Print kitchen tickets and customer receipts on 80mm ESC/POS thermal printers, unattended |
-| G2 | Outbound connections only — no inbound HTTP server on the cashier PC |
-| G3 | Survive network outages: jobs queue durably on the server and replay on reconnect |
-| G4 | Survive app/PC restarts: in-flight job state is durable locally (SQLite) |
-| G5 | Multiple restaurants (tenants), multiple agents, multiple printers per agent |
-| G6 | Fully self-developed; commercially compatible open-source deps (MIT/Apache/BSD/ISC); **no paid printing middleware, cloud print service, subscription, or proprietary runtime license** |
-| G7 | Development and CI fully testable without physical hardware (virtual ESC/POS printer) |
-| G8 | Honest printing semantics: distinguish "sent to printer" from "physically printed"; never promise exactly-once physical printing |
+| #   | Goal                                                                                                                                                                                    |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| G1  | Print kitchen tickets and customer receipts on 80mm ESC/POS thermal printers, unattended                                                                                                |
+| G2  | Outbound connections only — no inbound HTTP server on the cashier PC                                                                                                                    |
+| G3  | Survive network outages: jobs queue durably on the server and replay on reconnect                                                                                                       |
+| G4  | Survive app/PC restarts: in-flight job state is durable locally (SQLite)                                                                                                                |
+| G5  | Multiple restaurants (tenants), multiple agents, multiple printers per agent                                                                                                            |
+| G6  | Fully self-developed; commercially compatible open-source deps (MIT/Apache/BSD/ISC); **no paid printing middleware, cloud print service, subscription, or proprietary runtime license** |
+| G7  | Development and CI fully testable without physical hardware (virtual ESC/POS printer)                                                                                                   |
+| G8  | Honest printing semantics: distinguish "sent to printer" from "physically printed"; never promise exactly-once physical printing                                                        |
 
 ## 3. Non-goals (v1)
 
@@ -29,7 +29,7 @@ and drives 80mm ESC/POS thermal printers directly.
 - Document types other than kitchen tickets and customer receipts (bar/station tickets are
   a config-driven extension of the same schema, designed for but not shipped in v1)
 - Printer firmware management, cash-drawer control beyond the standard ESC/POS kick command
-- Mobile printing from Flutter directly to printers (Flutter clients print *via the SaaS*,
+- Mobile printing from Flutter directly to printers (Flutter clients print _via the SaaS_,
   which routes jobs to this agent)
 - Label printers (ZPL/EPL), A4 documents, cloud print services
 
@@ -45,6 +45,7 @@ and drives 80mm ESC/POS thermal printers directly.
 ## 5. Functional requirements
 
 ### 5.1 Pairing & identity
+
 - FR-1: Agent is paired once per installation using a short-lived, single-use pairing
   code generated in the web app (`Settings → Printers → Add agent`).
 - FR-2: Pairing binds the agent to exactly one restaurant (tenant scope).
@@ -54,17 +55,19 @@ and drives 80mm ESC/POS thermal printers directly.
   wipes credentials and local job data on next sync.
 
 ### 5.2 Job intake & queueing
+
 - FR-5: Agent receives jobs over an outbound, authenticated, TLS-encrypted WebSocket,
   with HTTPS REST polling as fallback.
 - FR-6: Jobs are validated against a versioned schema (v1) before any processing;
   invalid jobs are rejected with a structured error, never partially processed.
 - FR-7: Every job carries an `idempotency_key`; duplicate deliveries are detected and
   de-duplicated locally before printing.
-- FR-8: Jobs are persisted in a local SQLite queue *before* printing and removed from
+- FR-8: Jobs are persisted in a local SQLite queue _before_ printing and removed from
   the active queue only after a terminal outcome.
 - FR-9: Jobs carry `expires_at`; expired jobs are never printed.
 
 ### 5.3 Printing
+
 - FR-10: Structured document payloads are rendered locally to ESC/POS byte streams.
   The server never sends raw printer bytes.
 - FR-11: Supported transports (configurable per printer): raw TCP 9100, Windows print
@@ -81,12 +84,14 @@ and drives 80mm ESC/POS thermal printers directly.
   commands; kitchen tickets prioritize speed and large-font item lines.
 
 ### 5.4 Printer configuration
+
 - FR-16: Printer configuration (name, transport type, address/port, station role,
   copies, character set/codepage, paper-width assumptions) is managed in the SaaS web
   app, synced to the agent as config, and cached locally for offline use.
 - FR-17: The agent can run a test print per printer and report transport-level health.
 
 ### 5.5 Observability & ops
+
 - FR-18: Agent sends a periodic heartbeat (version, connectivity, per-printer health,
   queue depth) over the same socket.
 - FR-19: Structured local logs with rotation; support can request a redacted log bundle.
@@ -126,9 +131,9 @@ and drives 80mm ESC/POS thermal printers directly.
 
 ## 9. Open questions
 
-| Question | Default until answered |
-|----------|------------------------|
-| Do target printers support DLE EOT status polling? | Treat `printer_ack` as best-effort; do not gate on it |
+| Question                                                           | Default until answered                                                          |
+| ------------------------------------------------------------------ | ------------------------------------------------------------------------------- |
+| Do target printers support DLE EOT status polling?                 | Treat `printer_ack` as best-effort; do not gate on it                           |
 | ESC/POS codepage for non-ASCII (restaurant names in local script)? | UTF-8-capable codepage where supported; ASCII-safe fallback; per-printer config |
-| Cash drawer kick needed at launch? | Include the standard ESC/POS pulse command, untested against hardware |
-| Flutter clients printing directly to LAN printers? | Out of scope; route via SaaS → agent |
+| Cash drawer kick needed at launch?                                 | Include the standard ESC/POS pulse command, untested against hardware           |
+| Flutter clients printing directly to LAN printers?                 | Out of scope; route via SaaS → agent                                            |

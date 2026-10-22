@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  installNoListenGuard,
-  ListenForbiddenError,
-} from '../src/main/security/no-listen-guard';
+import { installNoListenGuard, ListenForbiddenError } from '../src/main/security/no-listen-guard';
 
 function fakeServerProto() {
   const calls: string[] = [];
@@ -16,7 +13,7 @@ function fakeServerProto() {
 describe('no-listen guard', () => {
   it('makes listen() throw a ListenForbiddenError', () => {
     const { proto } = fakeServerProto();
-    const uninstall = installNoListenGuard(proto as never);
+    const uninstall = installNoListenGuard(proto);
     expect(() => proto.listen(9100, '0.0.0.0')).toThrow(ListenForbiddenError);
     uninstall();
     expect(proto.listen(8080)).toBeUndefined();
@@ -24,12 +21,14 @@ describe('no-listen guard', () => {
 
   it('uninstall restores the original listen exactly once', () => {
     const { proto } = fakeServerProto();
-    const uninstall = installNoListenGuard(proto as never);
+    const uninstall = installNoListenGuard(proto);
     uninstall();
     // after uninstall, calls go through to the original again
     expect(proto.listen(1234)).toBeUndefined();
     // uninstalling twice must not corrupt state
-    expect(() => uninstall()).not.toThrow();
+    expect(() => {
+      uninstall();
+    }).not.toThrow();
     expect(proto.listen(4321)).toBeUndefined();
   });
 

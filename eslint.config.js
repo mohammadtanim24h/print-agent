@@ -1,8 +1,10 @@
+import { defineConfig } from 'eslint/config';
 import tseslint from 'typescript-eslint';
 
 // Security rails per CLAUDE.md rule 4: never execute dynamic code.
-export default tseslint.config(
-  { ignores: ['out/', 'node_modules/', 'dist/', 'coverage/'] },
+export default defineConfig(
+  // Build output, deps, and plain-JS operational scripts (not type-checked).
+  { ignores: ['out/', 'node_modules/', 'dist/', 'coverage/', 'eslint.config.js', 'scripts/'] },
   ...tseslint.configs.strictTypeChecked,
   {
     languageOptions: {
@@ -14,7 +16,10 @@ export default tseslint.config(
     rules: {
       'no-eval': 'error',
       'no-new-func': 'error',
-      'no-restricted-modules': ['error', { name: 'vm', message: 'Dynamic code execution is forbidden (CLAUDE.md rule 4).' }],
+      'no-restricted-modules': [
+        'error',
+        { name: 'vm', message: 'Dynamic code execution is forbidden (CLAUDE.md rule 4).' },
+      ],
       'no-restricted-imports': [
         'error',
         {
@@ -45,7 +50,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ['tests/**/*.ts', 'src/main/security/**'],
+    files: ['tests/**/*.ts'],
     rules: {
       // Tests may assert via any-typed mocks without tripping strict rules.
       '@typescript-eslint/no-unsafe-assignment': 'off',
@@ -54,5 +59,5 @@ export default tseslint.config(
       '@typescript-eslint/no-unsafe-argument': 'off',
       '@typescript-eslint/no-unsafe-return': 'off',
     },
-  }
+  },
 );

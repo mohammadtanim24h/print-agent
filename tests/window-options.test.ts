@@ -6,7 +6,9 @@ describe('getWindowOptions', () => {
 
   function webPrefs(devServerUrl?: string) {
     const opts = getWindowOptions(preloadPath, devServerUrl ? { devServerUrl } : {});
-    return opts.webPreferences!;
+    const prefs = opts.webPreferences;
+    if (prefs === undefined) throw new Error('webPreferences missing');
+    return prefs;
   }
 
   it('hardens the webPreferences', () => {
@@ -33,7 +35,7 @@ describe('getWindowOptions', () => {
 });
 
 describe('getCsp', () => {
-  it('is a restrictive self-only CSP', () => {
+  it('is a restrictive self-only CSP by default (production)', () => {
     const csp = getCsp();
     expect(csp).toContain("default-src 'self'");
     expect(csp).toContain("script-src 'self'");
@@ -43,5 +45,13 @@ describe('getCsp', () => {
     expect(csp).not.toContain('unsafe-inline');
     expect(csp).not.toContain('unsafe-eval');
     expect(csp).not.toContain('*');
+  });
+
+  it('keeps remote origins out even in the dev variant', () => {
+    const csp = getCsp({ dev: true });
+    expect(csp).toContain("script-src 'self' 'unsafe-inline'"); // react fast-refresh preamble
+    expect(csp).toContain('ws://localhost:*'); // HMR websocket
+    expect(csp).not.toContain('https://');
+    expect(csp).not.toContain('unsafe-eval');
   });
 });

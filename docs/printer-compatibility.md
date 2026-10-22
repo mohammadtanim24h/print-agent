@@ -1,8 +1,8 @@
 # Printer Compatibility — 80mm ESC/POS Thermal
 
 **Version:** 1.0 (2026-10-22) · **Evidence status:** dialect knowledge verified against
-maintained libraries + vendor docs; *hardware-specific claims marked §6 require
-physical validation.*
+maintained libraries + vendor docs; _hardware-specific claims marked §6 require
+physical validation._
 
 ## 1. Scope
 
@@ -13,30 +13,30 @@ OEM units — the dominant fleet in target markets.
 
 ## 2. Command baseline implemented by the renderer
 
-| Feature | ESC/POS commands | Notes |
-|---|---|---|
-| Init | `ESC @` | Sent at stream start |
-| Text / codepage | `ESC t n` + `ESC R n` | Per-printer codepage config; ASCII-safe fallback |
-| Emphasis | `ESC E n`, `GS ! n` | bold / double-height / double-size |
-| Alignment | `ESC a n` | left/center/right |
-| Feed / cut | `ESC d n`, `GS V n` | partial cut default; `none` option |
-| Pulse (cash drawer) | `ESC p m t1 t2` | shipped, flagged untested-against-hardware |
-| QR | `GS ( k` | model 2; data ≤ 512 B validated |
-| Barcode (CODE128) | `GS ( B` / `GS h w k` | optional footer |
-| Bit image (logo) | `GS v 0` (raster) or NV logo `GS ( L` | NV logo preferred if uploaded; raster fallback |
-| Status (best-effort) | `DLE EOT n` | off by default; `status_polling: auto` |
+| Feature              | ESC/POS commands                      | Notes                                            |
+| -------------------- | ------------------------------------- | ------------------------------------------------ |
+| Init                 | `ESC @`                               | Sent at stream start                             |
+| Text / codepage      | `ESC t n` + `ESC R n`                 | Per-printer codepage config; ASCII-safe fallback |
+| Emphasis             | `ESC E n`, `GS ! n`                   | bold / double-height / double-size               |
+| Alignment            | `ESC a n`                             | left/center/right                                |
+| Feed / cut           | `ESC d n`, `GS V n`                   | partial cut default; `none` option               |
+| Pulse (cash drawer)  | `ESC p m t1 t2`                       | shipped, flagged untested-against-hardware       |
+| QR                   | `GS ( k`                              | model 2; data ≤ 512 B validated                  |
+| Barcode (CODE128)    | `GS ( B` / `GS h w k`                 | optional footer                                  |
+| Bit image (logo)     | `GS v 0` (raster) or NV logo `GS ( L` | NV logo preferred if uploaded; raster fallback   |
+| Status (best-effort) | `DLE EOT n`                           | off by default; `status_polling: auto`           |
 
 Generated via `node-thermal-printer` (MIT, active — verified 2026-08 release) with a
 thin wrapper so we can swap/patch dialect quirks without forking.
 
 ## 3. Transports and where each is safe to promise
 
-| Transport | How | Reliability model | v1 status |
-|---|---|---|---|
-| **TCP raw :9100** (primary) | Node `net`, outbound LAN | Fire-and-forget; success = socket accepted + bytes flushed. **No application ack exists.** | v1 |
-| **Windows spooler RAW** (fallback for USB-only printers) | Own N-API shim: `OpenPrinterW → StartDocPrinter(DATATYPE:"RAW") → WritePrinter → EndDocPrinter`; requires a vendor ESC/POS driver installed on a shared printer | Success = spooled by Windows. Driver may buffer (risk R4) | v1 |
-| USB direct | `usb` 3.x, claim printer-class interface, BULK OUT | Vendor endpoint quirks possible | v1.1 |
-| Mock / virtual | In-memory buffer (unit) + `escpos-emulator` TCP :9100 (integration/CI) | Byte-exact assertion via REST | v1 |
+| Transport                                                | How                                                                                                                                                             | Reliability model                                                                          | v1 status |
+| -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | --------- |
+| **TCP raw :9100** (primary)                              | Node `net`, outbound LAN                                                                                                                                        | Fire-and-forget; success = socket accepted + bytes flushed. **No application ack exists.** | v1        |
+| **Windows spooler RAW** (fallback for USB-only printers) | Own N-API shim: `OpenPrinterW → StartDocPrinter(DATATYPE:"RAW") → WritePrinter → EndDocPrinter`; requires a vendor ESC/POS driver installed on a shared printer | Success = spooled by Windows. Driver may buffer (risk R4)                                  | v1        |
+| USB direct                                               | `usb` 3.x, claim printer-class interface, BULK OUT                                                                                                              | Vendor endpoint quirks possible                                                            | v1.1      |
+| Mock / virtual                                           | In-memory buffer (unit) + `escpos-emulator` TCP :9100 (integration/CI)                                                                                          | Byte-exact assertion via REST                                                              | v1        |
 
 Explicitly rejected: `webContents.print()` (Chromium rasterizes — no ESC/POS
 passthrough), `pdf-to-printer` (rasterizes AND bundles GPLv3 SumatraPDF — license +
@@ -44,33 +44,33 @@ mechanism both wrong).
 
 ## 4. Known dialect / compatibility matrix (verified knowledge)
 
-| Capability | Epson TM series | Xprinter | Rongta | Generic OEM | Risk |
-|---|---|---|---|---|---|
-| ESC/POS core (text, emphasis, align, cut) | Yes | Yes | Yes | "Mostly" — clone firmware varies | Med |
-| `GS V` cut variants (`V 0/1`, `V 65/66`) | Yes | Yes | Yes | Sometimes only one form | Med |
-| QR `GS ( k` model 2 | Yes | Yes | Yes | Occasionally model 1 only | Low-Med |
-| Raster bit image `GS v 0` | Yes | Yes | Yes | Yes (scale/format quirks) | Low |
-| NV logo upload | Yes (Epson utility) | Varies | Varies | Rare | High → use raster fallback |
-| DLE EOT status | Yes (with ASB config) | Partial | Partial | Rare | High → treat as best-effort |
-| Codepages | CP437/850/852/858, custom | Similar | Similar | Varies wildly | High for non-Latin text |
-| 2-byte UTF-8 mode (`FS &`) | Yes | Yes | Yes | Unreliable | High → per-printer config |
+| Capability                                | Epson TM series           | Xprinter | Rongta  | Generic OEM                      | Risk                        |
+| ----------------------------------------- | ------------------------- | -------- | ------- | -------------------------------- | --------------------------- |
+| ESC/POS core (text, emphasis, align, cut) | Yes                       | Yes      | Yes     | "Mostly" — clone firmware varies | Med                         |
+| `GS V` cut variants (`V 0/1`, `V 65/66`)  | Yes                       | Yes      | Yes     | Sometimes only one form          | Med                         |
+| QR `GS ( k` model 2                       | Yes                       | Yes      | Yes     | Occasionally model 1 only        | Low-Med                     |
+| Raster bit image `GS v 0`                 | Yes                       | Yes      | Yes     | Yes (scale/format quirks)        | Low                         |
+| NV logo upload                            | Yes (Epson utility)       | Varies   | Varies  | Rare                             | High → use raster fallback  |
+| DLE EOT status                            | Yes (with ASB config)     | Partial  | Partial | Rare                             | High → treat as best-effort |
+| Codepages                                 | CP437/850/852/858, custom | Similar  | Similar | Varies wildly                    | High for non-Latin text     |
+| 2-byte UTF-8 mode (`FS &`)                | Yes                       | Yes      | Yes     | Unreliable                       | High → per-printer config   |
 
-**Policy:** the renderer emits the *conservative intersection* by default
+**Policy:** the renderer emits the _conservative intersection_ by default
 (core text/emphasis/align/cut + model-2 QR + raster images), with per-printer config
 opting into advanced features. Non-ASCII text without a configured codepage is
 rejected at render time rather than printed as mojibake.
 
 ## 5. Dependency choices & licenses (verified 2026-10-22, see `.research/dependency-research.md`)
 
-| Package | Role | License | Maintenance verdict |
-|---|---|---|---|
-| `node-thermal-printer` 4.6.1 | ESC/POS generation | MIT | Active (2026-08). No automated test suite upstream → our own contract tests mandatory |
-| `usb` 3.2.1 | USB transport (v1.1) | MIT | Active; N-API, no electron-rebuild |
-| `serialport` 13 | future kitchen display/serial | MIT | Active; prebuilt |
-| `escpos`, `escpos-usb`, `escpos-network` | — | MIT | **Rejected: abandoned (alphas, ~2020)** |
-| `pdf-to-printer` | — | MIT wrapper | **Rejected: bundles GPLv3 SumatraPDF binary — not commercially distributable** |
-| `escpos-emulator` 0.3.0 | Virtual printer for tests/CI | MIT | Maintained (2026-09); TCP :9100 + REST assertions |
-| Win32 spooler shim | spooler transport | Own code (MIT) | ~100 lines; no maintained npm equivalent exists (verified) |
+| Package                                  | Role                          | License        | Maintenance verdict                                                                   |
+| ---------------------------------------- | ----------------------------- | -------------- | ------------------------------------------------------------------------------------- |
+| `node-thermal-printer` 4.6.1             | ESC/POS generation            | MIT            | Active (2026-08). No automated test suite upstream → our own contract tests mandatory |
+| `usb` 3.2.1                              | USB transport (v1.1)          | MIT            | Active; N-API, no electron-rebuild                                                    |
+| `serialport` 13                          | future kitchen display/serial | MIT            | Active; prebuilt                                                                      |
+| `escpos`, `escpos-usb`, `escpos-network` | —                             | MIT            | **Rejected: abandoned (alphas, ~2020)**                                               |
+| `pdf-to-printer`                         | —                             | MIT wrapper    | **Rejected: bundles GPLv3 SumatraPDF binary — not commercially distributable**        |
+| `escpos-emulator` 0.3.0                  | Virtual printer for tests/CI  | MIT            | Maintained (2026-09); TCP :9100 + REST assertions                                     |
+| Win32 spooler shim                       | spooler transport             | Own code (MIT) | ~100 lines; no maintained npm equivalent exists (verified)                            |
 
 CI license gate (threat T5) re-verifies this table on every release; this document is
 updated whenever a dependency is added or bumped.
