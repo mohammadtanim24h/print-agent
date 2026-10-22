@@ -6,3 +6,4 @@ coverage/
 .dev.vars
 .env
 .DS_Store
+*.tsbuildinfo
