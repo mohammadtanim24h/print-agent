@@ -12,8 +12,14 @@ export default defineConfig({
   preload: {
     build: {
       outDir: 'out/preload',
+      // The sandbox cannot require external packages — everything except
+      // electron is bundled inline.
+      externalizeDeps: false,
       // Sandboxed renderers require CJS preload scripts.
-      rollupOptions: { output: { format: 'cjs', entryFileNames: '[name].cjs' } },
+      rollupOptions: {
+        external: ['electron'],
+        output: { format: 'cjs', entryFileNames: '[name].cjs' },
+      },
     },
   },
   renderer: {
