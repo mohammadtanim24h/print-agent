@@ -66,10 +66,15 @@ describe('ThermalPrinterEncoder', () => {
 
   it('qr() emits GS ( k with the data', () => {
     const enc = new ThermalPrinterEncoder(makeRenderProfile());
+    enc.qr('XY');
     enc.qr('https://saas.example/r/ORD-1');
     const b = enc.bytes();
     expect(b).toContain(0x1d);
     expect(Buffer.from(b).toString('latin1')).toContain('https://saas.example/r/ORD-1');
+    // Decoded data must be exact (guards against slice-bound drift).
+    const qrData = decodeEscpos(b).filter((e) => e.kind === 'qr').map((e) => (e as { data: string }).data);
+    expect(qrData).toContain('XY');
+    expect(qrData.join('')).toContain('https://saas.example/r/ORD-1');
   });
 
   it('barcode128() emits GS k with the data', () => {
