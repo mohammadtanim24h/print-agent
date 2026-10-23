@@ -287,6 +287,51 @@ describe('tcp-raw transport — failures', () => {
       expect(transport.write(new Uint8Array([0x0a]))).rejects.toMatchObject({ code: 'not_open' }),
     );
   });
+
+  it('a write queued behind a failed one rejects disconnected (not not_open)', async () => {
+    const sockets = mockSocketFactory((sock) => {
+      sock.connect();
+      sock.write = () => {
+        /* first write never completes */
+      };
+    });
+    const transport = makeTransport(sockets);
+    await transport.open();
+    const first = transport.write(new Uint8Array([0x01])); // in flight, never acknowledged
+    const second = transport.write(new Uint8Array([0x02])); // queued behind it
+    // The link dies before the queued write's serialized attempt runs.
+    sockets.last()?.destroy();
+    await expect(first).rejects.toMatchObject({ code: 'disconnected' });
+    await expect(second).rejects.toMatchObject({ code: 'disconnected' });
+  });
+
+  it('a write queued across a close/reopen rejects disconnected instead of using the new link', async () => {
+    const sockets = mockSocketFactory((sock) => {
+      sock.connect();
+      sock.write = () => {
+        /* never calls cb */
+      };
+    });
+    const transport = makeTransport(sockets);
+    await transport.open();
+    const first = transport.write(new Uint8Array([0x01])); // in flight
+    const queued = transport.write(new Uint8Array([0x02])); // captured the first socket
+    await transport.close();
+    await transport.open(); // fresh connection epoch
+    await expect(first).rejects.toMatchObject({ code: 'disconnected' });
+    await expect(queued).rejects.toMatchObject({ code: 'disconnected' });
+    // The new connection received nothing from the stale queued write.
+    expect(sockets.sockets).toHaveLength(2);
+    expect(sockets.last()?.written).toEqual([]);
+  });
+
+  it('classifies ENETUNREACH as host_unreachable', async () => {
+    const sockets = mockSocketFactory((sock) => {
+      sock.failWithCode('ENETUNREACH');
+    });
+    const transport = makeTransport(sockets);
+    await expect(transport.open()).rejects.toMatchObject({ code: 'host_unreachable' });
+  });
 });
 
 describe('tcp-raw transport — healthCheck', () => {

@@ -120,7 +120,10 @@ export function createTcpRawTransport(options: TcpRawTransportOptions): PrinterT
       }
       if (socket !== sock) {
         return Promise.reject(
-          new TransportError('disconnected', `${target}: connection closed before write started`),
+          new TransportError(
+            'disconnected',
+            `${target}: write's connection was closed before it started`,
+          ),
         );
       }
       return new Promise<void>((resolve, reject) => {
