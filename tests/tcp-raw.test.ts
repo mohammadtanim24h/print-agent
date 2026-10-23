@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createTcpRawTransport } from '../src/main/transport/tcp-raw';
 import { mockSocketFactory, type MockSockets } from './helpers/mock-socket';
 
@@ -158,5 +158,152 @@ describe('tcp-raw transport — lifecycle', () => {
     });
     const transport = makeTransport(sockets);
     await expect(transport.open()).rejects.toMatchObject({ code: 'connect_timeout' });
+  });
+});
+
+describe('tcp-raw transport — failures', () => {
+  it('classifies ECONNREFUSED as connect_refused', async () => {
+    const sockets = mockSocketFactory((sock) => {
+      sock.refuse();
+    });
+    const transport = makeTransport(sockets);
+    await expect(transport.open()).rejects.toMatchObject({ code: 'connect_refused' });
+    expect(sockets.last()?.destroyed).toBe(true);
+  });
+
+  it('classifies EHOSTUNREACH as host_unreachable', async () => {
+    const sockets = mockSocketFactory((sock) => {
+      sock.unreachable();
+    });
+    const transport = makeTransport(sockets);
+    await expect(transport.open()).rejects.toMatchObject({ code: 'host_unreachable' });
+  });
+
+  it('times out when the printer never accepts the connection', async () => {
+    vi.useFakeTimers();
+    try {
+      const sockets = mockSocketFactory(() => {
+        /* never connects */
+      });
+      const transport = makeTransport(sockets);
+      const pending = transport.open();
+      const expectation = expect(pending).rejects.toMatchObject({ code: 'connect_timeout' });
+      await vi.advanceTimersByTimeAsync(3_000);
+      await expectation;
+      expect(sockets.last()?.destroyed).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('rejects non-IP hosts without touching the network (dns_unsupported)', async () => {
+    const sockets = mockSocketFactory((sock) => {
+      sock.connect();
+    });
+    const transport = createTcpRawTransport({
+      host: 'printer.local',
+      port: 9100,
+      socketFactory: sockets.factory,
+    });
+    await expect(transport.open()).rejects.toMatchObject({ code: 'dns_unsupported' });
+    expect(sockets.sockets).toHaveLength(0);
+  });
+
+  it('classifies a write callback error as write_failed', async () => {
+    const sockets = mockSocketFactory((sock) => {
+      sock.connect();
+      sock.write = (_data, cb) => {
+        cb(Object.assign(new Error('write EPIPE'), { code: 'EPIPE' }));
+      };
+    });
+    const transport = makeTransport(sockets);
+    await transport.open();
+    await expect(transport.write(new Uint8Array([0x0a]))).rejects.toMatchObject({
+      code: 'write_failed',
+    });
+  });
+
+  it('classifies a lost connection mid-write as disconnected', async () => {
+    const sockets = mockSocketFactory((sock) => {
+      sock.connect();
+      sock.write = () => {
+        sock.destroy(); // drop the link without invoking the write callback
+      };
+    });
+    const transport = makeTransport(sockets);
+    await transport.open();
+    await expect(transport.write(new Uint8Array([0x0a]))).rejects.toMatchObject({
+      code: 'disconnected',
+    });
+  });
+
+  it('rejects an in-flight write with disconnected when close() is called', async () => {
+    const sockets = mockSocketFactory((sock) => {
+      sock.connect();
+      sock.write = () => {
+        /* never calls cb */
+      };
+    });
+    const transport = makeTransport(sockets);
+    await transport.open();
+    const pending = transport.write(new Uint8Array([0x0a]));
+    await transport.close();
+    await expect(pending).rejects.toMatchObject({ code: 'disconnected' });
+  });
+
+  it('times out when the socket never accepts written bytes (write_timeout)', async () => {
+    vi.useFakeTimers();
+    try {
+      const sockets = mockSocketFactory((sock) => {
+        sock.connect();
+        sock.write = () => {
+          /* never calls cb — buffer full / link dead */
+        };
+      });
+      const transport = makeTransport(sockets);
+      await transport.open();
+      const pending = transport.write(new Uint8Array([0x0a]));
+      const expectation = expect(pending).rejects.toMatchObject({ code: 'write_timeout' });
+      await vi.advanceTimersByTimeAsync(5_000);
+      await expectation;
+      expect(sockets.last()?.destroyed).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('write() after a lost connection fails with not_open', async () => {
+    const sockets = mockSocketFactory((sock) => {
+      sock.connect();
+      queueMicrotask(() => {
+        queueMicrotask(() => {
+          sock.failWithCode('ECONNRESET');
+        });
+      });
+    });
+    const transport = makeTransport(sockets);
+    await transport.open();
+    await vi.waitFor(() =>
+      expect(transport.write(new Uint8Array([0x0a]))).rejects.toMatchObject({ code: 'not_open' }),
+    );
+  });
+});
+
+describe('tcp-raw transport — healthCheck', () => {
+  it('opens and closes a probe connection', async () => {
+    const sockets = mockSocketFactory((sock) => {
+      sock.connect();
+    });
+    const transport = makeTransport(sockets);
+    await expect(transport.healthCheck()).resolves.toBeUndefined();
+    expect(sockets.last()?.destroyed).toBe(true);
+  });
+
+  it('propagates classified failures', async () => {
+    const sockets = mockSocketFactory((sock) => {
+      sock.refuse();
+    });
+    const transport = makeTransport(sockets);
+    await expect(transport.healthCheck()).rejects.toMatchObject({ code: 'connect_refused' });
   });
 });

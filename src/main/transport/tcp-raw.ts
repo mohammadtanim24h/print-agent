@@ -110,10 +110,18 @@ export function createTcpRawTransport(options: TcpRawTransportOptions): PrinterT
   };
 
   const write = (bytes: Uint8Array): Promise<void> => {
+    // Capture the socket at call time: if the link dies (or close() runs)
+    // before the serialized attempt starts, the queued write must fail as
+    // 'disconnected' — not masquerade as not_open.
+    const sock = socket;
     const attempt = (): Promise<void> => {
-      const sock = socket;
       if (sock === null) {
         return Promise.reject(new TransportError('not_open', `${target}: transport is not open`));
+      }
+      if (socket !== sock) {
+        return Promise.reject(
+          new TransportError('disconnected', `${target}: connection closed before write started`),
+        );
       }
       return new Promise<void>((resolve, reject) => {
         const timer = setTimeout(() => {
