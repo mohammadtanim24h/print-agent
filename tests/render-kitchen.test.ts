@@ -83,6 +83,22 @@ describe('kitchen ticket template', () => {
     expect(decodeEscpos(r.bytes)).toContainEqual({ kind: 'cut', full: false });
   });
 
+  it('terminates the qty line when the item name sanitizes to empty (no glue)', () => {
+    const doc = makeDoc({
+      lines: [
+        { text: '\x01', qty: 2, emphasis: 'none', align: 'left' },
+        { text: 'Next Item', qty: 1, emphasis: 'none', align: 'left' },
+      ],
+    });
+    const r = renderDoc('kitchen_ticket', doc, makeRenderProfile());
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const texts = decodeEscpos(r.bytes).filter((e) => e.kind === 'text').map((e) => (e as { text: string }).text);
+    // The next item's text must start a fresh line, not glue onto "2x ".
+    expect(texts).toContain('Next Item');
+    expect(texts.some((t) => t.includes('2x') && t.includes('Next'))).toBe(false);
+  });
+
   it('still honors text_not_encodable when raster is off (non-ASCII qty line)', () => {
     const doc = makeDoc({ lines: [{ text: 'প্রিন্ট', qty: 1, emphasis: 'none', align: 'left' }] });
     const r = renderDoc('kitchen_ticket', doc, makeRenderProfile());

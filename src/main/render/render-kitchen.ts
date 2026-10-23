@@ -36,7 +36,11 @@ export function renderKitchen(doc: DocV1, ctx: RenderContext): void {
       enc.text(`${qtyToken} `);
     }
     const nameLines = wrapText(text, bodyWidth);
+    if (nameLines.length === 1 && nameLines[0] === '') {
+      enc.newline(); // empty-after-sanitize name: terminate the pending qty line
+    }
     nameLines.forEach((nameLine, i) => {
+      if (nameLine === '') return;
       if (i > 0) enc.text(' '.repeat(indent));
       writeText(ctx, nameLine, 'left', line.emphasis);
     });
