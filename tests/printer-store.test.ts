@@ -1,0 +1,98 @@
+import { describe, expect, it } from 'vitest';
+import { createPrinterStore } from '../src/main/printers/store';
+import type { SettingsFileAdapter } from '../src/main/services/settings';
+import { memoryAdapter } from './helpers/memory-adapter';
+import { makeDraft } from './helpers/printers';
+
+let idCounter = 0;
+function createStore(adapter: SettingsFileAdapter, report?: (message: string) => void) {
+  return createPrinterStore({
+    filePath: 'printers.json',
+    adapter,
+    // Deterministic but schema-valid UUIDs (PrinterProfileSchema requires z.uuid()).
+    newId: () => `00000000-0000-4000-8000-${String(++idCounter).padStart(12, '0')}`,
+    // exactOptionalPropertyTypes: omit `report` rather than pass undefined.
+    ...(report === undefined ? {} : { report }),
+  });
+}
+
+describe('printer store', () => {
+  it('starts empty when no file exists', async () => {
+    const store = await createStore(memoryAdapter(null));
+    expect(store.list()).toEqual([]);
+  });
+
+  it('adds a printer, assigns an id, persists atomically', async () => {
+    const adapter = memoryAdapter(null);
+    const store = await createStore(adapter);
+    const profile = await store.add(makeDraft());
+    expect(adapter.written).toHaveLength(1);
+    expect(JSON.parse(adapter.written[0] ?? '')).toEqual([profile]);
+    expect(store.get(profile.printerId)?.name).toBe('Kitchen');
+  });
+
+  it('round-trips a saved file', async () => {
+    const first = await createStore(memoryAdapter(null));
+    const saved = await first.add(makeDraft());
+    const raw = JSON.stringify([saved]);
+    const second = await createStore(memoryAdapter(raw));
+    expect(second.get(saved.printerId)?.printableDots).toBe(576);
+  });
+
+  it('starts empty on a corrupt file and reports it', async () => {
+    const reported: string[] = [];
+    const store = await createStore(memoryAdapter('{not json'), (m) => reported.push(m));
+    expect(store.list()).toEqual([]);
+    expect(reported).toHaveLength(1);
+  });
+
+  it('starts empty when the file has unknown fields (strict)', async () => {
+    const store = await createStore(
+      memoryAdapter(JSON.stringify([{ ...makeDraft(), printerId: 'x', admin: true }])),
+    );
+    expect(store.list()).toEqual([]);
+  });
+
+  it('rejects invalid drafts and persists nothing', async () => {
+    const adapter = memoryAdapter(null);
+    const store = await createStore(adapter);
+    await expect(store.add(makeDraft({ name: '' }))).rejects.toThrow();
+    await expect(
+      store.add(makeDraft({ transport: { kind: 'tcp_raw', host: '127.0.0.1', port: 9100 } })),
+    ).rejects.toThrow();
+    expect(store.list()).toHaveLength(0);
+    expect(adapter.written).toHaveLength(0);
+  });
+
+  it('updates a printer and persists', async () => {
+    const adapter = memoryAdapter(null);
+    const store = await createStore(adapter);
+    const saved = await store.add(makeDraft());
+    const updated = await store.update(saved.printerId, { name: 'Bar', role: 'bar' });
+    expect(updated.name).toBe('Bar');
+    expect(updated.role).toBe('bar');
+    expect(JSON.parse(adapter.written.at(-1) ?? '')).toEqual([updated]);
+  });
+
+  it('rejects an invalid update without persisting', async () => {
+    const store = await createStore(memoryAdapter(null));
+    const saved = await store.add(makeDraft());
+    await expect(store.update(saved.printerId, { printableDots: 9999 })).rejects.toThrow();
+    expect(store.get(saved.printerId)?.printableDots).toBe(576);
+  });
+
+  it('throws when updating an unknown id', async () => {
+    const store = await createStore(memoryAdapter(null));
+    await expect(store.update('missing', { name: 'X' })).rejects.toThrow('printer not found');
+  });
+
+  it('removes a printer and persists; returns false for unknown ids', async () => {
+    const adapter = memoryAdapter(null);
+    const store = await createStore(adapter);
+    const saved = await store.add(makeDraft());
+    expect(await store.remove('missing')).toBe(false);
+    expect(await store.remove(saved.printerId)).toBe(true);
+    expect(adapter.written.at(-1)).toBe('[]');
+    expect(store.get(saved.printerId)).toBeNull();
+  });
+});
