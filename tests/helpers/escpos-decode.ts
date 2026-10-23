@@ -107,6 +107,25 @@ export function decodeEscpos(bytes: Uint8Array): DecodedEvent[] {
         i += 3;
         continue;
       }
+      // Barcode parameter commands emitted by node-thermal-printer before the
+      // data command: GS H (HRI pos), GS f (HRI font), GS W (width), GS h
+      // (height) — each 3 bytes (1d cmd n).
+      if (cmd === 0x48 || cmd === 0x66 || cmd === 0x77 || cmd === 0x68) {
+        i += 3;
+        continue;
+      }
+      if (cmd === 0x6b) {
+        // GS k m n <n data bytes> (function-B shape as emitted by
+        // node-thermal-printer). For m=73 (CODE128) the payload carries a
+        // `{B` subset-designation prefix (counted in n).
+        const n = bytes[i + 3] ?? 0;
+        events.push({
+          kind: 'barcode',
+          data: Buffer.from(bytes.slice(i + 4, i + 4 + n)).toString('latin1'),
+        });
+        i += 4 + n;
+        continue;
+      }
       i += 2;
       continue;
     }
