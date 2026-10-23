@@ -83,6 +83,7 @@ export function writeText(ctx: RenderContext, s: string, align: Align, emphasis:
   ctx.enc.setEmphasis(emphasis);
   if (isAsciiPrintable(s)) {
     ctx.enc.text(s);
+    ctx.enc.newline(); // writeText owns line layout — every text line is terminated
     ctx.summary.textLines += 1;
     return;
   }
