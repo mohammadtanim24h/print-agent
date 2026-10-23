@@ -55,6 +55,13 @@ describe('renderDoc dispatch + guards', () => {
     if (r.ok) expect(r.summary.copies).toBe(3);
   });
 
+  it('classifies a toJSON-undefined payload as payload_too_large, never leaking internals', () => {
+    const evil = { toJSON: () => undefined };
+    const r = renderDoc('customer_receipt', evil);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe('payload_too_large');
+  });
+
   it('never returns raw injected commands even if the payload smuggles control chars', () => {
     const doc = makeDoc({ lines: [{ text: 'x\x1b@y\x1dV0z', emphasis: 'none', align: 'left' }] });
     const r = renderDoc('customer_receipt', doc, makeRenderProfile());

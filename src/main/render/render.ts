@@ -43,7 +43,7 @@ export function renderDoc(
     } catch {
       throw new RenderError('invalid_doc', 'payload is not JSON-serializable');
     }
-    if (Buffer.byteLength(json, 'utf8') > PAYLOAD_MAX_BYTES) {
+    if (typeof json !== 'string' || Buffer.byteLength(json, 'utf8') > PAYLOAD_MAX_BYTES) {
       throw new RenderError('payload_too_large', `payload exceeds ${String(PAYLOAD_MAX_BYTES)} bytes`);
     }
     const parsed = DocV1Schema.safeParse(payload);

@@ -10,6 +10,17 @@ import { isAsciiPrintable, sanitizeText } from './sanitize';
  * Diagnostic summary of a render — what the job engine logs and what the
  * support view shows. Wording never claims a physical print.
  */
+/** Closed set of diagnostic warning tokens (stable machine codes — CLAUDE.md). */
+export type RenderWarning =
+  | 'cut_skipped_unsupported'
+  | 'qr_skipped_unsupported'
+  | 'qr_skipped_invalid'
+  | 'barcode_skipped_unsupported'
+  | 'barcode_skipped_invalid'
+  | 'logo_skipped_no_asset_store'
+  | 'qr_skipped_kitchen'
+  | 'barcode_skipped_kitchen';
+
 export interface RenderSummary {
   docType: string;
   charsPerLine: number;
@@ -22,7 +33,7 @@ export interface RenderSummary {
   copies: number;
   cut: 'full' | 'partial' | 'none';
   features: { qr: boolean; barcode: boolean };
-  warnings: string[];
+  warnings: RenderWarning[];
   byteLength: number;
 }
 
