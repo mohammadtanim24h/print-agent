@@ -53,7 +53,13 @@ export function renderReceipt(doc: DocV1, ctx: RenderContext): void {
     } else {
       writeWrapped(ctx, qty + text, line.emphasis, line.align);
     }
-    if (line.note !== undefined) writeWrapped(ctx, `  ${sanitizeText(line.note).text}`, 'none');
+    if (line.note !== undefined) {
+      // Wrap at width-2 first, then indent: wrapText splits on spaces, so a
+      // pre-pended indent would be dropped on the first wrap segment.
+      for (const noteLine of wrapText(sanitizeText(line.note).text, ctx.profile.charsPerLine - 2)) {
+        writeText(ctx, `  ${noteLine}`, 'left', 'none');
+      }
+    }
   }
 
   if (doc.totals.length > 0) {

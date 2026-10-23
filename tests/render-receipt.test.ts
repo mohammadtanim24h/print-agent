@@ -65,12 +65,12 @@ describe('customer receipt template', () => {
     expect(t.some((x) => x.includes('6.50'))).toBe(true);
   });
 
-  it('renders notes indented under their line', () => {
+  it('renders notes indented two spaces under their line', () => {
     const doc = makeDoc({ lines: [{ text: 'Coffee', qty: 1, note: 'extra hot', emphasis: 'none', align: 'left' }] });
     const r = renderDoc('customer_receipt', doc, makeRenderProfile());
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(texts(r.bytes).join('\n')).toContain('extra hot');
+    expect(texts(r.bytes)).toContain('  extra hot');
   });
 
   it('renders discounts as negative amounts', () => {
