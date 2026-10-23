@@ -6,11 +6,65 @@ export type PrinterRole = (typeof PRINTER_ROLES)[number];
 
 /**
  * Approved-destination policy (spec §3): hosts must be IPv4/IPv6 literals.
- * Rejected: unspecified, loopback, multicast and reserved ranges. Private LAN
- * ranges (10/8, 172.16/12, 192.168/16, IPv6 ULA fc00::/7) are the normal case
- * and allowed. No DNS — there is no name-resolution surface in v1, and no
- * network scanning anywhere.
+ * Rejected: unspecified, loopback, and multicast in every notation —
+ * including zone-scoped (`::1%eth0`) and IPv4-mapped/compatible
+ * (`::ffff:127.0.0.1`) spellings, i.e. the whole `::/80` IPv6 prefix — plus
+ * the embedded-IPv4 forms of those addresses. Allowed: global unicast,
+ * private LAN ranges (10/8, 172.16/12, 192.168/16, ULA fc00::/7), link-local
+ * and documentation ranges (a failed connect is a normal operational error).
+ * No DNS — there is no name-resolution surface in v1 — and no network
+ * scanning anywhere.
  */
+
+/** Expands an IPv6 literal into its 8 16-bit groups, or null when the string
+ *  is malformed, zone-scoped, or uses unsupported syntax. */
+function expandIPv6Groups(host: string): number[] | null {
+  if (host.includes('%')) return null; // zone-scoped (e.g. '::1%eth0') — not a plain literal
+  let head: string[];
+  let tail: string[];
+  const compression = host.indexOf('::');
+  if (compression === -1) {
+    head = host.split(':');
+    tail = [];
+    if (head.length !== 8) return null;
+  } else {
+    if (host.indexOf('::', compression + 1) !== -1) return null; // only one '::'
+    const headPart = host.slice(0, compression);
+    const tailPart = host.slice(compression + 2);
+    head = headPart === '' ? [] : headPart.split(':');
+    tail = tailPart === '' ? [] : tailPart.split(':');
+    if (head.length + tail.length > 7) return null;
+  }
+  const parts = [...head, ...tail];
+  const groups: number[] = [];
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i];
+    if (part === undefined) return null;
+    if (part.includes('.')) {
+      // Embedded IPv4 — only valid as the final group pair.
+      if (i !== parts.length - 1) return null;
+      const octets = part.split('.').map((o) => Number.parseInt(o, 10));
+      if (octets.length !== 4) return null;
+      if (octets.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) {
+        return null;
+      }
+      let embedded = 0;
+      for (const octet of octets) {
+        embedded = embedded * 256 + octet;
+      }
+      groups.push(Math.floor(embedded / 65536), embedded % 65536);
+    } else if (part === '' || !/^[0-9a-fA-F]{1,4}$/.test(part)) {
+      return null;
+    } else {
+      groups.push(Number.parseInt(part, 16));
+    }
+  }
+  while (groups.length < 8) {
+    groups.splice(head.length, 0, 0); // '::' expands to zeros at the compression point
+  }
+  return groups;
+}
+
 export function isApprovedEndpointHost(host: string): boolean {
   const version = isIP(host);
   if (version === 4) {
@@ -18,8 +72,16 @@ export function isApprovedEndpointHost(host: string): boolean {
     return first !== 0 && first !== 127 && first < 224;
   }
   if (version === 6) {
-    const h = host.toLowerCase();
-    return h !== '::' && h !== '::1' && !h.startsWith('ff');
+    const groups = expandIPv6Groups(host);
+    if (groups === null || groups.length !== 8) return false;
+    const firstGroup = groups[0] ?? 0x1_0000; // length-checked above; sentinel never passes
+    const multicast = firstGroup >>> 8 === 0xff; // ff00::/8
+    const compressedPrefix =
+      groups[0] === 0 && groups[1] === 0 && groups[2] === 0 && groups[3] === 0 && groups[4] === 0;
+    // '::/80' covers '::', '::1', and every IPv4-mapped/compatible spelling
+    // ('::ffff:127.0.0.1', '::127.0.0.1', '0:0:0:0:0:0:0:1', …). No LAN
+    // printer is legitimately addressed inside that prefix.
+    return !multicast && !compressedPrefix;
   }
   return false;
 }
@@ -33,7 +95,7 @@ const EndpointTcpRawSchema = z.strictObject({
       isApprovedEndpointHost,
       'host is loopback, unspecified, multicast or otherwise not approved',
     ),
-  port: z.number().int().min(1).max(65535),
+  port: z.number().int().min(1).max(65535).default(9100),
 });
 
 export const PrinterCapabilitiesSchema = z.strictObject({

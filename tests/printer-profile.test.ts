@@ -23,6 +23,14 @@ describe('approved endpoint host policy', () => {
     ['printer.local', false],
     ['example.com', false],
     ['', false],
+    ['::1%eth0', false],
+    ['::%1', false],
+    ['0:0:0:0:0:0:0:1', false],
+    ['::ffff:127.0.0.1', false],
+    ['::ffff:7f00:1', false],
+    ['::127.0.0.1', false],
+    ['fe80::1', true],
+    ['2001:db8::1', true],
   ])('%s → %s', (host, approved) => {
     expect(isApprovedEndpointHost(host)).toBe(approved);
   });
@@ -70,5 +78,32 @@ describe('printer profile schema', () => {
     ],
   ])('rejects %s', (_label, overrides) => {
     expect(PrinterDraftSchema.safeParse(makeDraft(overrides as never)).success).toBe(false);
+  });
+
+  it('rejects unknown fields nested inside capabilities (strict)', () => {
+    const draft = makeDraft();
+    const result = PrinterProfileSchema.safeParse({
+      ...draft,
+      capabilities: { ...draft.capabilities, extra: true },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('rejects unknown fields nested inside transport (strict)', () => {
+    const draft = makeDraft();
+    const result = PrinterProfileSchema.safeParse({
+      ...draft,
+      transport: { ...draft.transport, gateway: '192.168.1.1' },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('defaults an omitted port to 9100', () => {
+    const draft = makeDraft();
+    const parsed = PrinterDraftSchema.parse({
+      ...draft,
+      transport: { kind: 'tcp_raw', host: '192.168.1.50' },
+    });
+    expect(parsed.transport.port).toBe(9100);
   });
 });
