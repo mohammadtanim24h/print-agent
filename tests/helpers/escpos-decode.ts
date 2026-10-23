@@ -89,14 +89,15 @@ export function decodeEscpos(bytes: Uint8Array): DecodedEvent[] {
       if (cmd === 0x28 && bytes[i + 2] === 0x6b) {
         // GS ( k — QR function segments: pL pH cn fn <params/data>.
         // Epson layout: cn at i+5 (0x31 = QR), fn at i+6 (0x50 = store data),
-        // data from i+7; pL/pH counts cn..last data byte.
+        // m at i+7 (0x30), data from i+8; pL/pH counts cn..last data byte
+        // (node-thermal-printer emits the m byte — verified against epson.js).
         const segLen = (bytes[i + 3] ?? 0) + (bytes[i + 4] ?? 0) * 256;
         const cn = bytes[i + 5];
         const fn = bytes[i + 6];
         if (cn === 0x31 && fn === 0x50) {
           events.push({
             kind: 'qr',
-            data: Buffer.from(bytes.slice(i + 7, i + 4 + segLen)).toString('latin1'),
+            data: Buffer.from(bytes.slice(i + 8, i + 4 + segLen)).toString('latin1'),
           });
         }
         i += 4 + segLen;

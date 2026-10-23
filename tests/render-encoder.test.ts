@@ -9,15 +9,15 @@ describe('ThermalPrinterEncoder', () => {
     const b = enc.bytes();
     expect(b[0]).toBe(0x1b);
     expect(b[1]).toBe(0x40);
-    // ESC t n present right after init
-    expect(b[3]).toBe(0x1b);
-    expect(b[4]).toBe(0x74);
-    expect(b[5]).toBe(0x00);
+    // ESC t n immediately after init
+    expect(b[2]).toBe(0x1b);
+    expect(b[3]).toBe(0x74);
+    expect(b[4]).toBe(0x00);
   });
 
   it('emits ESC t 2 for cp850', () => {
     const enc = new ThermalPrinterEncoder(makeRenderProfile({ codepage: 'cp850' }));
-    expect(enc.bytes()[5]).toBe(0x02);
+    expect(enc.bytes()[4]).toBe(0x02);
   });
 
   it('setAlign emits ESC a n once per change', () => {

@@ -78,13 +78,12 @@ export class ThermalPrinterEncoder implements EscposEncoder {
       width: profile.charsPerLine,
     });
     // The constructor auto-appends ESC t n (setCharacterSet); start from a
-    // clean stream and emit the init prefix ourselves. The prefix is a fixed
-    // 6-byte block (shape pinned by tests/render-encoder.test.ts): ESC @
-    // (reset), a blank ' ' at offset 2 (printable ASCII — inert on hardware
-    // and decoder/fuzz-clean, unlike NUL or an LF feed), then ESC t <table>.
+    // clean stream and emit the init prefix ourselves. The prefix is the
+    // contiguous 5-byte block pinned by tests/render-encoder.test.ts:
+    // ESC @ (reset) immediately followed by ESC t <table>.
     this.printer.setBuffer(Buffer.alloc(0));
     this.printer.append(
-      Buffer.from([0x1b, 0x40, 0x20, 0x1b, 0x74, codepageTable(profile.codepage)]),
+      Buffer.from([0x1b, 0x40, 0x1b, 0x74, codepageTable(profile.codepage)]),
     );
   }
 
