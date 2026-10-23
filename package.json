@@ -24,7 +24,9 @@
     "no-listen": "node scripts/no-listen-smoke.mjs"
   },
   "dependencies": {
+    "@napi-rs/canvas": "1.0.13",
     "electron-log": "5.4.4",
+    "node-thermal-printer": "4.6.1",
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "zod": "4.6.7"
