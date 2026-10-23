@@ -50,7 +50,7 @@ export default defineConfig(
     },
   },
   {
-    files: ['tests/**/*.ts'],
+    files: ['tests/**/*.ts', 'tests/**/*.tsx'],
     rules: {
       // Tests may assert via any-typed mocks without tripping strict rules.
       '@typescript-eslint/no-unsafe-assignment': 'off',

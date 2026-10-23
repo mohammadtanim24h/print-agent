@@ -4,7 +4,8 @@
     "target": "ES2023",
     "module": "ESNext",
     "moduleResolution": "bundler",
-    "lib": ["ES2023"],
+    "jsx": "react-jsx",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "types": ["node"],
     "esModuleInterop": true,
     "strict": true,
@@ -24,7 +25,10 @@
     "src/main/**/*.ts",
     "src/preload/**/*.ts",
     "src/shared/**/*.ts",
+    "src/renderer/src/**/*.ts",
+    "src/renderer/src/**/*.tsx",
     "tests/**/*.ts",
+    "tests/ui/**/*.tsx",
     "electron.vite.config.ts",
     "vitest.config.ts"
   ]

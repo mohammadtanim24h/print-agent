@@ -15,8 +15,11 @@ export function getWindowOptions(
 ): BrowserWindowConstructorOptions {
   const isDev = env.devServerUrl !== undefined;
   return {
-    width: 420,
-    height: 520,
+    // Roomy enough for the six-screen local UI, still tray-popover sized.
+    width: 820,
+    height: 620,
+    minWidth: 480,
+    minHeight: 520,
     show: false, // tray-first shell; window shown on tray click
     autoHideMenuBar: true,
     backgroundColor: '#101418',
