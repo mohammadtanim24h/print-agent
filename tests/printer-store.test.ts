@@ -95,4 +95,26 @@ describe('printer store', () => {
     expect(adapter.written.at(-1)).toBe('[]');
     expect(store.get(saved.printerId)).toBeNull();
   });
+
+  it('rejects attempts to re-key a printer via update', async () => {
+    const store = await createStore(memoryAdapter(null));
+    const saved = await store.add(makeDraft());
+    await expect(
+      store.update(saved.printerId, {
+        printerId: '00000000-0000-4000-8000-000000000099',
+      } as never),
+    ).rejects.toThrow('printerId is immutable');
+    expect(store.get(saved.printerId)?.printerId).toBe(saved.printerId);
+  });
+
+  it('rolls back in-memory state when persistence fails', async () => {
+    const adapter = memoryAdapter(null);
+    const failing: SettingsFileAdapter = {
+      read: (path) => adapter.read(path),
+      writeAtomic: () => Promise.reject(new Error('disk full')),
+    };
+    const store = await createStore(failing);
+    await expect(store.add(makeDraft())).rejects.toThrow('disk full');
+    expect(store.list()).toEqual([]);
+  });
 });

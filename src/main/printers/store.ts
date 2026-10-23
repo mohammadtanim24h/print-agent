@@ -46,33 +46,34 @@ export async function createPrinterStore(options: {
     }
   }
 
-  const persist = async (): Promise<void> => {
-    await adapter.writeAtomic(filePath, JSON.stringify(cached));
-  };
-
   return {
     list: () => [...cached],
     get: (printerId) => cached.find((p) => p.printerId === printerId) ?? null,
     async add(draft) {
       const validated = PrinterDraftSchema.parse(draft);
       const profile: PrinterProfile = { ...validated, printerId: newId() };
-      cached = [...cached, profile];
-      await persist();
+      const next = [...cached, profile];
+      await adapter.writeAtomic(filePath, JSON.stringify(next));
+      cached = next;
       return profile;
     },
     async update(printerId, patch) {
       const current = cached.find((p) => p.printerId === printerId);
       if (current === undefined) throw new Error(`printer not found: ${printerId}`);
+      if ('printerId' in patch) {
+        throw new Error('printerId is immutable'); // strict re-parse alone would accept a valid UUID
+      }
       const next = PrinterProfileSchema.parse({ ...current, ...patch });
-      cached = cached.map((p) => (p.printerId === printerId ? next : p));
-      await persist();
+      const nextList = cached.map((p) => (p.printerId === printerId ? next : p));
+      await adapter.writeAtomic(filePath, JSON.stringify(nextList));
+      cached = nextList;
       return next;
     },
     async remove(printerId) {
-      const before = cached.length;
-      cached = cached.filter((p) => p.printerId !== printerId);
-      if (cached.length === before) return false;
-      await persist();
+      const nextList = cached.filter((p) => p.printerId !== printerId);
+      if (nextList.length === cached.length) return false;
+      await adapter.writeAtomic(filePath, JSON.stringify(nextList));
+      cached = nextList;
       return true;
     },
   };
