@@ -23,8 +23,10 @@ export type Align = (typeof ALIGN)[number];
 
 export const DocLineSchema = z.strictObject({
   text: bytes(96),
-  qty: z.number().min(0).optional(),
-  unit_price: z.number().int().optional(), // integer minor units; negative = discount
+  // Monetary integers are capped at 2^53-1: above that, JS numbers silently
+  // lose the low-order cents.
+  qty: z.number().min(0).max(Number.MAX_SAFE_INTEGER).optional(),
+  unit_price: z.number().int().max(Number.MAX_SAFE_INTEGER).optional(), // integer minor units; negative = discount
   note: bytes(64).optional(),
   emphasis: z.enum(EMPHASIS).default('none'),
   align: z.enum(ALIGN).default('left'),
@@ -49,7 +51,7 @@ export const DocV1Schema = z.strictObject({
     .array(
       z.strictObject({
         label: bytes(24),
-        amount_minor: z.number().int(),
+        amount_minor: z.number().int().max(Number.MAX_SAFE_INTEGER),
         emphasis: z.enum(['none', 'bold']).default('none'),
       }),
     )
@@ -58,8 +60,8 @@ export const DocV1Schema = z.strictObject({
     .array(
       z.strictObject({
         method: bytes(16),
-        amount_minor: z.number().int(),
-        change_minor: z.number().int().optional(),
+        amount_minor: z.number().int().max(Number.MAX_SAFE_INTEGER),
+        change_minor: z.number().int().max(Number.MAX_SAFE_INTEGER).optional(),
       }),
     )
     .default([]),
