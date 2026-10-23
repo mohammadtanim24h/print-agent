@@ -15,8 +15,12 @@ export interface TcpRawTransportOptions {
 }
 
 function classifyConnectError(err: NodeJS.ErrnoException, target: string): TransportError {
-  const code: TransportErrorCode =
-    err.code === 'EHOSTUNREACH' || err.code === 'ENETUNREACH' ? 'host_unreachable' : 'connect_refused';
+  let code: TransportErrorCode = 'connect_refused';
+  if (err.code === 'EHOSTUNREACH' || err.code === 'ENETUNREACH') {
+    code = 'host_unreachable';
+  } else if (err.code === 'ETIMEDOUT') {
+    code = 'connect_timeout';
+  }
   return new TransportError(code, `${target}: ${err.message}`, { cause: err });
 }
 
@@ -28,6 +32,8 @@ function classifyWriteError(err: Error): TransportError {
  * Outbound TCP raw transport (architecture §3.4): Node `net` to <ip>:9100.
  * Fire-and-forget — a resolved `write()` means kernel acceptance, never a
  * physical print. Hosts must be IP literals; DNS is rejected (spec §3).
+ * Writes are serialized; `open()` coalesces concurrent calls; `close()`
+ * resolves only after the socket close event (real net sockets close async).
  */
 export function createTcpRawTransport(options: TcpRawTransportOptions): PrinterTransport {
   const { host, port, socketFactory } = options;
@@ -35,9 +41,11 @@ export function createTcpRawTransport(options: TcpRawTransportOptions): PrinterT
   const writeTimeoutMs = options.writeTimeoutMs ?? DEFAULT_WRITE_TIMEOUT_MS;
   const target = `${host}:${String(port)}`;
 
-  let socket: TransportSocket | null = null;
-  /** Rejects the operation currently in flight (invoked by the close/error watchers). */
+  let socket: TransportSocket | null = null; // connected
+  let connecting: TransportSocket | null = null; // connect in flight
+  let pendingOpen: Promise<void> | null = null; // coalesces concurrent open() calls
   let failInFlight: ((error: TransportError) => void) | null = null;
+  let writeTail: Promise<void> = Promise.resolve(); // serializes writes
 
   const socketDied = (error: TransportError): void => {
     socket = null;
@@ -46,74 +54,115 @@ export function createTcpRawTransport(options: TcpRawTransportOptions): PrinterT
     fail?.(error);
   };
 
-  const open = async (): Promise<void> => {
-    if (socket !== null) return; // idempotent
+  const open = (): Promise<void> => {
+    if (pendingOpen !== null) return pendingOpen;
+    if (socket !== null) return Promise.resolve(); // idempotent
     if (isIP(host) === 0) {
-      throw new TransportError('dns_unsupported', `${target}: host must be an IPv4/IPv6 literal`);
+      return Promise.reject(
+        new TransportError('dns_unsupported', `${target}: host must be an IPv4/IPv6 literal`),
+      );
     }
     const sock = socketFactory({ host, port });
-    await new Promise<void>((resolve, reject) => {
+    connecting = sock;
+    const attempt = new Promise<void>((resolve, reject) => {
       let settled = false;
-      const timer = setTimeout(
-        () => { settle(
-            new TransportError(
-              'connect_timeout',
-              `${target}: connect timed out after ${String(connectTimeoutMs)}ms`,
-            ),
-          ); },
-        connectTimeoutMs,
-      );
-      const settle = (error?: TransportError): void => {
+      const timer = setTimeout(() => {
+        finish(
+          new TransportError(
+            'connect_timeout',
+            `${target}: connect timed out after ${String(connectTimeoutMs)}ms`,
+          ),
+        );
+      }, connectTimeoutMs);
+      const finish = (error?: TransportError): void => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        pendingOpen = null;
+        connecting = null;
         if (error === undefined) {
           // Adopt persistent watchers for the write phase.
-          sock.on('error', (err) => { socketDied(classifyWriteError(err)); });
-          sock.on('close', () => { socketDied(new TransportError('disconnected', `${target}: connection lost`)); });
+          sock.on('error', (err) => {
+            socketDied(classifyWriteError(err));
+          });
+          sock.on('close', () => {
+            socketDied(new TransportError('disconnected', `${target}: connection lost`));
+          });
           socket = sock;
           resolve();
         } else {
           reject(error);
-          sock.destroy(); // emits 'close'; settle is already a no-op
+          sock.destroy(); // emits 'close'; finish is already a no-op
         }
       };
-      sock.on('connect', () => { settle(); });
-      sock.on('error', (err) => { settle(classifyConnectError(err, target)); });
-      sock.on('close', () => { settle(new TransportError('disconnected', `${target}: closed before connect completed`)); });
-    });
-  };
-
-  const write = async (bytes: Uint8Array): Promise<void> => {
-    const sock = socket;
-    if (sock === null) throw new TransportError('not_open', `${target}: transport is not open`);
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        failInFlight = null;
-        sock.destroy(); // 'close' watcher clears socket state
-        reject(new TransportError('write_timeout', `${target}: write timed out after ${String(writeTimeoutMs)}ms`));
-      }, writeTimeoutMs);
-      failInFlight = (error) => {
-        clearTimeout(timer);
-        reject(error);
-      };
-      sock.write(bytes, (err) => {
-        if (failInFlight === null) return; // already timed out or connection died
-        failInFlight = null;
-        clearTimeout(timer);
-        if (err !== null) reject(classifyWriteError(err));
-        else resolve();
+      sock.on('connect', () => {
+        finish();
+      });
+      sock.on('error', (err) => {
+        finish(classifyConnectError(err, target));
+      });
+      sock.on('close', () => {
+        finish(new TransportError('disconnected', `${target}: closed before connect completed`));
       });
     });
+    pendingOpen = attempt;
+    return attempt;
+  };
+
+  const write = (bytes: Uint8Array): Promise<void> => {
+    const attempt = (): Promise<void> => {
+      const sock = socket;
+      if (sock === null) {
+        return Promise.reject(new TransportError('not_open', `${target}: transport is not open`));
+      }
+      return new Promise<void>((resolve, reject) => {
+        const timer = setTimeout(() => {
+          failInFlight = null;
+          sock.destroy(); // 'close' watcher clears socket state
+          reject(
+            new TransportError(
+              'write_timeout',
+              `${target}: write timed out after ${String(writeTimeoutMs)}ms`,
+            ),
+          );
+        }, writeTimeoutMs);
+        failInFlight = (error) => {
+          clearTimeout(timer);
+          reject(error);
+        };
+        sock.write(bytes, (err) => {
+          if (failInFlight === null) return; // already timed out or connection died
+          failInFlight = null;
+          clearTimeout(timer);
+          if (err !== null) {
+            reject(classifyWriteError(err));
+          } else {
+            resolve();
+          }
+        });
+      });
+    };
+    // Serialize: each write starts only after the previous one settles.
+    const result = writeTail.then(attempt);
+    writeTail = result.then(
+      () => {},
+      () => {},
+    );
+    return result;
   };
 
   const close = (): Promise<void> => {
-    const sock = socket;
-    if (sock !== null) {
-      // 'close' watcher → socketDied → any in-flight op rejects with 'disconnected'.
+    const sock = connecting ?? socket;
+    if (sock === null) return Promise.resolve(); // idempotent
+    // Resolves on the socket's close event — callers never observe a
+    // stale-open window. During connect, the connect-phase 'close' watcher
+    // rejects the pending open() with 'disconnected'.
+    return new Promise<void>((resolve) => {
+      sock.on('close', () => {
+        resolve();
+      });
       sock.destroy();
-    }
-    return Promise.resolve(); // idempotent when already closed
+    });
   };
 
   const healthCheck = async (): Promise<void> => {
