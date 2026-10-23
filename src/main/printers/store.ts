@@ -51,7 +51,14 @@ export async function createPrinterStore(options: {
     get: (printerId) => cached.find((p) => p.printerId === printerId) ?? null,
     async add(draft) {
       const validated = PrinterDraftSchema.parse(draft);
-      const profile: PrinterProfile = { ...validated, printerId: newId() };
+      const printerId = newId();
+      // Spec §4: the store enforces printerId uniqueness. crypto.randomUUID
+      // collisions are astronomically unlikely — fail loudly rather than
+      // silently shadowing an existing profile.
+      if (cached.some((p) => p.printerId === printerId)) {
+        throw new Error(`duplicate printerId: ${printerId}`);
+      }
+      const profile: PrinterProfile = { ...validated, printerId };
       const next = [...cached, profile];
       await adapter.writeAtomic(filePath, JSON.stringify(next));
       cached = next;

@@ -117,4 +117,16 @@ describe('printer store', () => {
     await expect(store.add(makeDraft())).rejects.toThrow('disk full');
     expect(store.list()).toEqual([]);
   });
+
+  it('rejects a colliding generated id instead of shadowing', async () => {
+    const store = await createStore(memoryAdapter(null));
+    const saved = await store.add(makeDraft());
+    const colliding = await createPrinterStore({
+      filePath: 'printers.json',
+      adapter: memoryAdapter(JSON.stringify([saved])),
+      newId: () => saved.printerId,
+    });
+    await expect(colliding.add(makeDraft({ name: 'Bar' }))).rejects.toThrow('duplicate printerId');
+    expect(colliding.list()).toHaveLength(1);
+  });
 });

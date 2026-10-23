@@ -107,15 +107,6 @@ export const PrinterCapabilitiesSchema = z.strictObject({
 });
 export type PrinterCapabilities = z.output<typeof PrinterCapabilitiesSchema>;
 
-/** Conservative capability defaults (printer-compatibility.md §4 policy). */
-export const PRINTER_CAPABILITIES_DEFAULTS: PrinterCapabilities = {
-  cut: false,
-  qrCode: false,
-  barcode128: false,
-  statusPolling: false,
-  cashDrawer: false,
-};
-
 export const PrinterProfileSchema = z.strictObject({
   printerId: z.uuid(),
   name: z.string().min(1).max(64),
