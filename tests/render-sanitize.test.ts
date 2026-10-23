@@ -7,10 +7,12 @@ describe('sanitizeText', () => {
     expect(sanitizeText(input)).toEqual({ text: 'ABCDEF', stripped: 5 });
   });
 
-  it('strips an attempted ESC/POS injection intact', () => {
+  it('leaves an attempted ESC/POS injection inert (introducers stripped)', () => {
     const evil = 'x\x1b@y\x1dV0z'; // ESC @ init + GS V cut injection attempt
     const { text, stripped } = sanitizeText(evil);
-    expect(text).toBe('xyz');
+    // Only the control-char introducers are stripped; the orphaned printable
+    // bytes print as text and carry no command semantics.
+    expect(text).toBe('x@yV0z');
     expect(stripped).toBe(2);
   });
 
