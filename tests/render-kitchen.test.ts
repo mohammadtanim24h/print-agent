@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { renderDoc } from '../src/main/render/render';
-import { decodeEscpos } from './helpers/escpos-decode';
+import { decodeEscpos, decodeLines } from './helpers/escpos-decode';
 import { makeDoc, makeRenderProfile } from './helpers/render';
 
 function texts(bytes: Uint8Array): string[] {
@@ -93,10 +93,11 @@ describe('kitchen ticket template', () => {
     const r = renderDoc('kitchen_ticket', doc, makeRenderProfile());
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    const texts = decodeEscpos(r.bytes).filter((e) => e.kind === 'text').map((e) => (e as { text: string }).text);
-    // The next item's text must start a fresh line, not glue onto "2x ".
-    expect(texts).toContain('Next Item');
-    expect(texts.some((t) => t.includes('2x') && t.includes('Next'))).toBe(false);
+    const lines = decodeLines(r.bytes);
+    expect(lines.some((l) => l.includes('Next Item'))).toBe(true);
+    // Pre-fix, the empty name left "2x " unterminated and the next item
+    // glued onto it as one physical line.
+    expect(lines.some((l) => l.includes('2x') && l.includes('Next'))).toBe(false);
   });
 
   it('still honors text_not_encodable when raster is off (non-ASCII qty line)', () => {

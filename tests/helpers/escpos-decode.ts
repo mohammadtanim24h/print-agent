@@ -128,3 +128,22 @@ export function decodeEscpos(bytes: Uint8Array): DecodedEvent[] {
   flush();
   return events;
 }
+
+/**
+ * Physical lines reconstructed from the decoded stream: text events are
+ * accumulated across style/command boundaries until each `lf`. Images, QR
+ * and other inline payloads appear as gaps (they carry no text).
+ */
+export function decodeLines(bytes: Uint8Array): string[] {
+  const lines: string[] = [];
+  let current = '';
+  for (const event of decodeEscpos(bytes)) {
+    if (event.kind === 'text') current += event.text;
+    else if (event.kind === 'lf') {
+      lines.push(current);
+      current = '';
+    }
+  }
+  if (current !== '') lines.push(current);
+  return lines;
+}
