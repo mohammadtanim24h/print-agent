@@ -1,74 +1,116 @@
-import { useEffect, useState } from 'react';
-import type { AgentInfo, AppSettings } from '../../shared/ipc-contract';
+import { useState } from 'react';
+import { useAsync, useService } from './services/service-context';
+import {
+  GearIcon,
+  GaugeIcon,
+  ListIcon,
+  PlugIcon,
+  PrinterIcon,
+  PulseIcon,
+  ReceiptIcon,
+} from './ui/icons';
+import { Timestamp } from './ui/primitives';
+import type { ScreenId } from './ui/screens/OverviewScreen';
+import { OverviewScreen } from './ui/screens/OverviewScreen';
+import { SetupScreen } from './ui/screens/SetupScreen';
+import { PrintersScreen } from './ui/screens/PrintersScreen';
+import { JobHistoryScreen } from './ui/screens/JobHistoryScreen';
+import { SettingsScreen } from './ui/screens/SettingsScreen';
+import { DiagnosticsScreen } from './ui/screens/DiagnosticsScreen';
 
-// Local-only UI (architecture.md §3.9). All state comes through the
-// validated contextBridge API; the renderer never touches the network.
+const NAV: ReadonlyArray<{
+  readonly id: ScreenId;
+  readonly label: string;
+  readonly Icon: (props: { readonly size?: number }) => React.JSX.Element;
+}> = [
+  { id: 'overview', label: 'Overview', Icon: GaugeIcon },
+  { id: 'setup', label: 'Setup', Icon: PlugIcon },
+  { id: 'printers', label: 'Printers', Icon: PrinterIcon },
+  { id: 'jobs', label: 'Job history', Icon: ListIcon },
+  { id: 'settings', label: 'Settings', Icon: GearIcon },
+  { id: 'diagnostics', label: 'Diagnostics', Icon: PulseIcon },
+];
+
 export function App(): React.JSX.Element {
-  const [info, setInfo] = useState<AgentInfo | null>(null);
-  const [settings, setSettings] = useState<AppSettings | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const service = useService();
+  const [screen, setScreen] = useState<ScreenId>('overview');
+  const snapshotState = useAsync(() => service.getSnapshot(), [service]);
+  const identity = snapshotState.data?.identity ?? null;
 
-  useEffect(() => {
-    void window.printAgent
-      .getAgentInfo()
-      .then(setInfo)
-      .catch((e: unknown) => {
-        setError(String(e));
-      });
-    void window.printAgent
-      .getSettings()
-      .then(setSettings)
-      .catch((e: unknown) => {
-        setError(String(e));
-      });
-  }, []);
-
-  const toggleLaunchAtLogin = (enabled: boolean): void => {
-    void window.printAgent
-      .setLaunchAtLogin(enabled)
-      .then(setSettings)
-      .catch((e: unknown) => {
-        setError(String(e));
-      });
+  const navigate = (next: ScreenId): void => {
+    setScreen(next);
   };
 
   return (
-    <main className="shell">
-      <h1>Print Agent</h1>
-      {error !== null && <p className="error">{error}</p>}
-      <section className="card">
-        <h2>Status</h2>
-        {info === null ? (
-          <p>Loading…</p>
-        ) : (
-          <dl>
-            <dt>Version</dt>
-            <dd>{info.version}</dd>
-            <dt>Cloud connection</dt>
-            <dd>Not configured (disabled in this phase)</dd>
-          </dl>
+    <div className="app">
+      <nav className="sidebar" aria-label="Sections">
+        <div className="brand">
+          <span className="brand-mark" aria-hidden="true">
+            <ReceiptIcon size={18} />
+          </span>
+          <span className="brand-name">
+            Print Agent
+            <span className="brand-sub">kitchen &amp; receipt printing</span>
+          </span>
+        </div>
+        <ul className="nav">
+          {NAV.map(({ id, label, Icon }) => (
+            <li key={id}>
+              <button
+                type="button"
+                className={`nav-item${screen === id ? ' nav-item-active' : ''}`}
+                aria-current={screen === id ? 'page' : undefined}
+                onClick={() => {
+                  navigate(id);
+                }}
+              >
+                <Icon size={16} />
+                <span>{label}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+        <div className="sidebar-foot">
+          {identity !== null ? (
+            <>
+              <span className="sidebar-restaurant">{identity.restaurantName}</span>
+              <span className="sidebar-device mono">{identity.agentName}</span>
+            </>
+          ) : (
+            <span className="sidebar-device">Not paired</span>
+          )}
+          {service.demo && <span className="demo-tag">demo data</span>}
+        </div>
+      </nav>
+
+      <main className="content">
+        {screen === 'overview' && <OverviewScreen onNavigate={navigate} />}
+        {screen === 'setup' && (
+          <SetupScreen
+            onPaired={() => {
+              navigate('overview');
+            }}
+          />
         )}
-      </section>
-      <section className="card">
-        <h2>Settings</h2>
-        {settings === null ? (
-          <p>Loading…</p>
-        ) : (
-          <label className="toggle">
-            <input
-              type="checkbox"
-              checked={settings.launchAtLogin}
-              onChange={(e) => {
-                toggleLaunchAtLogin(e.target.checked);
-              }}
-            />
-            Start Print Agent when I log in
-          </label>
-        )}
-      </section>
-      <button className="quit" type="button" onClick={() => void window.printAgent.quitApp()}>
-        Quit Print Agent
-      </button>
-    </main>
+        {screen === 'printers' && <PrintersScreen />}
+        {screen === 'jobs' && <JobHistoryScreen />}
+        {screen === 'settings' && <SettingsScreen onNavigate={navigate} />}
+        {screen === 'diagnostics' && <DiagnosticsScreen />}
+        <footer className="content-foot">
+          {snapshotState.data !== null && snapshotState.data.lastActivityAt !== null && (
+            <span>
+              Last activity <Timestamp iso={snapshotState.data.lastActivityAt} />
+            </span>
+          )}
+          <button
+            type="button"
+            className="linklike"
+            onClick={() => void window.printAgent.quitApp()}
+          >
+            Quit Print Agent
+          </button>
+        </footer>
+      </main>
+    </div>
   );
 }
