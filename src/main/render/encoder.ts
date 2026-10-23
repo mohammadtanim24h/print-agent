@@ -17,10 +17,14 @@ import type { RenderProfile } from './profile';
  * Swapping/patching a dialect quirk means editing this file only.
  */
 
-/** Styles as explicit command bytes (decoder-testable, deterministic). */
+/**
+ * Styles as explicit command bytes (decoder-testable, deterministic). Every
+ * entry sets BOTH ESC E (emphasis) and GS ! (size) so transitions never leak
+ * state — e.g. double_height → bold must drop back to normal size.
+ */
 const EMPHASIS_BYTES: Record<Emphasis, readonly number[]> = {
   none: [0x1b, 0x45, 0x00, 0x1d, 0x21, 0x00], // ESC E 0 + GS ! 0
-  bold: [0x1b, 0x45, 0x01], // ESC E 1
+  bold: [0x1b, 0x45, 0x01, 0x1d, 0x21, 0x00], // ESC E 1 + GS ! 0 (normal size)
   double_height: [0x1b, 0x45, 0x00, 0x1d, 0x21, 0x01], // GS ! 1 (double height only)
   double: [0x1b, 0x45, 0x01, 0x1d, 0x21, 0x11], // ESC E 1 + GS ! 0x11 (quad)
 };
@@ -60,6 +64,8 @@ export interface EscposEncoder {
 export class ThermalPrinterEncoder implements EscposEncoder {
   private printer: ThermalPrinter;
   private _stripped = 0;
+  // Dedup trackers: valid ONLY because the constructor is the sole emitter of
+  // state-resetting bytes (ESC @). Any future mid-stream reset must null these.
   private lastAlign: Align | null = null;
   private lastEmphasis: Emphasis | null = null;
 

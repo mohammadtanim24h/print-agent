@@ -107,6 +107,35 @@ describe('ThermalPrinterEncoder', () => {
     expect(b[idx + 6]).toBe(4); // yL
   });
 
+  it('emphasis transitions do not leak size state (double_height → bold)', () => {
+    const enc = new ThermalPrinterEncoder(makeRenderProfile());
+    enc.setEmphasis('double_height');
+    enc.setEmphasis('bold');
+    const events = decodeEscpos(enc.bytes());
+    // The bold entry must appear with size already normalized to normal.
+    const sizeIdx = events.findIndex((e) => e.kind === 'size');
+    expect(sizeIdx).toBeGreaterThan(-1);
+    const lastSize = events.filter((e) => e.kind === 'size').at(-1);
+    expect(lastSize).toEqual({ kind: 'size', doubleWidth: false, doubleHeight: false });
+    expect(events.filter((e) => e.kind === 'bold').at(-1)).toEqual({ kind: 'bold', on: true });
+  });
+
+  it('interleaved align and emphasis changes each emit exactly once per change', () => {
+    const enc = new ThermalPrinterEncoder(makeRenderProfile());
+    enc.setAlign('center');
+    enc.setEmphasis('bold');
+    enc.setAlign('left');
+    enc.setEmphasis('none');
+    enc.setAlign('left'); // repeat — no emission
+    enc.setEmphasis('none'); // repeat — no emission
+    const b = [...enc.bytes()];
+    // ESC a appears once per CHANGE (center, left) → 2.
+    expect(b.filter((x) => x === 0x61)).toHaveLength(2);
+    const events = decodeEscpos(enc.bytes());
+    expect(events.filter((e) => e.kind === 'bold')).toHaveLength(2); // on then off
+    expect(events.filter((e) => e.kind === 'init')).toHaveLength(1); // exactly one init
+  });
+
   it('bytes() returns a copy; encoders are independent', () => {
     const a = new ThermalPrinterEncoder(makeRenderProfile());
     const c = new ThermalPrinterEncoder(makeRenderProfile());
