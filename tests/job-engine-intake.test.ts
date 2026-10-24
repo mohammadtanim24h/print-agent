@@ -102,6 +102,26 @@ describe('engine intake', () => {
     }
   });
 
+  it('acks a re-delivery from stored state BEFORE re-evaluating printer/docVersion/expiry (T4/ADR-6)', async () => {
+    const h = await makeHarness();
+    try {
+      const first = h.engine.submit(makeJob(h.printerId));
+      expect(first.status).toBe('accepted');
+      // Same idempotency key, but the re-delivered input is now invalid on its
+      // own terms: unknown doc version AND already expired. The stored row
+      // must win — the duplicate ack is derived from stored state alone.
+      const redelivered = h.engine.submit(
+        makeJob(h.printerId, { jobId: 'job-1-redelivery', docVersion: 2, expiresAt: HARNESS_T0 - 1 }),
+      );
+      expect(redelivered.status).toBe('accepted');
+      expect(redelivered.jobId).toBe('job-1'); // stored row id, not the new jobId
+      expect(h.engine.getJob('job-1-redelivery')).toBeNull();
+      expect(h.acks).toHaveLength(1);
+    } finally {
+      h.dispose();
+    }
+  });
+
   it('surfaces store insert failures as store_unavailable without emitting an ack', async () => {
     const h = await makeHarness({
       wrapStore: (base: JobStore): JobStore => ({
