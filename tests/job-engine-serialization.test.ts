@@ -1,47 +1,37 @@
 import { describe, expect, it } from 'vitest';
 import { makeHarness, makeJob } from './helpers/job-engine-harness';
 import { FakeTransport, FakeTransportRegistry } from './helpers/fake-transport';
-import type { FakeTransportScript } from './helpers/fake-transport';
-import { TransportError } from '../src/main/transport/errors';
-import type { PrinterProfile } from '../src/main/printers/profile';
-import type { TransportRegistry } from '../src/main/transport/registry';
 
 async function drained(): Promise<void> {
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
 }
 
-/** FakeTransport whose open() consults a counter per call — the
- *  OpenScriptRegistry pattern from job-engine-failures.test.ts, needed because
- *  FakeTransportRegistry freezes the script captured on first use and the
- *  failure must apply to only the first attempt. One transport per printer. */
-class RetryScriptTransport extends FakeTransport {
-  constructor(script: FakeTransportScript, private readonly failNext: () => number) {
-    super(script);
+/** FakeTransport whose FIRST write blocks until released. The per-printer
+ *  queue only holds more than one job while the printer is busy — drain()
+ *  shifts synchronously otherwise — so a gate that stays hung across
+ *  macrotasks is what lets jobs pile up in the pending queue, which is where
+ *  byRank ordering is actually exercised. */
+class GatedTransport extends FakeTransport {
+  private release: (() => void) | null = null;
+  private hung = false;
+
+  constructor() {
+    super({});
   }
 
-  override open(): Promise<void> {
-    this.opens += 1;
-    return this.failNext() > 0
-      ? Promise.reject(new TransportError('connect_refused', 'printer refused'))
-      : Promise.resolve();
-  }
-}
-
-class FirstOpenFailuresRegistry implements TransportRegistry {
-  private readonly byPrinter = new Map<string, FakeTransport>();
-
-  constructor(private readonly failFirst: () => number) {}
-
-  forPrinter(profile: PrinterProfile): FakeTransport {
-    const existing = this.byPrinter.get(profile.printerId);
-    if (existing !== undefined) return existing;
-    const t = new RetryScriptTransport({}, this.failFirst);
-    this.byPrinter.set(profile.printerId, t);
-    return t;
+  override async write(bytes: Uint8Array): Promise<void> {
+    if (!this.hung) {
+      this.hung = true;
+      await new Promise<void>((resolve) => {
+        this.release = resolve;
+      });
+    }
+    await super.write(bytes);
   }
 
-  get(printerId: string): FakeTransport | undefined {
-    return this.byPrinter.get(printerId);
+  /** Release the hung first write. */
+  unblock(): void {
+    this.release?.();
   }
 }
 
@@ -75,80 +65,82 @@ describe('per-printer serialization (R-VAL-6)', () => {
     }
   });
 
-  it('priority ordering: a job pushed back by a connect retry renders after lower-latency higher-priority jobs', async () => {
-    // 'low' (priority 9) is submitted first and therefore dequeued first —
-    // the queue only reorders jobs still pending, so its first attempt starts
-    // immediately. Its open fails and a manual retry timer pushes it to the
-    // back; 'high' (1) and 'mid' (5), submitted while it waits, must render
-    // before it. This deterministically exercises byRank over pending jobs.
-    let failFirst = 1;
-    const transports = new FirstOpenFailuresRegistry(() => failFirst--);
-    const h = await makeHarness({ transports, scheduling: 'manual' });
+  it('priority ordering: jobs queued behind an in-flight job execute high-priority first', async () => {
+    // 'inflight' occupies the printer, hung in its first write. While it is
+    // busy, 'low' (priority 9) then 'high' (priority 1) are submitted — both
+    // land in the pending queue in that insertion order. When the gate opens,
+    // drain() re-selects over the queue: byRank must pick high first. Under
+    // pure FIFO the insertion order would win and low would render first, so
+    // this assertion fails if byRank is deleted.
+    const gated = new GatedTransport();
+    const h = await makeHarness({ transports: { forPrinter: () => gated } });
     try {
+      h.engine.submit(
+        makeJob(h.printerId, { jobId: 'job-inflight', idempotencyKey: 'key-inflight', copies: 1 }),
+      );
+      await drained(); // 'inflight' is now stuck in its first write
+      expect(h.engine.getJob('job-inflight')?.status).toBe('sending');
+      expect(gated.writes).toHaveLength(0); // write never completed
+
+      const baseline = h.acks.length; // 'inflight' already emitted accepted + rendered
       h.engine.submit(
         makeJob(h.printerId, { jobId: 'job-low', idempotencyKey: 'key-low', priority: 9 }),
       );
-      await drained();
-      // First attempt failed at open → retry scheduled, nothing written.
-      expect(h.timers.length).toBe(1);
-      expect(h.engine.getJob('job-low')?.status).toBe('rendered');
-      expect(h.engine.getJob('job-low')?.attempts).toBe(1);
-
-      // From here on, only the execution-driven acks matter — 'low' already
-      // emitted its (failed-attempt) rendered ack above.
-      const baseline = h.acks.length;
       h.engine.submit(
         makeJob(h.printerId, { jobId: 'job-high', idempotencyKey: 'key-high', priority: 1 }),
       );
-      h.engine.submit(
-        makeJob(h.printerId, { jobId: 'job-mid', idempotencyKey: 'key-mid', priority: 5 }),
-      );
-      await drained(); // high and mid complete; low still waits on its timer
-      expect(h.engine.getJob('job-high')?.status).toBe('completed');
-      expect(h.engine.getJob('job-mid')?.status).toBe('completed');
-      expect(h.engine.getJob('job-low')?.status).toBe('rendered'); // not yet retried
+      // The busy printer must not run them: only the two intake acks appear,
+      // and neither row leaves 'accepted'.
+      expect(h.acks.slice(baseline).map((a) => a.status)).toEqual(['accepted', 'accepted']);
+      expect(h.engine.getJob('job-low')?.status).toBe('accepted');
+      expect(h.engine.getJob('job-high')?.status).toBe('accepted');
 
-      h.timers.shift()?.(); // fire the retry → 'low' re-enqueues behind nothing pending
-      await drained();
-      for (const id of ['job-high', 'job-mid', 'job-low']) {
+      gated.unblock();
+      await drained(); // inflight completes, then the queue drains by rank
+      for (const id of ['job-inflight', 'job-low', 'job-high']) {
         expect(h.engine.getJob(id)?.status).toBe('completed');
       }
       // Execution order reads off the rendered acks (emitted when each job's
-      // execution starts): high, mid, then the retried low.
+      // execution starts): high before low despite the reversed submit order.
       const renderOrder = h.acks
         .slice(baseline)
         .filter((a) => a.status === 'rendered')
         .map((a) => a.jobId);
-      expect(renderOrder).toEqual(['job-high', 'job-mid', 'job-low']);
+      expect(renderOrder).toEqual(['job-high', 'job-low']);
     } finally {
       h.dispose();
     }
   });
 
-  it('cross-printer independence: printers execute concurrently, each writing only its own jobs', async () => {
+  it('cross-printer independence: a short job on printer B acks before a long job on printer A', async () => {
     const transports = new FakeTransportRegistry();
     const h = await makeHarness({ transports, printerCount: 2 });
     try {
       const [printerA, printerB] = h.printerIds;
       if (printerA === undefined || printerB === undefined) throw new Error('unreachable: printerCount is 2');
       h.engine.submit(
-        makeJob(printerA, { jobId: 'job-a', idempotencyKey: 'key-a', copies: 2 }),
+        makeJob(printerA, { jobId: 'job-a', idempotencyKey: 'key-a', copies: 3 }),
       );
       h.engine.submit(
         makeJob(printerB, { jobId: 'job-b', idempotencyKey: 'key-b', copies: 1 }),
       );
-      for (let i = 0; i < 2; i += 1) await drained();
+      await drained();
       const rowA = h.engine.getJob('job-a');
       const rowB = h.engine.getJob('job-b');
       expect(rowA?.status).toBe('completed');
       expect(rowB?.status).toBe('completed');
-      // B's rendered ack exists — B was never blocked behind A's in-flight job.
-      expect(h.acks.some((a) => a.jobId === 'job-a' && a.status === 'rendered')).toBe(true);
-      expect(h.acks.some((a) => a.jobId === 'job-b' && a.status === 'rendered')).toBe(true);
+      // Ack interleaving: B's single copy finishes while A still has writes
+      // pending, so B's completed ack must land BEFORE A's. A global drain
+      // lock shared across printers would serialize B behind A and reverse
+      // (or suppress) B's completed ack — this ordering is the discrimination.
+      const aCompleted = h.acks.findIndex((a) => a.jobId === 'job-a' && a.status === 'completed');
+      const bCompleted = h.acks.findIndex((a) => a.jobId === 'job-b' && a.status === 'completed');
+      expect(bCompleted).toBeGreaterThanOrEqual(0);
+      expect(aCompleted).toBeGreaterThan(bCompleted);
       // Each transport wrote exactly its own job's copies.
       const tA = transports.get(printerA);
       const tB = transports.get(printerB);
-      expect(tA?.writes).toHaveLength(2);
+      expect(tA?.writes).toHaveLength(3);
       expect(tB?.writes).toHaveLength(1);
       expect(tA?.maxConcurrentWrites).toBe(1);
       expect(tB?.maxConcurrentWrites).toBe(1);
