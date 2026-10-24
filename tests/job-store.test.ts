@@ -3,6 +3,7 @@ import { openDatabase, closeDatabase } from '../src/main/local-store/db';
 import { migrate } from '../src/main/local-store/migrations';
 import { createSqliteJobStore } from '../src/main/local-store/job-store';
 import type { NewJobRow } from '../src/main/local-store/job-store';
+import { StoreError } from '../src/main/local-store/errors';
 
 function makeStore() {
   const db = openDatabase({ file: null });
@@ -113,6 +114,22 @@ describe('sqlite JobStore', () => {
       expect(() => {
         store.updateStatus('ghost', 'rendered');
       }).toThrow();
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
+  it('updateStatus on a missing row throws not_found (caller bug, not an outage)', () => {
+    const { db, store } = makeStore();
+    try {
+      let thrown: unknown;
+      try {
+        store.updateStatus('ghost', 'rendered');
+      } catch (err) {
+        thrown = err;
+      }
+      expect(thrown).toBeInstanceOf(StoreError);
+      expect((thrown as StoreError).code).toBe('not_found');
     } finally {
       closeDatabase(db);
     }

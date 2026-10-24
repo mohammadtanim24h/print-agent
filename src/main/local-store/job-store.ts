@@ -144,6 +144,12 @@ function isUniqueViolation(err: unknown): boolean {
   );
 }
 
+/** Typed-error boundary: native better-sqlite3 throws become StoreError('store_unavailable'). */
+function wrap(method: string, err: unknown): StoreError {
+  if (err instanceof StoreError) return err;
+  return new StoreError('store_unavailable', `${method} failed`, { cause: err });
+}
+
 export function createSqliteJobStore(
   db: SqliteDatabase,
   clock: { now: () => number } = { now: Date.now },
@@ -189,7 +195,7 @@ export function createSqliteJobStore(
             { cause: err },
           );
         }
-        throw err;
+        throw wrap('insert', err);
       }
     },
     get(id) {
@@ -201,28 +207,47 @@ export function createSqliteJobStore(
       return r === undefined ? null : toRow(r);
     },
     updateStatus(id, status, patch) {
-      const info = updateStatusStmt.run({
-        id,
-        status,
-        at: clock.now(),
-        lastError: patch?.lastError ?? null,
-        clearError: patch?.clearError === true ? 1 : 0,
-      });
+      let info;
+      try {
+        info = updateStatusStmt.run({
+          id,
+          status,
+          at: clock.now(),
+          lastError: patch?.lastError ?? null,
+          clearError: patch?.clearError === true ? 1 : 0,
+        });
+      } catch (err) {
+        throw wrap('updateStatus', err);
+      }
       if (info.changes === 0) {
-        throw new StoreError('store_unavailable', `updateStatus: no such job ${id}`);
+        throw new StoreError('not_found', `updateStatus: no such job ${id}`);
       }
     },
     incrementAttempts(id) {
-      const r = incrementAttemptsStmt.get(clock.now(), id) as { attempts: number } | undefined;
-      if (r === undefined) throw new StoreError('store_unavailable', `incrementAttempts: no such job ${id}`);
+      let r;
+      try {
+        r = incrementAttemptsStmt.get(clock.now(), id) as { attempts: number } | undefined;
+      } catch (err) {
+        throw wrap('incrementAttempts', err);
+      }
+      if (r === undefined) throw new StoreError('not_found', `incrementAttempts: no such job ${id}`);
       return r.attempts;
     },
     resetAttempts(id) {
-      const info = resetAttemptsStmt.run(clock.now(), id);
-      if (info.changes === 0) throw new StoreError('store_unavailable', `resetAttempts: no such job ${id}`);
+      let info;
+      try {
+        info = resetAttemptsStmt.run(clock.now(), id);
+      } catch (err) {
+        throw wrap('resetAttempts', err);
+      }
+      if (info.changes === 0) throw new StoreError('not_found', `resetAttempts: no such job ${id}`);
     },
     recordAttempt(jobId, attempt, record, at) {
-      recordAttemptStmt.run(jobId, attempt, record.outcome, record.errorCode ?? null, record.errorMessage ?? null, at);
+      try {
+        recordAttemptStmt.run(jobId, attempt, record.outcome, record.errorCode ?? null, record.errorMessage ?? null, at);
+      } catch (err) {
+        throw wrap('recordAttempt', err);
+      }
     },
     listAttempts(jobId) {
       const rows = listAttemptsStmt.all(jobId) as AttemptDbRow[];
@@ -265,7 +290,11 @@ export function createSqliteJobStore(
           deleteJobStmt.run(id);
         }
       });
-      remove(ids);
+      try {
+        remove(ids);
+      } catch (err) {
+        throw wrap('deleteWithAttempts', err);
+      }
     },
   };
 }
