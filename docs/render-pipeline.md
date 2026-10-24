@@ -193,3 +193,14 @@ unsupported_doc_type  invalid_doc          payload_too_large
 with a stable machine code (fuzz-asserted). Raw printer bytes from any client are
 structurally impossible — the input is the structured doc model, and every string passes
 the sanitizer inside the encoder (threat T2, ADR-3/ADR-11).
+
+## 10. Handoff notes for the packaging / job-engine phases
+
+- **Packaging:** `@napi-rs/canvas` is a native N-API addon — the electron-vite main
+  build must keep it external, and electron-builder needs `asarUnpack` for the
+  platform binary. `assets/fonts/` must ship as an extra resource; the packaged-app
+  `rasterFallback.fontPaths` is config-populated (default profile has the fallback
+  disabled, so nothing exercises this path until the job-engine/config phase wires it).
+- **Job-engine:** call `renderDoc(doc_type, payload, renderProfileFromPrinterConfig(p))`
+  per §3.3; emit `summary.copies` transport writes; map `RenderError.code` to ack
+  error codes; `doc_version` != 1 must be rejected upstream of the renderer.
