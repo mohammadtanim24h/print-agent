@@ -155,11 +155,20 @@ describe('sqlite JobStore', () => {
     const { db, store } = makeStore();
     try {
       store.insert(makeRow());
-      store.recordAttempt('job-1', 1, { outcome: 'connect_error', errorCode: 'connect_refused', errorMessage: 'ECONNREFUSED' }, 5_000);
+      store.recordAttempt(
+        'job-1',
+        1,
+        { outcome: 'connect_error', errorCode: 'connect_refused', errorMessage: 'ECONNREFUSED' },
+        5_000,
+      );
       store.recordAttempt('job-1', 2, { outcome: 'completed' }, 6_000);
       const attempts = store.listAttempts('job-1');
       expect(attempts).toHaveLength(2);
-      expect(attempts[0]).toMatchObject({ attempt: 1, outcome: 'connect_error', errorCode: 'connect_refused' });
+      expect(attempts[0]).toMatchObject({
+        attempt: 1,
+        outcome: 'connect_error',
+        errorCode: 'connect_refused',
+      });
       expect(attempts[1]).toMatchObject({ attempt: 2, outcome: 'completed' });
     } finally {
       closeDatabase(db);
@@ -183,10 +192,16 @@ describe('sqlite JobStore', () => {
   it('terminalIdsOlderThan returns oldest terminal ids under the limit, excluding non-terminal', () => {
     const { db, store } = makeStore();
     try {
-      store.insert(makeRow({ id: 't1', idempotencyKey: 'k-t1', status: 'completed', updatedAt: 100 }));
+      store.insert(
+        makeRow({ id: 't1', idempotencyKey: 'k-t1', status: 'completed', updatedAt: 100 }),
+      );
       store.insert(makeRow({ id: 't2', idempotencyKey: 'k-t2', status: 'failed', updatedAt: 200 }));
-      store.insert(makeRow({ id: 'keep', idempotencyKey: 'k-keep', status: 'completed', updatedAt: 900 }));
-      store.insert(makeRow({ id: 'live', idempotencyKey: 'k-live', status: 'accepted', updatedAt: 50 }));
+      store.insert(
+        makeRow({ id: 'keep', idempotencyKey: 'k-keep', status: 'completed', updatedAt: 900 }),
+      );
+      store.insert(
+        makeRow({ id: 'live', idempotencyKey: 'k-live', status: 'accepted', updatedAt: 50 }),
+      );
       expect(store.terminalIdsOlderThan(500, 10)).toEqual(['t1', 't2']);
       expect(store.terminalIdsOlderThan(500, 1)).toEqual(['t1']);
     } finally {

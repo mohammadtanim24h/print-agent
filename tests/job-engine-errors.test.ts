@@ -19,8 +19,14 @@ describe('stored lastError codec', () => {
   });
 
   it('degrades gracefully on degenerate/legacy input', () => {
-    expect(decodeStoredError('no separator here')).toEqual({ code: 'failed', message: 'no separator here' });
-    expect(decodeStoredError(': leading separator')).toEqual({ code: 'failed', message: ': leading separator' });
+    expect(decodeStoredError('no separator here')).toEqual({
+      code: 'failed',
+      message: 'no separator here',
+    });
+    expect(decodeStoredError(': leading separator')).toEqual({
+      code: 'failed',
+      message: ': leading separator',
+    });
     expect(decodeStoredError('')).toEqual({ code: 'failed', message: 'unknown error' });
   });
 });

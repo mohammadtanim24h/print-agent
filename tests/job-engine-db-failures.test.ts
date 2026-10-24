@@ -107,7 +107,11 @@ describe('engine store-failure fault injection', () => {
       // insert still respond (unknown printer rejects without touching insert).
       expect(h.engine.getJob('job-1')).toBeNull();
       const rejected = h.engine.submit(
-        makeJob(h.printerId, { jobId: 'job-2', idempotencyKey: 'key-2', printerId: 'no-such-printer' }),
+        makeJob(h.printerId, {
+          jobId: 'job-2',
+          idempotencyKey: 'key-2',
+          printerId: 'no-such-printer',
+        }),
       );
       expect(rejected.status).toBe('rejected');
       expect(rejected.error?.code).toBe('unknown_printer');
@@ -127,7 +131,9 @@ describe('engine store-failure fault injection', () => {
     });
     try {
       // Execution fails internally, but submit itself must not throw.
-      expect(() => h.engine.submit(makeJob(h.printerId, { jobId: 'a', idempotencyKey: 'key-a' }))).not.toThrow();
+      expect(() =>
+        h.engine.submit(makeJob(h.printerId, { jobId: 'a', idempotencyKey: 'key-a' })),
+      ).not.toThrow();
       await drained();
       // Bytes were written (hand-off LIKELY happened) but the completion record did
       // not — the row conservatively stays durably 'sending' (last successful

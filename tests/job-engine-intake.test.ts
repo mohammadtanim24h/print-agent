@@ -111,7 +111,11 @@ describe('engine intake', () => {
       // own terms: unknown doc version AND already expired. The stored row
       // must win — the duplicate ack is derived from stored state alone.
       const redelivered = h.engine.submit(
-        makeJob(h.printerId, { jobId: 'job-1-redelivery', docVersion: 2, expiresAt: HARNESS_T0 - 1 }),
+        makeJob(h.printerId, {
+          jobId: 'job-1-redelivery',
+          docVersion: 2,
+          expiresAt: HARNESS_T0 - 1,
+        }),
       );
       expect(redelivered.status).toBe('accepted');
       expect(redelivered.jobId).toBe('job-1'); // stored row id, not the new jobId

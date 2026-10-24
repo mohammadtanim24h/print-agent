@@ -104,7 +104,10 @@ describe('engine failure semantics', () => {
       expect(row?.status).toBe('ambiguous');
       expect(transports.get(h.printerId)?.writes).toHaveLength(0); // second copy never attempted
       expect(transports.get(h.printerId)?.opens).toBe(1); // no reconnect
-      expect(h.acks.at(-1)).toMatchObject({ status: 'ambiguous', error: { code: 'write_timeout' } });
+      expect(h.acks.at(-1)).toMatchObject({
+        status: 'ambiguous',
+        error: { code: 'write_timeout' },
+      });
       // ambiguous jobs are never auto-retried — flushing timers changes nothing
       h.timers.shift()?.();
       await drained();

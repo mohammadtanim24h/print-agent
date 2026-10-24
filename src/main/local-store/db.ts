@@ -26,7 +26,9 @@ export function openDatabase(options: DatabaseOptions): SqliteDatabase {
   } catch (err) {
     // `cause` preserves the original error chain (mirrors TransportError); the message
     // stays concise so it is safe for logs and acks.
-    throw new StoreError('db_open_failed', `cannot open local store: ${String(err)}`, { cause: err });
+    throw new StoreError('db_open_failed', `cannot open local store: ${String(err)}`, {
+      cause: err,
+    });
   }
 }
 

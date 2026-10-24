@@ -70,7 +70,9 @@ describe('engine retention cleanup', () => {
       // updated_at with the post-advance t, so ordering is strict and exact:
       // j1=1_001_000, j2=1_002_000, j3=1_003_000, j4=1_004_000.
       for (let i = 1; i <= 4; i += 1) {
-        h.engine.submit(makeJob(h.printerId, { jobId: `j${String(i)}`, idempotencyKey: `key-${String(i)}` }));
+        h.engine.submit(
+          makeJob(h.printerId, { jobId: `j${String(i)}`, idempotencyKey: `key-${String(i)}` }),
+        );
         t += 1_000;
         await drained();
       }

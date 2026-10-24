@@ -179,7 +179,11 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
       return rejectAck(job, 'unknown_printer', `printer ${job.printerId} is not configured`);
     }
     if (job.docVersion !== 1) {
-      return rejectAck(job, 'unsupported_doc_version', `doc_version ${String(job.docVersion)} is not supported`);
+      return rejectAck(
+        job,
+        'unsupported_doc_version',
+        `doc_version ${String(job.docVersion)} is not supported`,
+      );
     }
     if (job.expiresAt !== null && job.expiresAt <= now()) {
       return rejectAck(job, 'job_expired', 'job expired before intake');
@@ -288,13 +292,13 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
               engineErrorRequeues.delete(jobId);
             } else {
               engineErrorRequeues.set(jobId, count);
-              const backoff = Math.min(limits.retryBaseDelayMs * 2 ** (count - 1), limits.retryMaxDelayMs);
-              scheduleSafely(
-                () => {
-                  enqueueExecution(printerId, jobId);
-                },
-                backoff,
+              const backoff = Math.min(
+                limits.retryBaseDelayMs * 2 ** (count - 1),
+                limits.retryMaxDelayMs,
               );
+              scheduleSafely(() => {
+                enqueueExecution(printerId, jobId);
+              }, backoff);
             }
           } else {
             // Terminal or mid-transmission: never requeued, so the cap counter is moot.
@@ -320,7 +324,9 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
   // ---- execution -----------------------------------------------------------
 
   function codeOf(err: unknown): string {
-    return err instanceof Error && 'code' in err && typeof (err as { code: unknown }).code === 'string'
+    return err instanceof Error &&
+      'code' in err &&
+      typeof (err as { code: unknown }).code === 'string'
       ? (err as { code: string }).code
       : 'internal_error';
   }
@@ -352,7 +358,12 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
     if (row === null || isTerminal(row.status)) return; // cancelled/re-executed while queued
     const profile = printers.get(row.printerId);
     if (profile === null) {
-      failJob(jobId, 'unknown_printer', `printer ${row.printerId} disappeared before execution`, row.attempts + 1);
+      failJob(
+        jobId,
+        'unknown_printer',
+        `printer ${row.printerId} disappeared before execution`,
+        row.attempts + 1,
+      );
       return;
     }
 
@@ -417,7 +428,12 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
 
   /** Pre-transmission failure: nothing was written, so retrying is safe (ADR-6 at-most-once per attempt). */
   function onConnectFailure(jobId: string, attempt: number, code: string, message: string): void {
-    store.recordAttempt(jobId, attempt, { outcome: 'connect_error', errorCode: code, errorMessage: message }, now());
+    store.recordAttempt(
+      jobId,
+      attempt,
+      { outcome: 'connect_error', errorCode: code, errorMessage: message },
+      now(),
+    );
     const row = store.get(jobId);
     if (row === null) return;
     if (row.attempts >= limits.maxAttempts) {
@@ -427,14 +443,22 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
       return;
     }
     store.updateStatus(jobId, 'rendered', { lastError: encodeStoredError(code, message) });
-    const backoff = Math.min(limits.retryBaseDelayMs * 2 ** (row.attempts - 1), limits.retryMaxDelayMs);
+    const backoff = Math.min(
+      limits.retryBaseDelayMs * 2 ** (row.attempts - 1),
+      limits.retryMaxDelayMs,
+    );
     scheduleSafely(() => {
       enqueueExecution(row.printerId, jobId);
     }, backoff);
   }
 
   function onAmbiguous(jobId: string, attempt: number, code: string, message: string): void {
-    store.recordAttempt(jobId, attempt, { outcome: 'write_ambiguous', errorCode: code, errorMessage: message }, now());
+    store.recordAttempt(
+      jobId,
+      attempt,
+      { outcome: 'write_ambiguous', errorCode: code, errorMessage: message },
+      now(),
+    );
     store.updateStatus(jobId, 'ambiguous', { lastError: encodeStoredError(code, message) });
     const row = store.get(jobId);
     if (row !== null) emit(row, 'ambiguous', { code, message });
@@ -474,7 +498,10 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
           now(),
         );
         store.updateStatus(row.id, 'ambiguous', {
-          lastError: encodeStoredError('restarted_in_flight', 'agent restarted while job was transmitting'),
+          lastError: encodeStoredError(
+            'restarted_in_flight',
+            'agent restarted while job was transmitting',
+          ),
         });
         const fresh = store.get(row.id);
         if (fresh !== null) {
@@ -575,7 +602,8 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
     // Safe window: queued (accepted) or rendered but NOT yet executing. Anything
     // else — mid-transmission (sending or executing), terminal — is refused; an
     // ambiguous outcome must never be manufactured by the operator (ADR-5).
-    const safeWindow = (row.status === 'accepted' || row.status === 'rendered') && !executing.has(jobId);
+    const safeWindow =
+      (row.status === 'accepted' || row.status === 'rendered') && !executing.has(jobId);
     if (!safeWindow) return false;
     const fromQueue = pending.get(row.printerId);
     if (fromQueue !== undefined) {
@@ -588,7 +616,10 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
     });
     const fresh = store.get(jobId);
     if (fresh !== null) {
-      emit(fresh, 'failed', { code: 'cancelled', message: 'cancelled by operator before transmission' });
+      emit(fresh, 'failed', {
+        code: 'cancelled',
+        message: 'cancelled by operator before transmission',
+      });
     }
     return true;
   }

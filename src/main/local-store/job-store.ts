@@ -178,7 +178,9 @@ export function createSqliteJobStore(
     WHERE id = @id
   `);
   const getByIdStmt = db.prepare('SELECT * FROM jobs WHERE id = ?');
-  const findByIdemStmt = db.prepare('SELECT * FROM jobs WHERE restaurant_id = ? AND idempotency_key = ?');
+  const findByIdemStmt = db.prepare(
+    'SELECT * FROM jobs WHERE restaurant_id = ? AND idempotency_key = ?',
+  );
   const incrementAttemptsStmt = db.prepare(
     'UPDATE jobs SET attempts = attempts + 1, updated_at = ? WHERE id = ? RETURNING attempts',
   );
@@ -186,7 +188,9 @@ export function createSqliteJobStore(
   const recordAttemptStmt = db.prepare(
     'INSERT INTO job_attempts (job_id, attempt, outcome, error_code, error_message, at) VALUES (?, ?, ?, ?, ?, ?)',
   );
-  const listAttemptsStmt = db.prepare('SELECT * FROM job_attempts WHERE job_id = ? ORDER BY attempt ASC');
+  const listAttemptsStmt = db.prepare(
+    'SELECT * FROM job_attempts WHERE job_id = ? ORDER BY attempt ASC',
+  );
   const deleteAttemptsStmt = db.prepare('DELETE FROM job_attempts WHERE job_id = ?');
   const deleteJobStmt = db.prepare('DELETE FROM jobs WHERE id = ?');
 
@@ -237,7 +241,8 @@ export function createSqliteJobStore(
       } catch (err) {
         throw wrap('incrementAttempts', err);
       }
-      if (r === undefined) throw new StoreError('not_found', `incrementAttempts: no such job ${id}`);
+      if (r === undefined)
+        throw new StoreError('not_found', `incrementAttempts: no such job ${id}`);
       return r.attempts;
     },
     resetAttempts(id) {
@@ -246,7 +251,8 @@ export function createSqliteJobStore(
       // would collide when the engine records attempt 1 of the new cycle.
       const cycle = db.transaction((jobId: string): void => {
         const info = resetAttemptsStmt.run(clock.now(), jobId);
-        if (info.changes === 0) throw new StoreError('not_found', `resetAttempts: no such job ${jobId}`);
+        if (info.changes === 0)
+          throw new StoreError('not_found', `resetAttempts: no such job ${jobId}`);
         deleteAttemptsStmt.run(jobId);
       });
       try {
@@ -257,7 +263,14 @@ export function createSqliteJobStore(
     },
     recordAttempt(jobId, attempt, record, at) {
       try {
-        recordAttemptStmt.run(jobId, attempt, record.outcome, record.errorCode ?? null, record.errorMessage ?? null, at);
+        recordAttemptStmt.run(
+          jobId,
+          attempt,
+          record.outcome,
+          record.errorCode ?? null,
+          record.errorMessage ?? null,
+          at,
+        );
       } catch (err) {
         throw wrap('recordAttempt', err);
       }
@@ -276,7 +289,9 @@ export function createSqliteJobStore(
     listByStatus(...statuses) {
       const placeholders = statuses.map(() => '?').join(', ');
       const rows = db
-        .prepare(`SELECT * FROM jobs WHERE status IN (${placeholders}) ORDER BY priority ASC, created_at ASC, id ASC`)
+        .prepare(
+          `SELECT * FROM jobs WHERE status IN (${placeholders}) ORDER BY priority ASC, created_at ASC, id ASC`,
+        )
         .all(...statuses) as JobDbRow[];
       return rows.map(toRow);
     },

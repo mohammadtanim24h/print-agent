@@ -18,7 +18,12 @@ describe('engine execution', () => {
       expect(transport?.writes).toHaveLength(2); // copies loop: one write per copy
       expect(transport?.opens).toBe(1);
       expect(transport?.closes).toBe(1);
-      expect(h.acks.map((a) => a.status)).toEqual(['accepted', 'rendered', 'sent_to_printer', 'completed']);
+      expect(h.acks.map((a) => a.status)).toEqual([
+        'accepted',
+        'rendered',
+        'sent_to_printer',
+        'completed',
+      ]);
       const row = h.engine.getJob('job-1');
       expect(row?.status).toBe('completed');
       expect(row?.sentAt).not.toBeNull();

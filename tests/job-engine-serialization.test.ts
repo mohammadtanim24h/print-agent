@@ -117,13 +117,10 @@ describe('per-printer serialization (R-VAL-6)', () => {
     const h = await makeHarness({ transports, printerCount: 2 });
     try {
       const [printerA, printerB] = h.printerIds;
-      if (printerA === undefined || printerB === undefined) throw new Error('unreachable: printerCount is 2');
-      h.engine.submit(
-        makeJob(printerA, { jobId: 'job-a', idempotencyKey: 'key-a', copies: 3 }),
-      );
-      h.engine.submit(
-        makeJob(printerB, { jobId: 'job-b', idempotencyKey: 'key-b', copies: 1 }),
-      );
+      if (printerA === undefined || printerB === undefined)
+        throw new Error('unreachable: printerCount is 2');
+      h.engine.submit(makeJob(printerA, { jobId: 'job-a', idempotencyKey: 'key-a', copies: 3 }));
+      h.engine.submit(makeJob(printerB, { jobId: 'job-b', idempotencyKey: 'key-b', copies: 1 }));
       await drained();
       const rowA = h.engine.getJob('job-a');
       const rowB = h.engine.getJob('job-b');

@@ -70,11 +70,15 @@ describe('engine operator actions', () => {
   it('retryJob refuses non-failed jobs', async () => {
     const h = await makeHarness({ transports: new FakeTransportRegistry(() => ({})) });
     try {
-      expect(() => { h.engine.retryJob('ghost'); }).toThrow(JobEngineError);
+      expect(() => {
+        h.engine.retryJob('ghost');
+      }).toThrow(JobEngineError);
       h.engine.submit(makeJob(h.printerId));
       await drained();
       expect(h.engine.getJob('job-1')?.status).toBe('completed');
-      expect(() => { h.engine.retryJob('job-1'); }).toThrow(JobEngineError);
+      expect(() => {
+        h.engine.retryJob('job-1');
+      }).toThrow(JobEngineError);
     } finally {
       h.dispose();
     }
@@ -158,10 +162,14 @@ describe('engine operator actions', () => {
   });
 
   it('reprintJob allows ambiguous, refuses rejected and non-terminal jobs', async () => {
-    const transports = new FakeTransportRegistry((printerId) =>
-      printerId === h.printerIds[0]
-        ? { failWriteNumber: 1, writeError: new TransportError('write_timeout', 'printer vanished') }
-        : { hang: true }, // job-2 stays mid-transmission → non-terminal
+    const transports = new FakeTransportRegistry(
+      (printerId) =>
+        printerId === h.printerIds[0]
+          ? {
+              failWriteNumber: 1,
+              writeError: new TransportError('write_timeout', 'printer vanished'),
+            }
+          : { hang: true }, // job-2 stays mid-transmission → non-terminal
     );
     const h = await makeHarness({ transports, printerCount: 2 });
     try {

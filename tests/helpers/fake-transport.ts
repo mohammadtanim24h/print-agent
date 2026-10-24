@@ -34,7 +34,10 @@ export class FakeTransport implements PrinterTransport {
       if (this.script.hang === true) {
         await new Promise<void>(() => {}); // never resolves
       }
-      if (this.script.failWriteNumber !== undefined && this.writes.length + 1 >= this.script.failWriteNumber) {
+      if (
+        this.script.failWriteNumber !== undefined &&
+        this.writes.length + 1 >= this.script.failWriteNumber
+      ) {
         throw this.script.writeError ?? new Error('write failed');
       }
       this.writes.push(bytes);
@@ -57,7 +60,9 @@ export class FakeTransport implements PrinterTransport {
 export class FakeTransportRegistry implements TransportRegistry {
   private readonly transports = new Map<string, FakeTransport>();
 
-  constructor(private readonly scriptFor: (printerId: string) => FakeTransportScript = () => ({})) {}
+  constructor(
+    private readonly scriptFor: (printerId: string) => FakeTransportScript = () => ({}),
+  ) {}
 
   forPrinter(profile: PrinterProfile): FakeTransport {
     const existing = this.transports.get(profile.printerId);

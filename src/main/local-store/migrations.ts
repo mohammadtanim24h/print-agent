@@ -60,7 +60,9 @@ export function migrate(db: SqliteDatabase, now: () => number = Date.now): numbe
     name TEXT NOT NULL,
     applied_at INTEGER NOT NULL
   )`);
-  const appliedRows = db.prepare('SELECT version FROM schema_migrations').all() as { version: number }[];
+  const appliedRows = db.prepare('SELECT version FROM schema_migrations').all() as {
+    version: number;
+  }[];
   const applied = new Set(appliedRows.map((r) => r.version));
   const onDiskMax = Math.max(0, ...applied);
   const highestKnown = MIGRATIONS[MIGRATIONS.length - 1]?.version ?? 0;
