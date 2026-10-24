@@ -209,6 +209,27 @@ describe('sqlite JobStore', () => {
     }
   });
 
+  it('clearJobs removes every job and its attempts', () => {
+    const { db, store } = makeStore();
+    try {
+      store.insert(makeRow({ id: 'j1', idempotencyKey: 'k-j1' }));
+      store.insert(makeRow({ id: 'j2', idempotencyKey: 'k-j2' }));
+      store.recordAttempt('j1', 1, { outcome: 'completed' }, 1);
+      store.clearJobs();
+      expect(store.get('j1')).toBeNull();
+      expect(store.get('j2')).toBeNull();
+      expect(store.listAttempts('j1')).toEqual([]);
+      const leftJobs = db.prepare('select count(*) as n from jobs').get() as { n: number };
+      const leftAttempts = db.prepare('select count(*) as n from job_attempts').get() as {
+        n: number;
+      };
+      expect(leftJobs.n).toBe(0);
+      expect(leftAttempts.n).toBe(0);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
   it('deleteWithAttempts removes the job and its history in one transaction', () => {
     const { db, store } = makeStore();
     try {

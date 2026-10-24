@@ -19,6 +19,8 @@ export interface PrinterStore {
   add(draft: PrinterDraft): Promise<PrinterProfile>;
   update(printerId: string, patch: Partial<PrinterDraft>): Promise<PrinterProfile>;
   remove(printerId: string): Promise<boolean>;
+  /** Wipes all cached printer profiles (revocation/unpair wipe, §3.5). */
+  clear(): Promise<void>;
 }
 
 export async function createPrinterStore(options: {
@@ -82,6 +84,10 @@ export async function createPrinterStore(options: {
       await adapter.writeAtomic(filePath, JSON.stringify(nextList));
       cached = nextList;
       return true;
+    },
+    async clear() {
+      await adapter.writeAtomic(filePath, JSON.stringify([]));
+      cached = [];
     },
   };
 }

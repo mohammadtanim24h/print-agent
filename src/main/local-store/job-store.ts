@@ -85,6 +85,9 @@ export interface JobStore {
   countByStatus(...statuses: JobStatus[]): number;
   terminalIdsOlderThan(cutoff: number, limit: number): string[];
   deleteWithAttempts(ids: readonly string[]): void;
+  /** Wipes ALL jobs and attempts in one transaction (revocation/unpair wipe, §3.5).
+   *  Deliberately unscoped: a wiped device must retain nothing tenant-related. */
+  clearJobs(): void;
 }
 
 interface JobDbRow {
@@ -322,6 +325,17 @@ export function createSqliteJobStore(
         remove(ids);
       } catch (err) {
         throw wrap('deleteWithAttempts', err);
+      }
+    },
+    clearJobs() {
+      const run = db.transaction((): void => {
+        db.prepare('DELETE FROM job_attempts').run();
+        db.prepare('DELETE FROM jobs').run();
+      });
+      try {
+        run();
+      } catch (err) {
+        throw wrap('clearJobs', err);
       }
     },
   };
