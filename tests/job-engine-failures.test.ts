@@ -152,6 +152,44 @@ describe('engine failure semantics', () => {
     }
   });
 
+  it('requeue cap trips when the store fails persistently only AFTER render (incrementAttempts)', async () => {
+    // Simulated persistent store failure that strikes after the render phase:
+    // updateStatus works, incrementAttempts throws. Every pass reaches the
+    // render-success point with NO durable write, so only the durable
+    // 'sending' marker proves store writability — the reset there must not
+    // fire, letting the cap trip after 4 consecutive engine-error requeues.
+    const h = await makeHarness({
+      wrapStore: (base) => ({
+        ...base,
+        incrementAttempts: (): never => {
+          throw new Error('simulated persistent write failure');
+        },
+      }),
+    });
+    try {
+      h.engine.submit(makeJob(h.printerId));
+      await drained();
+      // Render phase wrote nothing durable (row was already 'rendered'), yet the
+      // engine error landed after render — requeue #1 went through the scheduler.
+      expect(h.timers.length).toBe(1);
+      expect(h.engine.getJob('job-1')?.status).toBe('rendered');
+      // Counters 1..3 schedule a requeue each; the 4th gives up. Timers settle at 0.
+      h.timers.shift()?.(); // requeue #2
+      await drained();
+      h.timers.shift()?.(); // requeue #3
+      await drained();
+      expect(h.timers).toHaveLength(1);
+      h.timers.shift()?.(); // requeue #4 → cap reached, nothing scheduled
+      await drained();
+      expect(h.timers).toHaveLength(0); // engine stopped adding timers
+      const row = h.engine.getJob('job-1');
+      expect(row?.status).toBe('rendered'); // remains non-terminal, left for restart recovery
+      expect(row !== null && !isTerminal(row.status)).toBe(true);
+    } finally {
+      h.dispose();
+    }
+  });
+
   it('retry timer survives a closed store without an unhandled error', async () => {
     let failFirst = 1; // first open fails → one retry timer pending
     const transports = new OpenScriptRegistry(() =>

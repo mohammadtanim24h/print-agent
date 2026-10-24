@@ -371,10 +371,6 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
       failJob(jobId, result.error.code, result.error.message, row.attempts + 1);
       return;
     }
-    // Render succeeded, so the store was writable throughout this pass — any
-    // earlier engine-error requeues for this job are moot. Reset the requeue
-    // cap counter (non-requeue paths must not inherit a stale count).
-    engineErrorRequeues.delete(jobId);
     row = store.get(jobId);
     if (row === null) return;
     emit(row, 'rendered');
@@ -384,6 +380,9 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
     // Crash between these two writes leaves attempts incremented with no
     // attempt-history row (audit-trail-only gap; see Task 12 matrix).
     store.updateStatus(jobId, 'sending'); // durable in-flight marker: crash after this ⇒ ambiguous
+    // store proven writable through render + the durable sending marker — a
+    // fresh pass may proceed; reset the engine-error requeue cap.
+    engineErrorRequeues.delete(jobId);
     const transport = transports.forPrinter(profile);
     try {
       await transport.open();
