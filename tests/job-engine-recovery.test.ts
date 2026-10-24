@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { openDatabase, closeDatabase } from '../src/main/local-store/db';
 import { migrate } from '../src/main/local-store/migrations';
 import { createSqliteJobStore } from '../src/main/local-store/job-store';
-import type { JobRow } from '../src/main/local-store/job-store';
+import type { JobRow, JobStore } from '../src/main/local-store/job-store';
 import { createPrinterStore } from '../src/main/printers/store';
 import { createJobEngine } from '../src/main/jobs/engine';
 import type { JobEngine } from '../src/main/jobs/engine';
@@ -29,14 +29,17 @@ interface Process {
   dispose(): void;
 }
 
-/** Boot an engine against a real on-disk database — simulates a fresh process start. */
+/** Boot an engine against a real on-disk database — simulates a fresh process start.
+ *  `wrapStore` injects store fault wrappers (e.g. fail the Nth updateStatus call). */
 async function boot(
   file: string,
   transports: FakeTransportRegistry,
   acks: JobAck[],
+  wrapStore?: (base: JobStore) => JobStore,
 ): Promise<Process> {
   const db = openDatabase({ file });
   migrate(db);
+  const base = createSqliteJobStore(db, { now: (): number => T0 });
   const printers = await createPrinterStore({
     filePath: 'printers.json',
     adapter: memoryAdapter(),
@@ -44,7 +47,7 @@ async function boot(
   });
   await printers.add(makeDraft());
   const engine: JobEngine = createJobEngine({
-    store: createSqliteJobStore(db, { now: (): number => T0 }),
+    store: wrapStore !== undefined ? wrapStore(base) : base,
     printers,
     transports,
     acks: { submit: (a) => acks.push(a) },
@@ -123,6 +126,58 @@ describe('engine startup recovery', () => {
       expect(p2.engine.listAttempts('job-1').some((a) => a.outcome === 'ambiguous_crash')).toBe(
         true,
       );
+      p2.dispose();
+      p2 = null;
+    } finally {
+      p1?.dispose();
+      p2?.dispose();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('recover() resolves a row stranded between sent_to_printer and completed (post-write crash window)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'recovery-post-write-'));
+    const file = join(dir, 'jobs.db');
+    let p1: Process | null = null;
+    let p2: Process | null = null;
+    try {
+      // Process 1: a transient db failure exactly on the 'completed' write
+      // (4th updateStatus of the happy path: rendered, sending,
+      // sent_to_printer, completed). The bytes were already handed off, so the
+      // row is durably 'sent_to_printer' — recovery territory, never a re-send.
+      let updateStatusCall = 0;
+      const failCompletedWrite = (base: JobStore): JobStore => ({
+        ...base,
+        updateStatus: (...args: Parameters<JobStore['updateStatus']>) => {
+          updateStatusCall += 1;
+          if (updateStatusCall === 4) throw new Error('simulated db failure at completed write');
+          base.updateStatus(...args);
+        },
+      });
+      p1 = await boot(file, new FakeTransportRegistry(() => ({})), [], failCompletedWrite);
+      p1.engine.submit(makeJob(PRINTER_ID));
+      await drained();
+      expect(p1.engine.getJob('job-1')?.status).toBe('sent_to_printer'); // stranded post-write
+      p1.dispose(); // simulated process death
+      p1 = null;
+
+      // Process 2 boots with a NORMAL store and a working transport — it would
+      // print if re-sent. recover() must resolve the row, never re-send it.
+      const transports2 = new FakeTransportRegistry(() => ({}));
+      const acks2: JobAck[] = [];
+      p2 = await boot(file, transports2, acks2);
+      p2.engine.recover();
+      await drained(); // let a (buggy) re-enqueue actually execute before asserting
+
+      expect(p2.engine.getJob('job-1')?.status).toBe('ambiguous');
+      expect(transports2.get(PRINTER_ID)?.opens ?? 0).toBe(0); // nothing re-sent
+      const crash = p2.engine.listAttempts('job-1').find((r) => r.outcome === 'ambiguous_crash');
+      expect(crash?.errorCode).toBe('restarted_in_flight');
+      expect(acks2.at(-1)).toMatchObject({
+        status: 'ambiguous',
+        printed: false,
+        error: { code: 'restarted_in_flight' },
+      });
       p2.dispose();
       p2 = null;
     } finally {

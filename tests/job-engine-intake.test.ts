@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { makeHarness, makeJob, HARNESS_T0 } from './helpers/job-engine-harness';
+import { makeDoc } from './helpers/render';
 import type { JobStore } from '../src/main/local-store/job-store';
 import { JobEngineError } from '../src/main/jobs/errors';
 
@@ -64,6 +65,64 @@ describe('engine intake', () => {
       expect(ack.status).toBe('rejected');
       expect(ack.error?.code).toBe('invalid_doc');
       expect(h.engine.getJob('job-1')).toBeNull();
+    } finally {
+      h.dispose();
+    }
+  });
+
+  it('rejects copies outside 1..4 with invalid_envelope (api-contract §2 agent cap)', async () => {
+    const h = await makeHarness();
+    try {
+      for (const copies of [0, 5]) {
+        const ack = h.engine.submit(makeJob(h.printerId, { copies }));
+        expect(ack.status).toBe('rejected');
+        expect(ack.error?.code).toBe('invalid_envelope');
+        expect(ack.error?.message).toBe('copies must be an integer between 1 and 4');
+        expect(h.engine.getJob('job-1')).toBeNull(); // not persisted
+      }
+      expect(h.acks).toHaveLength(0);
+    } finally {
+      h.dispose();
+    }
+  });
+
+  it('rejects priority outside 1..9 with invalid_envelope (api-contract §2 agent cap)', async () => {
+    const h = await makeHarness();
+    try {
+      for (const priority of [0, 10]) {
+        const ack = h.engine.submit(makeJob(h.printerId, { priority }));
+        expect(ack.status).toBe('rejected');
+        expect(ack.error?.code).toBe('invalid_envelope');
+        expect(ack.error?.message).toBe('priority must be an integer between 1 and 9');
+        expect(h.engine.getJob('job-1')).toBeNull(); // not persisted
+      }
+      expect(h.acks).toHaveLength(0);
+    } finally {
+      h.dispose();
+    }
+  });
+
+  it('rejects payloads over the 32 KiB serialized cap at intake with invalid_doc, not persisted', async () => {
+    // Doc-model-VALID doc whose JSON still exceeds 32 KiB (200 lines, each
+    // within the per-field byte caps) — same shape the render taxonomy used
+    // before the intake cap made the render-stage guard unreachable via intake.
+    const payload = makeDoc({
+      lines: Array.from({ length: 200 }, (_, i) => ({
+        text: `${String(i).padStart(3, '0')}-`.padEnd(96, 'x'),
+        note: 'n'.padEnd(64, 'y'),
+        qty: 1,
+        unit_price: 1,
+      })),
+    });
+    const h = await makeHarness();
+    try {
+      expect(Buffer.byteLength(JSON.stringify(payload), 'utf8')).toBeGreaterThan(32 * 1024);
+      const ack = h.engine.submit(makeJob(h.printerId, { payload }));
+      expect(ack.status).toBe('rejected');
+      expect(ack.error?.code).toBe('invalid_doc');
+      expect(ack.error?.message).toBe('payload exceeds the 32 KiB cap');
+      expect(h.engine.getJob('job-1')).toBeNull(); // not persisted
+      expect(h.acks).toHaveLength(0);
     } finally {
       h.dispose();
     }

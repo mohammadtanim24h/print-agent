@@ -44,6 +44,31 @@ function failingStore(real: JobStore, broken: keyof JobStore, failTimes = Infini
   });
 }
 
+/** Proxy that throws from a chosen method on a specific CALL NUMBER (1-based),
+ *  exactly once — pinpoints a transient fault inside a multi-write window
+ *  (e.g. the sent_to_printer → completed write pair, whose failure shape is
+ *  the C1 duplicate-print hole). */
+function failingOnCall(real: JobStore, broken: keyof JobStore, callNumber: number): JobStore {
+  let call = 0;
+  let fired = false;
+  return new Proxy(real, {
+    get(target, prop: string | symbol) {
+      if (prop === broken) {
+        const realMethod = Reflect.get(target, prop) as (...args: unknown[]) => unknown;
+        return (...args: unknown[]) => {
+          call += 1;
+          if (call === callNumber && !fired) {
+            fired = true;
+            throw new Error(`simulated db failure in ${prop} on call ${String(callNumber)}`);
+          }
+          return realMethod.apply(target, args);
+        };
+      }
+      return Reflect.get(target, prop);
+    },
+  });
+}
+
 async function drained(): Promise<void> {
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
 }
@@ -180,6 +205,35 @@ describe('engine store-failure fault injection', () => {
       // activity (the registry never even materialized a transport).
       expect(transports.get(h.printerId)?.opens ?? 0).toBe(0);
       expect(transports.get(h.printerId)?.writes ?? []).toHaveLength(0);
+    } finally {
+      h.dispose();
+    }
+  });
+
+  it('transient failure on the completed write: row strands post-write, never requeued (C1 window)', async () => {
+    const transports = new FakeTransportRegistry(() => ({}));
+    // Happy-path updateStatus sequence: rendered, sending, sent_to_printer,
+    // completed. Failing call 4 simulates a db hiccup BETWEEN the hand-off
+    // write and the completion write — the row is durably 'sent_to_printer',
+    // so its bytes were already written and a re-run would re-write every copy.
+    const h = await makeHarness({
+      transports,
+      wrapStore: (base) => failingOnCall(base, 'updateStatus', 4),
+    });
+    try {
+      h.engine.submit(makeJob(h.printerId));
+      await drained();
+      // The row must strand at the post-write marker, not silently restart.
+      expect(h.engine.getJob('job-1')?.status).toBe('sent_to_printer');
+      // Post-write rows are NEVER requeued: no retry timer may exist, and
+      // flushing the scheduler must change nothing.
+      expect(h.timers).toHaveLength(0);
+      h.timers.shift()?.(); // must be a no-op
+      await drained();
+      expect(h.engine.getJob('job-1')?.status).toBe('sent_to_printer');
+      // Exactly `copies` transport writes — the stranded job was never re-sent.
+      expect(transports.get(h.printerId)?.writes).toHaveLength(1);
+      expect(transports.get(h.printerId)?.opens).toBe(1); // no re-open either
     } finally {
       h.dispose();
     }

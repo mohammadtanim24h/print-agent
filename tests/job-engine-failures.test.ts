@@ -209,10 +209,13 @@ describe('engine failure semantics', () => {
     await drained();
   });
 
-  it('maps every render-stage error code to the render_error outcome', async () => {
-    // Schema-valid doc (200 lines ≤ max, each ≤ byte caps) whose JSON still
-    // exceeds PAYLOAD_MAX_BYTES (32 KiB) → intake passes, render fails with
-    // payload_too_large (render.ts size guard fires before re-validation).
+  it('intake rejects a schema-valid doc over the 32 KiB serialized cap before render', async () => {
+    // Schema-valid doc (200 lines ≤ max, each ≤ byte caps) whose JSON exceeds
+    // PAYLOAD_MAX_BYTES (32 KiB). The engine's intake size cap (same constant,
+    // same serialized JSON render.ts measures) rejects it up front with
+    // invalid_doc — payload_too_large can no longer be reached THROUGH the
+    // engine; render's guard remains as defense-in-depth for direct renderDoc
+    // callers (covered by render-core/render-fuzz).
     const payload = makeDoc({
       lines: Array.from({ length: 200 }, (_, i) => ({
         text: `${String(i).padStart(3, '0')}-`.padEnd(96, 'x'),
@@ -223,12 +226,12 @@ describe('engine failure semantics', () => {
     });
     const h = await makeHarness();
     try {
-      h.engine.submit(makeJob(h.printerId, { payload }));
+      const ack = h.engine.submit(makeJob(h.printerId, { payload }));
+      expect(ack.status).toBe('rejected');
+      expect(ack.error?.code).toBe('invalid_doc');
+      expect(ack.error?.message).toBe('payload exceeds the 32 KiB cap');
       await drained();
-      expect(h.engine.getJob('job-1')?.status).toBe('failed');
-      const [attempt] = h.engine.listAttempts('job-1');
-      expect(attempt?.outcome).toBe('render_error'); // outcome taxonomy, not the raw code
-      expect(attempt?.errorCode).toBe('payload_too_large'); // specific code preserved
+      expect(h.engine.getJob('job-1')).toBeNull(); // never persisted
     } finally {
       h.dispose();
     }

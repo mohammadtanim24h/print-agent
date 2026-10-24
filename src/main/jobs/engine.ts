@@ -1,4 +1,4 @@
-import { DocV1Schema } from '../render/doc';
+import { DocV1Schema, PAYLOAD_MAX_BYTES } from '../render/doc';
 import { renderDoc } from '../render/render';
 import { renderProfileFromPrinterConfig } from '../render/profile';
 import type { PrinterStore } from '../printers/store';
@@ -47,10 +47,14 @@ export interface JobEngineDeps {
 export interface JobEngine {
   /** Durable intake. Returns the accepted/rejected ack. Throws JobEngineError('store_unavailable') on DB failure (no ack — server re-delivers). */
   submit(job: PrintJobInput): JobAck;
-  /** Startup recovery: sending → ambiguous; accepted/rendered re-enqueued for
-   *  execution (rows with an unknown printer are left as-is — config may
-   *  restore the printer later; they still count against the queue bound).
-   *  Never throws; per-row failures are reported and skipped. */
+  /** Startup recovery: resolves transmission-window rows to ambiguous — both
+   *  mid-transmission (`sending`) and post-write rows stranded between
+   *  `sent_to_printer`/`printer_ack` and `completed` by a crash — and
+   *  re-enqueues pre-transmission rows (`accepted`/`rendered`) for execution
+   *  (rows with an unknown printer are left as-is — config may restore the
+   *  printer later; they still count against the queue bound). Never re-sends
+   *  a job whose bytes may have reached the printer. Never throws; per-row
+   *  failures are reported and skipped. */
   recover(): void;
   /** Read one job row (for UI/diagnostics). */
   getJob(jobId: string): JobRow | null;
@@ -188,6 +192,20 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
     if (job.expiresAt !== null && job.expiresAt <= now()) {
       return rejectAck(job, 'job_expired', 'job expired before intake');
     }
+    // Agent-enforced envelope caps (api-contract §2): the WSS boundary schema
+    // also bounds these, but the engine is the last line of defense and must
+    // not trust its caller.
+    if (!Number.isInteger(job.copies) || job.copies < 1 || job.copies > 4) {
+      return rejectAck(job, 'invalid_envelope', 'copies must be an integer between 1 and 4');
+    }
+    if (!Number.isInteger(job.priority) || job.priority < 1 || job.priority > 9) {
+      return rejectAck(job, 'invalid_envelope', 'priority must be an integer between 1 and 9');
+    }
+    // Serialize once here: the same string feeds the size cap and the row insert.
+    const payloadJson = JSON.stringify(job.payload);
+    if (Buffer.byteLength(payloadJson, 'utf8') > PAYLOAD_MAX_BYTES) {
+      return rejectAck(job, 'invalid_doc', 'payload exceeds the 32 KiB cap');
+    }
     if (!DocV1Schema.safeParse(job.payload).success) {
       return rejectAck(job, 'invalid_doc', 'payload does not satisfy doc model v1');
     }
@@ -202,7 +220,7 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
       printerId: job.printerId,
       docType: job.docType,
       docVersion: job.docVersion,
-      payloadJson: JSON.stringify(job.payload),
+      payloadJson,
       priority: job.priority,
       copies: job.copies,
       status: 'accepted',
@@ -274,16 +292,24 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
         // Engine bug or store failure mid-flight. The row keeps its last durable status
         // ('sending' → recovered to ambiguous on next start). Never crash the process.
         report(`job engine: unhandled error executing ${jobId}: ${String(err)}`);
-        // Pre-transmission stranding guard: a transient StoreError before 'sending'
-        // would leave the row durable but queued nowhere. Re-enqueue with backoff
-        // through the injected scheduler — never synchronously, so a persistently
-        // failing store cannot become a zero-delay microtask spin. 'sending' stays
-        // restart-recovery territory, and after 4 consecutive engine-error requeues
-        // (counters 1..3 scheduled; the 4th does not) the job is left for restart
-        // recovery too.
+        // Pre-transmission stranding guard: a transient StoreError before
+        // transmission would leave the row durable but queued nowhere. Requeue
+        // ONLY rows still in a pre-transmission state ('accepted'/'rendered')
+        // — re-running those is byte-identical and safe. Rows past the
+        // transmission boundary ('sending', 'sent_to_printer', 'printer_ack')
+        // must NEVER requeue: a re-run re-renders and re-writes every copy —
+        // a silent duplicate print (ADR-5/T4). They strand durably in their
+        // last state for restart recovery instead. Requeue with backoff through
+        // the injected scheduler — never synchronously, so a persistently
+        // failing store cannot become a zero-delay microtask spin — and after
+        // 4 consecutive engine-error requeues (counters 1..3 scheduled; the
+        // 4th does not) the job is left for restart recovery too.
         try {
           const stranded = store.get(jobId);
-          if (stranded !== null && !isTerminal(stranded.status) && stranded.status !== 'sending') {
+          if (
+            stranded !== null &&
+            (stranded.status === 'accepted' || stranded.status === 'rendered')
+          ) {
             const count = (engineErrorRequeues.get(jobId) ?? 0) + 1;
             if (count > 3) {
               report(
@@ -301,7 +327,8 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
               }, backoff);
             }
           } else {
-            // Terminal or mid-transmission: never requeued, so the cap counter is moot.
+            // Terminal, mid-transmission, or post-write: never requeued, so the
+            // cap counter is moot.
             engineErrorRequeues.delete(jobId);
           }
         } catch (requeueErr) {
@@ -514,7 +541,44 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
         report(`job engine: recovery failed for ${row.id}: ${String(err)}`);
       }
     }
-    // 2) Pre-transmission jobs survive the restart and resume from the queue.
+    // 2) Rows stranded between hand-off and completion by a crash: bytes were
+    //    written to the transport, but the process died before the durable
+    //    completion write landed. Hand-off status is knowable, but the job
+    //    never reached a terminal state — resolve to ambiguous like
+    //    mid-transmission rows; the printer is never re-sent (ADR-5). The
+    //    attempt-history row uses attempts + 1: the stranded attempt already
+    //    has its history row (recorded before the sent_to_printer write) and
+    //    (job_id, attempt) is the primary key.
+    for (const row of store.listByStatus('sent_to_printer', 'printer_ack')) {
+      try {
+        store.recordAttempt(
+          row.id,
+          row.attempts + 1,
+          {
+            outcome: 'ambiguous_crash',
+            errorCode: 'restarted_in_flight',
+            errorMessage: 'agent restarted after transmission but before hand-off was recorded',
+          },
+          now(),
+        );
+        store.updateStatus(row.id, 'ambiguous', {
+          lastError: encodeStoredError(
+            'restarted_in_flight',
+            'agent restarted after transmission but before hand-off was recorded',
+          ),
+        });
+        const fresh = store.get(row.id);
+        if (fresh !== null) {
+          emit(fresh, 'ambiguous', {
+            code: 'restarted_in_flight',
+            message: 'agent restarted after transmission but before hand-off was recorded',
+          });
+        }
+      } catch (err) {
+        report(`job engine: recovery failed for ${row.id}: ${String(err)}`);
+      }
+    }
+    // 3) Pre-transmission jobs survive the restart and resume from the queue.
     //    Rows whose printer is unknown stay put: the printer may be restored by
     //    config later, and they still count against the queue bound.
     for (const row of store.listByStatus('accepted', 'rendered')) {
