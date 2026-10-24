@@ -77,7 +77,7 @@ same union. `disabled`/`error` are dropped from the renderer type.
 | Channel | Request schema |
 |---|---|
 | `agent:snapshot` | `z.undefined()` |
-| `pair:with-code` | `{ code: z.string().regex(/^\d{6,12}$/) }` — numeric 6–12; `pairing.ts` imposes no format, so this is the agent-side constraint |
+| `pair:with-code` | `{ code: z.string().regex(/^[A-Z0-9]{8}$/) }` — api-contract §3.4 (normative): 8 chars, single-use, 10 min TTL; matches the existing Setup screen |
 | `agent:unpair` | `z.undefined()` |
 | `printers:list` | `z.undefined()` |
 | `printers:add` / `printers:update` | strict `PrinterDraftSchema` re-exported from `printers/profile.ts` (+ `printerId: z.uuid()` for update) |
@@ -100,9 +100,15 @@ exposure, no channel strings in renderer.
   bridge call; `demo: false`. `MockAgentService` is deleted outright.
 - `types.ts`: `ConnectionState` swapped to the cloud union. Screens updated:
   Overview renders `unpaired` (CTA → Setup) and `revoked` (wipe notice +
-  re-pair CTA, honest §3.1 wording); Setup's pairing form calls real
-  `pairWithCode` and renders `PairResult` failures; other screens consume real
-  data unchanged in shape.
+  re-pair CTA, honest §3.1 wording); Setup's pairing form already matches the
+  contract (8-char alphanumeric code) and just calls the real `pairWithCode`.
+- **Printer view model alignment (amendment):** the renderer's fictional
+  `PrinterConfig`/`PrinterDraft` (station, copiesDefault, codepage, cutDefault,
+  duplicatePolicy, spooler transport) is replaced by type-only re-exports of
+  the real `PrinterProfile`/`PrinterDraft` from `printers/profile.ts`. The
+  PrintersScreen form is reworked to the real fields (name, role, paper width,
+  printableDots, charsPerLine, capabilities, TCP host/port). Health stays
+  `'unknown'` everywhere this phase (R-VAL-3 pending).
 - Screen tests keep using a fake `AgentService` (seam stays injectable).
 
 Display identity (resolved, no longer open): `IdentitySecrets` carries
@@ -126,9 +132,10 @@ supplies a display name (candidate for the config stream, out of scope).
 - `AckBuffer` flush failures retain acks and retry on next flush; buffer cap
   500, oldest-first drop + log line. `stop()` is idempotent, flushes acks
   before closing the DB.
-- Startup order: guards → settings → runtime → `engine.recover()` →
-  `runtime.start()` (first poll cycle recovers pending work).
-  `before-quit` → `runtime.stop()`.
+- Startup order: guards → settings → runtime; `runtime.start()` itself runs
+  `engine.recover()` first, then starts the poll loop (first poll cycle
+  recovers pending work) — the ordering lives inside the runtime so it is
+  unit-testable. `before-quit` → `runtime.stop()`.
 
 ## 6. Testing
 
