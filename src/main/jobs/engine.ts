@@ -81,6 +81,11 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
   const draining = new Set<string>();
   /** Job ids with an execution in flight (cancel/retry coordination, Task 10). */
   const executing = new Set<string>();
+  /** Consecutive engine-error requeues per job (drain-catch path only). Cap
+   *  semantics: counters 1..3 schedule a backoff requeue; the 4th consecutive
+   *  engine-error requeue gives up and leaves the job in its last durable
+   *  state for restart recovery instead of retrying forever. */
+  const engineErrorRequeues = new Map<string, number>();
 
   function emit(row: JobRow, status: AckStatus, error?: JobAck['error']): JobAck {
     const ack: JobAck = {
@@ -235,6 +240,18 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
     return ra.priority - rb.priority || ra.createdAt - rb.createdAt || (a < b ? -1 : 1);
   }
 
+  /** schedule() wrapper for timer callbacks that touch the store: a closed or
+   *  failing store would otherwise throw uncaught inside a timer context. */
+  function scheduleSafely(fn: () => void, delayMs: number): void {
+    schedule(() => {
+      try {
+        fn();
+      } catch (err) {
+        report(`job engine: scheduled work failed: ${String(err)}`);
+      }
+    }, delayMs);
+  }
+
   function drain(printerId: string): void {
     if (draining.has(printerId)) return;
     const queue = pending.get(printerId);
@@ -250,14 +267,34 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
         // ('sending' → recovered to ambiguous on next start). Never crash the process.
         report(`job engine: unhandled error executing ${jobId}: ${String(err)}`);
         // Pre-transmission stranding guard: a transient StoreError before 'sending'
-        // would leave the row durable but queued nowhere. Re-enqueue unless terminal or
-        // already mid-transmission ('sending' stays restart-recovery territory). This
-        // loop is unbounded only if the store fails persistently — acceptable for P1,
-        // because each cycle re-runs the failing store call synchronously and reports.
+        // would leave the row durable but queued nowhere. Re-enqueue with backoff
+        // through the injected scheduler — never synchronously, so a persistently
+        // failing store cannot become a zero-delay microtask spin. 'sending' stays
+        // restart-recovery territory, and after 4 consecutive engine-error requeues
+        // (counters 1..3 scheduled; the 4th does not) the job is left for restart
+        // recovery too.
         try {
           const stranded = store.get(jobId);
           if (stranded !== null && !isTerminal(stranded.status) && stranded.status !== 'sending') {
-            enqueueExecution(printerId, jobId);
+            const count = (engineErrorRequeues.get(jobId) ?? 0) + 1;
+            if (count > 3) {
+              report(
+                `job engine: ${jobId} hit the engine-error requeue cap; giving up until restart recovery`,
+              );
+              engineErrorRequeues.delete(jobId);
+            } else {
+              engineErrorRequeues.set(jobId, count);
+              const backoff = Math.min(limits.retryBaseDelayMs * 2 ** (count - 1), limits.retryMaxDelayMs);
+              scheduleSafely(
+                () => {
+                  enqueueExecution(printerId, jobId);
+                },
+                backoff,
+              );
+            }
+          } else {
+            // Terminal or mid-transmission: never requeued, so the cap counter is moot.
+            engineErrorRequeues.delete(jobId);
           }
         } catch (requeueErr) {
           // Store unreadable (e.g. DB closed) — requeueing is impossible; report and stop.
@@ -296,12 +333,10 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
 
   /** Deterministic failure (render/unknown-printer): terminal, not retried. */
   function failJob(jobId: string, code: string, message: string, attempt: number): void {
-    const outcome =
-      code === 'invalid_doc' || code === 'unsupported_doc_version'
-        ? 'render_error'
-        : code === 'unknown_printer'
-          ? 'unknown_printer'
-          : code;
+    // Render-stage codes (invalid_doc, unsupported_doc_version, unsupported_doc_type,
+    // payload_too_large, text_not_encodable, render_failed) all map to outcome
+    // 'render_error'; the specific code is preserved in errorCode.
+    const outcome = code === 'unknown_printer' ? 'unknown_printer' : 'render_error';
     store.recordAttempt(jobId, attempt, { outcome, errorCode: code, errorMessage: message }, now());
     store.updateStatus(jobId, 'failed', { lastError: encodeStoredError(code, message) });
     const row = store.get(jobId);
@@ -336,6 +371,10 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
       failJob(jobId, result.error.code, result.error.message, row.attempts + 1);
       return;
     }
+    // Render succeeded, so the store was writable throughout this pass — any
+    // earlier engine-error requeues for this job are moot. Reset the requeue
+    // cap counter (non-requeue paths must not inherit a stale count).
+    engineErrorRequeues.delete(jobId);
     row = store.get(jobId);
     if (row === null) return;
     emit(row, 'rendered');
@@ -386,7 +425,7 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
     }
     store.updateStatus(jobId, 'rendered', { lastError: encodeStoredError(code, message) });
     const backoff = Math.min(limits.retryBaseDelayMs * 2 ** (row.attempts - 1), limits.retryMaxDelayMs);
-    schedule(() => {
+    scheduleSafely(() => {
       enqueueExecution(row.printerId, jobId);
     }, backoff);
   }

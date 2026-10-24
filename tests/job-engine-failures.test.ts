@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { makeHarness, makeJob } from './helpers/job-engine-harness';
+import { makeDoc } from './helpers/render';
 import { FakeTransport, FakeTransportRegistry } from './helpers/fake-transport';
 import { TransportError } from '../src/main/transport/errors';
 import type { PrinterProfile } from '../src/main/printers/profile';
 import type { TransportRegistry } from '../src/main/transport/registry';
+import { isTerminal } from '../src/main/local-store/job-store';
 
 async function drained(): Promise<void> {
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
@@ -110,6 +112,82 @@ describe('engine failure semantics', () => {
       // attempt history records the ambiguous write
       const outcomes = h.engine.listAttempts('job-1').map((a) => a.outcome);
       expect(outcomes).toEqual(['write_ambiguous']);
+    } finally {
+      h.dispose();
+    }
+  });
+
+  it('does not spin when store writes persistently fail: requeues go through the scheduler and are capped at 4', async () => {
+    // Simulated persistent store failure: reads fine, every write throws.
+    // The first engine error hits runJob's render-phase updateStatus('rendered'),
+    // so the row stays durably 'accepted'.
+    const h = await makeHarness({
+      wrapStore: (base) => ({
+        ...base,
+        updateStatus: (): never => {
+          throw new Error('simulated persistent write failure');
+        },
+      }),
+    });
+    try {
+      h.engine.submit(makeJob(h.printerId));
+      await drained();
+      // Requeue #1 went through the scheduler — no synchronous microtask spin.
+      expect(h.timers.length).toBe(1);
+      expect(h.engine.getJob('job-1')?.status).toBe('accepted');
+      // Counters 1..3 schedule a requeue each; the 4th gives up. Timers settle at 3.
+      h.timers.shift()?.(); // requeue #2
+      await drained();
+      h.timers.shift()?.(); // requeue #3
+      await drained();
+      expect(h.timers).toHaveLength(1);
+      h.timers.shift()?.(); // requeue #4 → cap reached, nothing scheduled
+      await drained();
+      expect(h.timers).toHaveLength(0); // engine stopped adding timers
+      const row = h.engine.getJob('job-1');
+      expect(row?.status).toBe('accepted'); // remains non-terminal, left for restart recovery
+      expect(row !== null && !isTerminal(row.status)).toBe(true);
+    } finally {
+      h.dispose();
+    }
+  });
+
+  it('retry timer survives a closed store without an unhandled error', async () => {
+    let failFirst = 1; // first open fails → one retry timer pending
+    const transports = new OpenScriptRegistry(() =>
+      failFirst-- > 0 ? new TransportError('connect_refused', 'printer refused') : undefined,
+    );
+    const h = await makeHarness({ transports });
+    h.engine.submit(makeJob(h.printerId));
+    await drained();
+    expect(h.timers.length).toBe(1);
+    h.dispose(); // close the db out from under the pending retry
+    // The guarded timer callback must not let the store error escape; the
+    // flush itself returns normally (vitest fails the test on unhandled throws).
+    expect(() => h.timers.shift()?.()).not.toThrow();
+    await drained();
+  });
+
+  it('maps every render-stage error code to the render_error outcome', async () => {
+    // Schema-valid doc (200 lines ≤ max, each ≤ byte caps) whose JSON still
+    // exceeds PAYLOAD_MAX_BYTES (32 KiB) → intake passes, render fails with
+    // payload_too_large (render.ts size guard fires before re-validation).
+    const payload = makeDoc({
+      lines: Array.from({ length: 200 }, (_, i) => ({
+        text: `${String(i).padStart(3, '0')}-`.padEnd(96, 'x'),
+        note: 'n'.padEnd(64, 'y'),
+        qty: 1,
+        unit_price: 1,
+      })),
+    });
+    const h = await makeHarness();
+    try {
+      h.engine.submit(makeJob(h.printerId, { payload }));
+      await drained();
+      expect(h.engine.getJob('job-1')?.status).toBe('failed');
+      const [attempt] = h.engine.listAttempts('job-1');
+      expect(attempt?.outcome).toBe('render_error'); // outcome taxonomy, not the raw code
+      expect(attempt?.errorCode).toBe('payload_too_large'); // specific code preserved
     } finally {
       h.dispose();
     }

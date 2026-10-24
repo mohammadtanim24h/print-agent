@@ -46,7 +46,11 @@ export type NewJobRow = JobRow;
 
 export interface AttemptRecord {
   /** Outcome values: 'render_error' | 'unknown_printer' | 'connect_error' |
-   *  'write_ambiguous' | 'ambiguous_crash' | 'completed' | 'cancelled'. */
+   *  'write_ambiguous' | 'ambiguous_crash' | 'completed' | 'cancelled'.
+   *  'render_error' covers ANY render-stage code (invalid_doc,
+   *  unsupported_doc_version, unsupported_doc_type, payload_too_large,
+   *  text_not_encodable, render_failed); the errorCode field carries the
+   *  specific code. */
   readonly outcome: string;
   readonly errorCode?: string;
   readonly errorMessage?: string;
