@@ -316,7 +316,9 @@ describe('bounded retries', () => {
     let count = 0;
     const { fetchMock, calls } = fetchScript(() => {
       count += 1;
-      return count < 2 ? jsonResponse(503, {}) : new Response(null, { status: 204 });
+      return count < 2
+        ? jsonResponse(503, {})
+        : jsonResponse(200, { results: [{ job_id: JOB_ID, result: 'applied' }] });
     });
     const t = makeTransport(fetchMock);
     await expect(
@@ -334,10 +336,62 @@ describe('bounded retries', () => {
           },
         ],
       }),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ results: [{ job_id: JOB_ID, result: 'applied' }] });
     expect(calls).toHaveLength(2);
   });
+
+  it('parses every §7.1 ack result value', async () => {
+    const results = [
+      { job_id: JOB_ID, result: 'applied' },
+      { job_id: JOB_ID, result: 'duplicate' },
+      { job_id: JOB_ID, result: 'stale' },
+      { job_id: JOB_ID, result: 'not_found' },
+      { job_id: JOB_ID, result: 'rejected' },
+    ];
+    const { fetchMock } = fetchScript(() => jsonResponse(200, { results }));
+    const t = makeTransport(fetchMock);
+    await expect(t.sendAcks(auth, makeAckBatch())).resolves.toEqual({ results });
+  });
+
+  it('rejects a 200 ack response without the results array (malformed_response)', async () => {
+    const { fetchMock, calls } = fetchScript(() => jsonResponse(200, {}));
+    const t = makeTransport(fetchMock);
+    await expect(t.sendAcks(auth, makeAckBatch())).rejects.toMatchObject({
+      code: 'malformed_response',
+    });
+    expect(calls).toHaveLength(1);
+  });
 });
+
+function makeAckBatch(): {
+  envelope_version: 1;
+  type: 'ack';
+  acks: [
+    {
+      job_id: string;
+      status: 'accepted';
+      printer_status: 'unknown';
+      printed: false;
+      attempt: number;
+      at: string;
+    },
+  ];
+} {
+  return {
+    envelope_version: 1,
+    type: 'ack',
+    acks: [
+      {
+        job_id: JOB_ID,
+        status: 'accepted',
+        printer_status: 'unknown',
+        printed: false,
+        attempt: 1,
+        at: '2026-10-22T10:00:01.250Z',
+      },
+    ],
+  };
+}
 
 describe('outbound payloads are schema-checked', () => {
   it('rejects an ack batch with an invalid shape before any request', async () => {
