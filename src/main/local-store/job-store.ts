@@ -45,7 +45,9 @@ export interface JobRow {
 export type NewJobRow = JobRow;
 
 export interface AttemptRecord {
-  readonly outcome: string; // 'render_error' | 'connect_error' | 'write_ambiguous' | 'ambiguous_crash' | 'completed' | 'cancelled'
+  /** Outcome values: 'render_error' | 'unknown_printer' | 'connect_error' |
+   *  'write_ambiguous' | 'ambiguous_crash' | 'completed' | 'cancelled'. */
+  readonly outcome: string;
   readonly errorCode?: string;
   readonly errorMessage?: string;
 }

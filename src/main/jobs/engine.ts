@@ -4,7 +4,13 @@ import { renderProfileFromPrinterConfig } from '../render/profile';
 import type { PrinterStore } from '../printers/store';
 import type { TransportRegistry } from '../transport/registry';
 import { StoreError } from '../local-store/errors';
-import { isTerminal, type JobRow, type JobStatus, type JobStore } from '../local-store/job-store';
+import {
+  isTerminal,
+  type JobAttemptRow,
+  type JobRow,
+  type JobStatus,
+  type JobStore,
+} from '../local-store/job-store';
 import type { AckSink, EngineLimits, JobAck, PrintJobInput } from './types';
 import { DEFAULT_LIMITS } from './types';
 import type { AckStatus } from './types';
@@ -45,6 +51,8 @@ export interface JobEngine {
   recover(): void;
   /** Read one job row (for UI/diagnostics). */
   getJob(jobId: string): JobRow | null;
+  /** Attempt-history rows for one job, ordered by attempt (for UI/diagnostics). */
+  listAttempts(jobId: string): JobAttemptRow[];
   /** Operator: re-run a failed job. (Task 10) */
   retryJob(jobId: string): void;
   /** Operator: print a copy of a terminal job as a NEW row with reprint_of set. (Task 10) */
@@ -60,6 +68,11 @@ export interface JobEngine {
 export function createJobEngine(deps: JobEngineDeps): JobEngine {
   const now = deps.now ?? Date.now;
   const limits: EngineLimits = { ...DEFAULT_LIMITS, ...deps.limits };
+  const schedule =
+    deps.schedule ??
+    ((fn: () => void, delayMs: number): void => {
+      setTimeout(fn, delayMs);
+    });
   const { store, printers, acks } = deps;
   const transports = deps.transports;
 
@@ -236,6 +249,20 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
         // Engine bug or store failure mid-flight. The row keeps its last durable status
         // ('sending' → recovered to ambiguous on next start). Never crash the process.
         report(`job engine: unhandled error executing ${jobId}: ${String(err)}`);
+        // Pre-transmission stranding guard: a transient StoreError before 'sending'
+        // would leave the row durable but queued nowhere. Re-enqueue unless terminal or
+        // already mid-transmission ('sending' stays restart-recovery territory). This
+        // loop is unbounded only if the store fails persistently — acceptable for P1,
+        // because each cycle re-runs the failing store call synchronously and reports.
+        try {
+          const stranded = store.get(jobId);
+          if (stranded !== null && !isTerminal(stranded.status) && stranded.status !== 'sending') {
+            enqueueExecution(printerId, jobId);
+          }
+        } catch (requeueErr) {
+          // Store unreadable (e.g. DB closed) — requeueing is impossible; report and stop.
+          report(`job engine: stranding check for ${jobId} failed: ${String(requeueErr)}`);
+        }
       })
       .finally(() => {
         executing.delete(jobId);
@@ -267,9 +294,15 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
     });
   }
 
-  /** Render error / unknown-printer failure: terminal, not retried (deterministic). */
+  /** Deterministic failure (render/unknown-printer): terminal, not retried. */
   function failJob(jobId: string, code: string, message: string, attempt: number): void {
-    store.recordAttempt(jobId, attempt, { outcome: 'render_error', errorCode: code, errorMessage: message }, now());
+    const outcome =
+      code === 'invalid_doc' || code === 'unsupported_doc_version'
+        ? 'render_error'
+        : code === 'unknown_printer'
+          ? 'unknown_printer'
+          : code;
+    store.recordAttempt(jobId, attempt, { outcome, errorCode: code, errorMessage: message }, now());
     store.updateStatus(jobId, 'failed', { lastError: encodeStoredError(code, message) });
     const row = store.get(jobId);
     if (row !== null) emit(row, 'failed', { code, message });
@@ -286,7 +319,14 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
 
     // -- render (bytes live only in memory; payload persists for re-render on retry) --
     if (row.status === 'accepted') store.updateStatus(jobId, 'rendered');
-    const parsed = DocV1Schema.safeParse(JSON.parse(row.payloadJson) as unknown);
+    let payload: unknown;
+    try {
+      payload = JSON.parse(row.payloadJson) as unknown;
+    } catch {
+      failJob(jobId, 'invalid_doc', 'stored payload is not valid JSON', row.attempts + 1);
+      return;
+    }
+    const parsed = DocV1Schema.safeParse(payload);
     if (!parsed.success) {
       failJob(jobId, 'invalid_doc', 'stored payload failed re-validation', row.attempts + 1);
       return;
@@ -302,6 +342,8 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
 
     // -- transmit ----------------------------------------------------------
     const attempt = store.incrementAttempts(jobId);
+    // Crash between these two writes leaves attempts incremented with no
+    // attempt-history row (audit-trail-only gap; see Task 12 matrix).
     store.updateStatus(jobId, 'sending'); // durable in-flight marker: crash after this ⇒ ambiguous
     const transport = transports.forPrinter(profile);
     try {
@@ -331,9 +373,22 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
     }
   }
 
-  // TEMP (Task 6): replaced by bounded-retry logic in Task 7.
+  /** Pre-transmission failure: nothing was written, so retrying is safe (ADR-6 at-most-once per attempt). */
   function onConnectFailure(jobId: string, attempt: number, code: string, message: string): void {
-    failJob(jobId, code, message, attempt);
+    store.recordAttempt(jobId, attempt, { outcome: 'connect_error', errorCode: code, errorMessage: message }, now());
+    const row = store.get(jobId);
+    if (row === null) return;
+    if (row.attempts >= limits.maxAttempts) {
+      store.updateStatus(jobId, 'failed', { lastError: encodeStoredError(code, message) });
+      const failed = store.get(jobId);
+      if (failed !== null) emit(failed, 'failed', { code, message });
+      return;
+    }
+    store.updateStatus(jobId, 'rendered', { lastError: encodeStoredError(code, message) });
+    const backoff = Math.min(limits.retryBaseDelayMs * 2 ** (row.attempts - 1), limits.retryMaxDelayMs);
+    schedule(() => {
+      enqueueExecution(row.printerId, jobId);
+    }, backoff);
   }
 
   function onAmbiguous(jobId: string, attempt: number, code: string, message: string): void {
@@ -347,6 +402,10 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
     return store.get(jobId);
   }
 
+  function listAttempts(jobId: string): JobAttemptRow[] {
+    return store.listAttempts(jobId);
+  }
+
   function pendingCount(): number {
     return store.countByStatus(...NON_TERMINAL);
   }
@@ -354,6 +413,7 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
   return {
     submit,
     getJob,
+    listAttempts,
     pendingCount,
     recover: (): void => {
       throw new Error('recover: implemented in Task 9');
