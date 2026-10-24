@@ -593,6 +593,18 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
     return true;
   }
 
+  /** Retention: delete terminal rows past the age cutoff and/or the row cap.
+   *  Safe-deletion rule: terminalIdsOlderThan itself only ever returns
+   *  TERMINAL rows (rejected/completed/failed/ambiguous), so a job whose final
+   *  state is not durably recorded is never eligible. */
+  function cleanup(): number {
+    const cutoff = now() - limits.retentionDays * 86_400_000;
+    const ids = store.terminalIdsOlderThan(cutoff, limits.retentionMaxRows);
+    if (ids.length === 0) return 0;
+    store.deleteWithAttempts(ids); // single transaction; attempts deleted with their job
+    return ids.length;
+  }
+
   return {
     submit,
     getJob,
@@ -602,8 +614,6 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
     retryJob,
     reprintJob,
     cancel,
-    cleanup: (): number => {
-      throw new Error('cleanup: implemented in Task 11');
-    },
+    cleanup,
   };
 }
