@@ -35,8 +35,14 @@ in acks (api-contract §3.1 excludes them; `duplicateAck` maps `sending` → `ac
 and `printer_ack` → `completed` for re-delivery).
 
 - **Intake rejection codes:** `unknown_printer`, `unsupported_doc_version`,
-  `job_expired`, `invalid_doc`, `queue_full` (bounded queue: non-terminal row count
-  against `maxPending`, default 500). Tenant/restaurant scope is enforced upstream
+  `job_expired`, `invalid_doc`, `invalid_envelope`, `queue_full` (bounded queue:
+  non-terminal row count against `maxPending`, default 500). The engine enforces the
+  api-contract §2 agent caps as a last line of defense regardless of what the WSS
+  boundary already validated: `copies` must be an integer 1..4 and `priority` an
+  integer 1..9 (`invalid_envelope`), and the serialized payload must not exceed the
+  32 KiB `PAYLOAD_MAX_BYTES` cap (`invalid_doc` — measured on the same serialized
+  JSON the renderer later guards, so the render-stage `payload_too_large` is not
+  reachable through intake). Tenant/restaurant scope is enforced upstream
   (architecture §7 — the device token bounds what the server may send); the engine
   keys idempotency per `(restaurant_id, idempotency_key)`.
 - **Intake DB failure:** `submit` throws `JobEngineError('store_unavailable')` with
@@ -53,16 +59,24 @@ and `printer_ack` → `completed` for re-delivery).
   `failed`. Each retry re-renders from the stored payload and re-emits a `rendered`
   ack — **the backend must accept multiple `rendered` acks per job**.
 - **Engine-error requeues:** if a store operation or other unexpected error fails
-  mid-execution before transmission, the job is requeued through the same backoff
-  scheduler (via the injected `schedule`, never synchronously); after 4 consecutive
-  engine-error requeues the engine gives up until restart (startup `recover()`
-  re-enqueues pre-transmission rows). Reaching a fresh render + the durable `sending`
-  marker resets the cap counter.
+  mid-execution, only rows still in a **pre-transmission** state (`accepted`/
+  `rendered`) are requeued, through the same backoff scheduler (via the injected
+  `schedule`, never synchronously); after 4 consecutive engine-error requeues the
+  engine gives up until restart (startup `recover()` re-enqueues pre-transmission
+  rows). Rows past the transmission boundary — `sending`, `sent_to_printer`,
+  `printer_ack` — are **never** requeued: a re-run would re-render and re-write
+  every copy (a silent duplicate print, ADR-5/T4), so they strand durably in their
+  last state until restart recovery resolves them. Reaching a fresh render + the
+  durable `sending` marker resets the cap counter.
 - **Write-phase failures:** `ambiguous` immediately (bytes may have partially reached
   the printer — outcome unknowable). Never retried automatically (ADR-6).
-- **Crash between the durable `sending` marker and write resolution:** `recover()` at
-  startup maps those rows to `ambiguous` (`restarted_in_flight`, with an
-  `ambiguous_crash` attempt-history row and an `ambiguous` ack). Never re-sent
+- **Crash in the transmission/completion window:** `recover()` at startup resolves
+  both mid-transmission rows (`sending`) and rows stranded **between** the
+  `sent_to_printer`/`printer_ack` write and the `completed` write (a crash in that
+  window leaves bytes already handed off but no durable completion) to `ambiguous`
+  (`restarted_in_flight`, with an `ambiguous_crash` attempt-history row and an
+  `ambiguous` ack; the stranded attempt already has its history row, so the crash
+  record uses `attempts + 1` — `(job_id, attempt)` is the primary key). Never re-sent
   automatically. `recover()` never throws; per-row recovery failures are reported and
   skipped (they remain in their current status until the next restart). Pre-transmission
   rows (`accepted`/`rendered`) are re-enqueued for execution; rows whose printer is
@@ -124,6 +138,7 @@ state itself is unaffected.
 | Fault                                          | Test                                                            |
 | ---------------------------------------------- | --------------------------------------------------------------- |
 | Process restart mid-write                      | tests/job-engine-recovery.test.ts (hang transport + dispose + re-boot) |
+| Transient db failure between hand-off and completion (C1 window) | tests/job-engine-db-failures.test.ts (strand + no requeue), tests/job-engine-recovery.test.ts (restart resolves to ambiguous) |
 | Process restart pre-transmission               | tests/job-engine-recovery.test.ts                                |
 | Repeated delivery after completion             | tests/job-engine-recovery.test.ts, tests/job-engine-execution.test.ts |
 | Ambiguous outcome (write failure)              | tests/job-engine-failures.test.ts                                |
