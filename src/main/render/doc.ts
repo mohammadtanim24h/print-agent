@@ -1,7 +1,8 @@
 import { z } from 'zod';
 
 /**
- * Doc model v1 — the normative payload of `docs/api-contract.md` §4. Strict
+ * Doc model v1 — the normative payload of `docs/api-contract.md` §2 ("Document
+ * model v1"). Strict
  * schemas: unknown fields inside payloads are rejected, not ignored (ADR-11).
  * String limits are BYTES of UTF-8 per the contract's "hard limits", so a
  * helper is used instead of zod's UTF-16-code-unit `max()`.
