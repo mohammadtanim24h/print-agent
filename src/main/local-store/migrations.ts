@@ -71,6 +71,27 @@ export function migrate(db: SqliteDatabase, now: () => number = Date.now): numbe
       `local store schema v${String(onDiskMax)} is newer than this build (v${String(highestKnown)})`,
     );
   }
+  // Gap guard: applied versions must all be known to this build and form an exact
+  // prefix {1..k} of the runner's list. A non-prefix set (e.g. {1,3} with 2 missing)
+  // means the schema was tampered with or partially copied — refusing is safer than
+  // applying migrations on top of an unknown shape.
+  const knownVersions = new Set(MIGRATIONS.map((m) => m.version));
+  for (const v of applied) {
+    if (!knownVersions.has(v)) {
+      throw new StoreError(
+        'db_version_newer',
+        `local store has applied migration v${String(v)} which this build does not know`,
+      );
+    }
+  }
+  // Versions are distinct positive integers, so |applied| === max(applied) iff the
+  // set is exactly {1..max} — i.e. no gaps in the applied prefix.
+  if (applied.size !== onDiskMax) {
+    throw new StoreError(
+      'db_version_newer',
+      'local store schema is missing migrations applied out of order (non-contiguous applied set)',
+    );
+  }
   let ran = 0;
   for (const migration of MIGRATIONS) {
     if (applied.has(migration.version)) continue;
