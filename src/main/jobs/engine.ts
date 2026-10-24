@@ -70,6 +70,7 @@ export interface JobEngine {
 
 export function createJobEngine(deps: JobEngineDeps): JobEngine {
   const now = deps.now ?? Date.now;
+  const newId = deps.newId ?? ((): string => crypto.randomUUID());
   const limits: EngineLimits = { ...DEFAULT_LIMITS, ...deps.limits };
   const schedule =
     deps.schedule ??
@@ -498,21 +499,101 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
     }
   }
 
+  // ---- operator actions (threat-model T4: explicit operator actions only; no
+  // silent reprints — reprints are separate rows with reprint_of for audit) ----
+
+  function retryJob(jobId: string): void {
+    const row = store.get(jobId);
+    if (row === null) {
+      throw new JobEngineError('illegal_transition', `retryJob: unknown job ${jobId}`);
+    }
+    if (row.status !== 'failed') {
+      throw new JobEngineError(
+        'illegal_transition',
+        `retryJob: job ${jobId} is ${row.status}; only failed jobs can be retried`,
+      );
+    }
+    // Fresh attempt budget + clear the stored failure so a re-failure overwrites
+    // lastError rather than layering on it; the row re-enters the queue as accepted.
+    store.resetAttempts(jobId);
+    store.updateStatus(jobId, 'accepted', { clearError: true });
+    enqueueExecution(row.printerId, jobId);
+  }
+
+  function reprintJob(jobId: string): string {
+    const row = store.get(jobId);
+    if (row === null) {
+      throw new JobEngineError('illegal_transition', `reprintJob: unknown job ${jobId}`);
+    }
+    if (!isTerminal(row.status) || row.status === 'rejected') {
+      throw new JobEngineError(
+        'illegal_transition',
+        `reprintJob: job ${jobId} is ${row.status}; only completed/failed/ambiguous jobs can be reprinted`,
+      );
+    }
+    // A NEW row with a unique idempotency key (the original key is taken by the
+    // unique index) so the server-side duplicate ledger is never disturbed.
+    const id = newId();
+    store.insert({
+      id,
+      idempotencyKey: `${row.idempotencyKey}#reprint-${id}`,
+      tenantId: row.tenantId,
+      restaurantId: row.restaurantId,
+      printerId: row.printerId,
+      docType: row.docType,
+      docVersion: row.docVersion,
+      payloadJson: row.payloadJson,
+      priority: row.priority,
+      copies: row.copies,
+      status: 'accepted',
+      attempts: 0,
+      reprintOf: row.id,
+      createdAt: now(),
+      expiresAt: null, // an operator reprint does not inherit the original's expiry
+      sentAt: null,
+      completedAt: null,
+      updatedAt: now(),
+      lastError: null,
+    });
+    enqueueExecution(row.printerId, id);
+    const fresh = store.get(id);
+    if (fresh !== null) emit(fresh, 'accepted');
+    return id;
+  }
+
+  function cancel(jobId: string): boolean {
+    const row = store.get(jobId);
+    if (row === null) return false;
+    // Safe window: queued (accepted) or rendered but NOT yet executing. Anything
+    // else — mid-transmission (sending or executing), terminal — is refused; an
+    // ambiguous outcome must never be manufactured by the operator (ADR-5).
+    const safeWindow = (row.status === 'accepted' || row.status === 'rendered') && !executing.has(jobId);
+    if (!safeWindow) return false;
+    const fromQueue = pending.get(row.printerId);
+    if (fromQueue !== undefined) {
+      const idx = fromQueue.indexOf(jobId);
+      if (idx >= 0) fromQueue.splice(idx, 1);
+    }
+    store.recordAttempt(jobId, row.attempts + 1, { outcome: 'cancelled' }, now());
+    store.updateStatus(jobId, 'failed', {
+      lastError: encodeStoredError('cancelled', 'cancelled by operator before transmission'),
+    });
+    const fresh = store.get(jobId);
+    if (fresh !== null) {
+      emit(fresh, 'failed', { code: 'cancelled', message: 'cancelled by operator before transmission' });
+    }
+    return true;
+  }
+
   return {
     submit,
     getJob,
     listAttempts,
     pendingCount,
     recover,
-    retryJob: (): void => {
-      throw new Error('retryJob: implemented in Task 10');
-    },
-    reprintJob: (): string => {
-      throw new Error('reprintJob: implemented in Task 10');
-    },
-    cancel: (): boolean => {
-      throw new Error('cancel: implemented in Task 10');
-    },
+    retryJob,
+    reprintJob,
+    cancel,
     cleanup: (): number => {
       throw new Error('cleanup: implemented in Task 11');
     },

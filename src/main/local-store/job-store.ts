@@ -77,6 +77,7 @@ export interface JobStore {
   findByIdempotency(restaurantId: string, idempotencyKey: string): JobRow | null;
   updateStatus(id: string, status: JobStatus, patch?: StatusPatch): void;
   incrementAttempts(id: string): number;
+  /** Start a fresh attempt cycle: counter back to 0 AND the cycle's attempt history cleared. */
   resetAttempts(id: string): void;
   recordAttempt(jobId: string, attempt: number, record: AttemptRecord, at: number): void;
   listAttempts(jobId: string): JobAttemptRow[];
@@ -240,13 +241,19 @@ export function createSqliteJobStore(
       return r.attempts;
     },
     resetAttempts(id) {
-      let info;
+      // A fresh attempt cycle: the counter restarts at 0, so the history rows of
+      // the superseded cycle must go too — the job_attempts PK (job_id, attempt)
+      // would collide when the engine records attempt 1 of the new cycle.
+      const cycle = db.transaction((jobId: string): void => {
+        const info = resetAttemptsStmt.run(clock.now(), jobId);
+        if (info.changes === 0) throw new StoreError('not_found', `resetAttempts: no such job ${jobId}`);
+        deleteAttemptsStmt.run(jobId);
+      });
       try {
-        info = resetAttemptsStmt.run(clock.now(), id);
+        cycle(id);
       } catch (err) {
         throw wrap('resetAttempts', err);
       }
-      if (info.changes === 0) throw new StoreError('not_found', `resetAttempts: no such job ${id}`);
     },
     recordAttempt(jobId, attempt, record, at) {
       try {
