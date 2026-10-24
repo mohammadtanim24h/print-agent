@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { openDatabase, closeDatabase } from '../src/main/local-store/db';
+import { StoreError } from '../src/main/local-store/errors';
 
 describe('openDatabase', () => {
   it('opens an in-memory database when file is null', () => {
@@ -35,6 +36,21 @@ describe('openDatabase', () => {
       const db2 = openDatabase({ file });
       expect(db2.prepare('select v from t').get()).toEqual({ v: 'kept' });
       closeDatabase(db2);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('throws StoreError with db_open_failed when the file path is a directory', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'print-agent-db-'));
+    try {
+      expect(() => openDatabase({ file: dir })).toThrow(StoreError);
+      try {
+        openDatabase({ file: dir });
+      } catch (err) {
+        expect((err as StoreError).code).toBe('db_open_failed');
+        expect((err as StoreError).cause).toBeInstanceOf(Error);
+      }
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

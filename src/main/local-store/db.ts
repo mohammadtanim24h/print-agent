@@ -24,7 +24,9 @@ export function openDatabase(options: DatabaseOptions): SqliteDatabase {
     db.pragma('busy_timeout = 5000');
     return db;
   } catch (err) {
-    throw new StoreError('db_open_failed', `cannot open local store: ${String(err)}`);
+    // `cause` preserves the original error chain (mirrors TransportError); the message
+    // stays concise so it is safe for logs and acks.
+    throw new StoreError('db_open_failed', `cannot open local store: ${String(err)}`, { cause: err });
   }
 }
 

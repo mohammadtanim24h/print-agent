@@ -9,8 +9,8 @@ export type StoreErrorCode =
 export class StoreError extends Error implements TypedError {
   readonly code: StoreErrorCode;
 
-  constructor(code: StoreErrorCode, message: string) {
-    super(message);
+  constructor(code: StoreErrorCode, message: string, options?: { cause?: unknown }) {
+    super(message, options?.cause !== undefined ? { cause: options.cause } : undefined);
     this.name = 'StoreError';
     this.code = code;
   }
