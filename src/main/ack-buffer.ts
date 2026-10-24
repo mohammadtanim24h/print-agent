@@ -1,4 +1,4 @@
-import { ENVELOPE_VERSION } from './cloud-client/schemas';
+import { ENVELOPE_VERSION, MAX_ACKS_PER_BATCH } from './cloud-client/schemas';
 import type { AckBatch } from './cloud-client/types';
 import type { JobAck } from './jobs/types';
 
@@ -48,16 +48,21 @@ export function createAckBuffer(options: AckBufferOptions): AckBuffer {
   });
 
   function flush(): void {
-    if (queue.length === 0) return;
-    const batch = queue;
-    queue = [];
-    inFlight = inFlight
-      .then(() => options.submitAcks(toBatch(batch)))
-      .catch(() => {
-        // Retain for the next trigger; bounded.
-        log(`ack buffer: flush failed, ${String(batch.length)} ack(s) retained`);
-        queue = [...batch, ...queue].slice(-maxQueued);
-      });
+    // Drain in wire-capped chunks: a backlog larger than the AckBatchSchema
+    // cap (100) submitted in one call would fail zod parsing in the transport
+    // and re-queue forever. Each chunk is chained on the previous so delivery
+    // stays ordered; stop() awaits the last assignment to `inFlight`.
+    const maxChunk = Math.min(maxBatch, MAX_ACKS_PER_BATCH);
+    while (queue.length > 0) {
+      const batch = queue.splice(0, maxChunk);
+      inFlight = inFlight
+        .then(() => options.submitAcks(toBatch(batch)))
+        .catch(() => {
+          // Retain for the next trigger; bounded.
+          log(`ack buffer: flush failed, ${String(batch.length)} ack(s) retained`);
+          queue = [...batch, ...queue].slice(-maxQueued);
+        });
+    }
   }
 
   function armTimer(): void {

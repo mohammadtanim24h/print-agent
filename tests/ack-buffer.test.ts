@@ -47,23 +47,25 @@ describe('AckBuffer', () => {
     await vi.waitFor(() => expect(submitAcks).toHaveBeenCalledTimes(1));
     buf.add(ack('b'));
     fail = false;
-    await vi.waitFor(() => expect(env.submitted.length).toBe(1));
-    expect(env.submitted[0]?.acks.map((a) => a.job_id)).toEqual(['a', 'b']);
+    // maxBatch is 1, so the retained ack and the new one go as separate chunks.
+    await vi.waitFor(() => expect(env.submitted.length).toBe(2));
+    expect(env.submitted.flatMap((b) => b.acks.map((a) => a.job_id))).toEqual(['a', 'b']);
   });
 
   it('caps at maxQueued, dropping oldest', async () => {
     const env = makeEnv();
-    const submitAcks = vi.fn(async () => { throw new Error('down'); });
+    let fail = true;
+    const submitAcks = vi.fn(async (batch: AckBatch) => {
+      if (fail) throw new Error('down');
+      env.submitted.push(batch);
+    });
     const buf = createAckBuffer({ submitAcks, schedule: env.schedule, maxBatch: 100, maxDelayMs: 60_000, maxQueued: 3, envelopeVersion: 1 });
     for (const id of ['a', 'b', 'c', 'd']) buf.add(ack(id));
     await buf.stop(); // final flush fails; queue retains the newest 3
     expect(buf.pendingCount()).toBe(3);
-    // the dropped ack is 'a' — verified by the next successful flush
-    const submitOk = vi.fn(async (batch: AckBatch) => { env.submitted.push(batch); });
-    const buf2 = createAckBuffer({ submitAcks: submitOk, schedule: env.schedule, maxBatch: 100, maxDelayMs: 60_000, envelopeVersion: 1 });
-    for (const id of ['a', 'b', 'c', 'd']) buf2.add(ack(id));
-    await buf2.stop();
-    expect(env.submitted[0]?.acks.map((a) => a.job_id)).toEqual(['a', 'b', 'c', 'd']); // uncapped keeps all
+    fail = false;
+    await buf.stop(); // the same buffer drains the retained acks on a later flush
+    expect(env.submitted[0]?.acks.map((a) => a.job_id)).toEqual(['b', 'c', 'd']); // 'a' was dropped by the cap
   });
 
   it('stop() flushes pending acks', async () => {
@@ -72,5 +74,30 @@ describe('AckBuffer', () => {
     buf.add(ack('a'));
     await buf.stop();
     expect(env.submitted.length).toBe(1);
+  });
+
+  it('drains a queue larger than the wire cap in chunks that each satisfy AckBatchSchema', async () => {
+    const env = makeEnv();
+    let fail = true;
+    const submitAcks = vi.fn(async (batch: AckBatch) => {
+      if (fail) throw new Error('down');
+      env.submitted.push(batch);
+    });
+    // maxBatch 20 (default), maxQueued 500 (default). Deterministic split of
+    // 250 adds while failing: the chunked flush empties the queue synchronously,
+    // so threshold flushes fire at adds #20, #40, …, #240 — exactly 12 failing
+    // submissions of 20 acks each — and adds #241–#250 leave 10 queued. All
+    // failing chunks re-queue (250 < maxQueued 500): nothing is dropped.
+    const buf = createAckBuffer({ submitAcks, schedule: env.schedule, maxDelayMs: 60_000, envelopeVersion: 1 });
+    for (let i = 0; i < 250; i++) buf.add(ack(`j${String(i)}`));
+    await vi.waitFor(() => expect(submitAcks).toHaveBeenCalledTimes(12));
+    fail = false;
+    await buf.stop(); // drains the 250 queued acks as 12 × 20 + 1 × 10 = 13 chunks
+    expect(env.submitted.length).toBe(13);
+    expect(env.submitted.every((b) => b.acks.length <= 100)).toBe(true); // AckBatchSchema cap
+    expect(env.submitted.every((b) => b.acks.length <= 20)).toBe(true); // and ≤ maxBatch
+    const all = env.submitted.flatMap((b) => b.acks.map((a) => a.job_id));
+    expect(all.length).toBe(250);
+    expect(new Set(all)).toEqual(new Set(Array.from({ length: 250 }, (_, i) => `j${String(i)}`))); // all 250 delivered exactly once
   });
 });

@@ -261,10 +261,14 @@ export const AckItemSchema = z.strictObject({
     .optional(),
 });
 
+/** Wire cap on acks per batch (§7.1); the ack buffer drains in chunks of at
+ *  most this size so a backlog never produces an unparsable batch. */
+export const MAX_ACKS_PER_BATCH = 100;
+
 export const AckBatchSchema = z.strictObject({
   envelope_version: z.literal(ENVELOPE_VERSION),
   type: z.literal('ack'),
-  acks: z.array(AckItemSchema).max(100),
+  acks: z.array(AckItemSchema).max(MAX_ACKS_PER_BATCH),
 });
 
 // ---------------------------------------------------------------------------
