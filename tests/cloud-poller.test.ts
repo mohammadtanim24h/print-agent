@@ -145,7 +145,7 @@ describe('job admission (untrusted server)', () => {
     });
   });
 
-  it('drops jobs whose signature does not verify and acks bad_sig', async () => {
+  it('drops jobs whose signature does not verify and acks rejected{bad_signature}', async () => {
     const { envelope } = makeSignedEnvelope(); // signed by a different key than the pinned one
     const h = makeHarness({ poll: makePollResponse([envelope]) });
     h.secrets.save(makeSecrets({ serverSigningPubkey: makeB64Url32() }));
@@ -156,7 +156,48 @@ describe('job admission (untrusted server)', () => {
     expect(ackCall?.batch?.acks[0]).toMatchObject({
       job_id: (envelope.job as { job_id: string }).job_id,
       status: 'rejected',
+      error: { code: 'bad_signature' },
     });
+  });
+
+  it('acks a print_job with a null sig as rejected{bad_signature} (never strands the claim)', async () => {
+    const { envelope } = makeSignedEnvelope();
+    const nullSig = { ...envelope, sig: null };
+    const h = makeHarness({ poll: makePollResponse([nullSig]) });
+    h.secrets.save(makeSecrets({ serverSigningPubkey: makeB64Url32() }));
+    await startAndSettle(h);
+    expect(h.jobs).toHaveLength(0);
+    expect(h.client.state()).toBe('online');
+    await settle();
+    const ackCall = h.transport.callsOf('acks')[0];
+    expect(ackCall?.batch?.acks[0]).toMatchObject({
+      job_id: (envelope.job as { job_id: string }).job_id,
+      status: 'rejected',
+      error: { code: 'bad_signature' },
+    });
+  });
+
+  it('acks a schema-invalid v1 print_job as rejected{invalid_envelope}', async () => {
+    const { envelope } = makeSignedEnvelope({ job: { copies: 9 } }); // out of range → schema fails
+    const h = makeHarness({ poll: makePollResponse([envelope]) });
+    h.secrets.save(makeSecrets({ serverSigningPubkey: makeB64Url32() }));
+    await startAndSettle(h);
+    expect(h.jobs).toHaveLength(0);
+    await settle();
+    const ackCall = h.transport.callsOf('acks')[0];
+    expect(ackCall?.batch?.acks[0]).toMatchObject({
+      job_id: (envelope.job as { job_id: string }).job_id,
+      status: 'rejected',
+      error: { code: 'invalid_envelope' },
+    });
+  });
+
+  it('drops unnameable garbage as malformed without acking', async () => {
+    const h = makeHarness({ poll: makePollResponse([{ type: 'print_job', job: { job_id: 'x' } }]) });
+    await startAndSettle(h);
+    await settle();
+    expect(h.transport.callsOf('acks')).toHaveLength(0);
+    expect(h.client.state()).toBe('online');
   });
 
   it('drops malformed messages without crashing the loop', async () => {

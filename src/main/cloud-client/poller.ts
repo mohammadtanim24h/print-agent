@@ -54,6 +54,29 @@ const DEFAULT_POLL_INTERVAL_MS = 30_000;
 const DEFAULT_REFRESH_COOLDOWN_MS = 30_000;
 const MAX_BACKOFF_MS = 10 * 60_000;
 
+/** Identifies a v1 print_job envelope that failed schema validation but is
+ *  still nameable (type/version recognizable, `job.job_id` a string). Returns
+ *  the rejection code to ack: `bad_signature` when the `sig` field is
+ *  null/missing/not base64url(64 bytes), `invalid_envelope` otherwise. Only
+ *  unnameable garbage stays `malformed`. */
+function unsignableOrInvalidAck(raw: unknown): {
+  readonly jobId: string;
+  readonly code: 'bad_signature' | 'invalid_envelope';
+} | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const record = raw as Record<string, unknown>;
+  if (record['type'] !== 'print_job' || record['envelope_version'] !== ENVELOPE_VERSION) {
+    return null;
+  }
+  const job = record['job'];
+  if (typeof job !== 'object' || job === null) return null;
+  const jobId = (job as Record<string, unknown>)['job_id'];
+  if (typeof jobId !== 'string' || jobId === '') return null;
+  const sig = record['sig'];
+  const sigShaped = typeof sig === 'string' && /^[A-Za-z0-9_-]{86}$/.test(sig);
+  return { jobId, code: sigShaped ? 'invalid_envelope' : 'bad_signature' };
+}
+
 type Listeners = {
   job: Set<CloudListener<PrintJobEnvelope>>;
   config: Set<CloudListener<ConfigUpdate>>;
@@ -268,9 +291,32 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
           `cloud: refused envelope with unsupported envelope_version ${String(msg.envelopeVersion)}`,
         );
         return;
-      case 'malformed':
+      case 'malformed': {
+        // A print_job whose `sig` is null/missing/malformed fails the envelope
+        // schema before signature verification. The pull IS the claim (§7
+        // note 6), so dropping it silently would strand the server-side lease
+        // until it auto-fails — ack it rejected instead when we can name the job.
+        const stranded = unsignableOrInvalidAck(raw);
+        if (stranded !== null) {
+          log(`cloud: rejected unparseable print_job (${stranded.code})`);
+          void doSubmitAcks({
+            envelope_version: ENVELOPE_VERSION,
+            type: 'ack',
+            acks: [
+              rejectionAck(
+                stranded.jobId,
+                stranded.code,
+                stranded.code === 'bad_signature'
+                  ? 'envelope signature missing or malformed'
+                  : 'envelope failed schema validation',
+              ),
+            ],
+          }).catch(() => undefined);
+          return;
+        }
         log('cloud: dropped malformed server message');
         return;
+      }
       case 'ping':
         return;
     }
@@ -308,7 +354,7 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
       void doSubmitAcks({
         envelope_version: ENVELOPE_VERSION,
         type: 'ack',
-        acks: [rejectionAck(job.job_id, 'bad_sig', 'envelope signature verification failed')],
+        acks: [rejectionAck(job.job_id, 'bad_signature', 'envelope signature verification failed')],
       }).catch(() => undefined);
       return;
     }
