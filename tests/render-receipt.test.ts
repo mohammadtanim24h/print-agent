@@ -4,7 +4,9 @@ import { decodeEscpos } from './helpers/escpos-decode';
 import { makeDoc, makeRenderProfile } from './helpers/render';
 
 function texts(bytes: Uint8Array): string[] {
-  return decodeEscpos(bytes).filter((e) => e.kind === 'text').map((e) => (e as { text: string }).text);
+  return decodeEscpos(bytes)
+    .filter((e) => e.kind === 'text')
+    .map((e) => (e as { text: string }).text);
 }
 
 describe('customer receipt template', () => {
@@ -16,8 +18,13 @@ describe('customer receipt template', () => {
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     const events = decodeEscpos(r.bytes);
-    const nameIdx = events.findIndex((e) => e.kind === 'text' && (e as { text: string }).text === 'Test Cafe');
-    const alignBefore = events.slice(0, nameIdx).filter((e) => e.kind === 'align').at(-1);
+    const nameIdx = events.findIndex(
+      (e) => e.kind === 'text' && (e as { text: string }).text === 'Test Cafe',
+    );
+    const alignBefore = events
+      .slice(0, nameIdx)
+      .filter((e) => e.kind === 'align')
+      .at(-1);
     expect(alignBefore).toEqual({ kind: 'align', value: 1 });
     expect(texts(r.bytes)).toContain('12 Main St');
     expect(texts(r.bytes)).toContain('Tax ID: TIN-9');
@@ -25,7 +32,11 @@ describe('customer receipt template', () => {
 
   it('warns when a logo is requested but no asset store exists', () => {
     const doc = makeDoc({
-      header: { restaurant_name: 'T', address_lines: [], logo_asset_id: '018f0000-0000-7000-8000-000000000009' },
+      header: {
+        restaurant_name: 'T',
+        address_lines: [],
+        logo_asset_id: '018f0000-0000-7000-8000-000000000009',
+      },
     });
     const r = renderDoc('customer_receipt', doc, makeRenderProfile());
     expect(r.ok).toBe(true);
@@ -33,7 +44,15 @@ describe('customer receipt template', () => {
   });
 
   it('renders the meta block with order bold and the timestamp verbatim', () => {
-    const doc = makeDoc({ meta: { title: 'RECEIPT', order_ref: 'ORD-9', created_at: '2026-10-22T10:00:00.000Z', table: 'T7', server_name: 'Ana' } });
+    const doc = makeDoc({
+      meta: {
+        title: 'RECEIPT',
+        order_ref: 'ORD-9',
+        created_at: '2026-10-22T10:00:00.000Z',
+        table: 'T7',
+        server_name: 'Ana',
+      },
+    });
     const r = renderDoc('customer_receipt', doc, makeRenderProfile());
     expect(r.ok).toBe(true);
     if (!r.ok) return;
@@ -55,7 +74,17 @@ describe('customer receipt template', () => {
   });
 
   it('wraps long item names onto continuation lines', () => {
-    const doc = makeDoc({ lines: [{ text: 'Iced Caramel Macchiato With Extra Shot And Oat Milk', qty: 1, unit_price: 650, emphasis: 'none', align: 'left' }] });
+    const doc = makeDoc({
+      lines: [
+        {
+          text: 'Iced Caramel Macchiato With Extra Shot And Oat Milk',
+          qty: 1,
+          unit_price: 650,
+          emphasis: 'none',
+          align: 'left',
+        },
+      ],
+    });
     const r = renderDoc('customer_receipt', doc, makeRenderProfile());
     expect(r.ok).toBe(true);
     if (!r.ok) return;
@@ -66,7 +95,9 @@ describe('customer receipt template', () => {
   });
 
   it('renders notes indented two spaces under their line', () => {
-    const doc = makeDoc({ lines: [{ text: 'Coffee', qty: 1, note: 'extra hot', emphasis: 'none', align: 'left' }] });
+    const doc = makeDoc({
+      lines: [{ text: 'Coffee', qty: 1, note: 'extra hot', emphasis: 'none', align: 'left' }],
+    });
     const r = renderDoc('customer_receipt', doc, makeRenderProfile());
     expect(r.ok).toBe(true);
     if (!r.ok) return;
@@ -74,11 +105,13 @@ describe('customer receipt template', () => {
   });
 
   it('renders discounts as negative amounts', () => {
-    const doc = makeDoc({ totals: [
-      { label: 'SUBTOTAL', amount_minor: 2400, emphasis: 'none' },
-      { label: 'DISCOUNT', amount_minor: -500, emphasis: 'none' },
-      { label: 'TOTAL', amount_minor: 1900, emphasis: 'bold' },
-    ] });
+    const doc = makeDoc({
+      totals: [
+        { label: 'SUBTOTAL', amount_minor: 2400, emphasis: 'none' },
+        { label: 'DISCOUNT', amount_minor: -500, emphasis: 'none' },
+        { label: 'TOTAL', amount_minor: 1900, emphasis: 'bold' },
+      ],
+    });
     const r = renderDoc('customer_receipt', doc, makeRenderProfile());
     expect(r.ok).toBe(true);
     if (!r.ok) return;
@@ -92,8 +125,13 @@ describe('customer receipt template', () => {
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     const events = decodeEscpos(r.bytes);
-    const totalIdx = events.findIndex((e) => e.kind === 'text' && (e as { text: string }).text.includes('TOTAL'));
-    const boldBefore = events.slice(0, totalIdx).filter((e) => e.kind === 'bold').at(-1);
+    const totalIdx = events.findIndex(
+      (e) => e.kind === 'text' && (e as { text: string }).text.includes('TOTAL'),
+    );
+    const boldBefore = events
+      .slice(0, totalIdx)
+      .filter((e) => e.kind === 'bold')
+      .at(-1);
     expect(boldBefore).toEqual({ kind: 'bold', on: true });
   });
 
@@ -110,19 +148,28 @@ describe('customer receipt template', () => {
   });
 
   it('emits a QR when present and supported, with the data intact', () => {
-    const doc = makeDoc({ footer: { text_lines: ['Thank you!'], qr_data: 'https://saas.example/r/ORD-1001' } });
+    const doc = makeDoc({
+      footer: { text_lines: ['Thank you!'], qr_data: 'https://saas.example/r/ORD-1001' },
+    });
     const r = renderDoc('customer_receipt', doc, makeRenderProfile());
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     const events = decodeEscpos(r.bytes);
-    expect(events.filter((e) => e.kind === 'qr').map((e) => (e as { data: string }).data).join('')).toContain('https://saas.example/r/ORD-1001');
+    expect(
+      events
+        .filter((e) => e.kind === 'qr')
+        .map((e) => (e as { data: string }).data)
+        .join(''),
+    ).toContain('https://saas.example/r/ORD-1001');
     expect(r.summary.features.qr).toBe(true);
     expect(texts(r.bytes)).toContain('Thank you!');
   });
 
   it('skips the QR with a warning when unsupported', () => {
     const doc = makeDoc({ footer: { text_lines: [], qr_data: 'https://x' } });
-    const profile = makeRenderProfile({ capabilities: { cut: true, qrCode: false, barcode128: true } });
+    const profile = makeRenderProfile({
+      capabilities: { cut: true, qrCode: false, barcode128: true },
+    });
     const r = renderDoc('customer_receipt', doc, profile);
     expect(r.ok).toBe(true);
     if (r.ok) {
@@ -146,19 +193,32 @@ describe('customer receipt template', () => {
   it('partial-cuts by default after feeding, and honors full/none', () => {
     const partial = renderDoc('customer_receipt', makeDoc(), makeRenderProfile());
     expect(partial.ok && partial.summary.cut === 'partial').toBe(true);
-    if (partial.ok) expect(decodeEscpos(partial.bytes)).toContainEqual({ kind: 'cut', full: false });
+    if (partial.ok)
+      expect(decodeEscpos(partial.bytes)).toContainEqual({ kind: 'cut', full: false });
 
-    const full = renderDoc('customer_receipt', makeDoc({ station_hints: { cut: 'full' } }), makeRenderProfile());
+    const full = renderDoc(
+      'customer_receipt',
+      makeDoc({ station_hints: { cut: 'full' } }),
+      makeRenderProfile(),
+    );
     if (full.ok) expect(decodeEscpos(full.bytes)).toContainEqual({ kind: 'cut', full: true });
 
-    const none = renderDoc('customer_receipt', makeDoc({ station_hints: { cut: 'none' } }), makeRenderProfile());
+    const none = renderDoc(
+      'customer_receipt',
+      makeDoc({ station_hints: { cut: 'none' } }),
+      makeRenderProfile(),
+    );
     if (none.ok) {
       expect(none.summary.cut).toBe('none');
       expect(decodeEscpos(none.bytes).some((e) => e.kind === 'cut')).toBe(false);
     }
 
     // No cutter hardware: skip with a warning
-    const noCutter = renderDoc('customer_receipt', makeDoc(), makeRenderProfile({ capabilities: { cut: false, qrCode: true, barcode128: true } }));
+    const noCutter = renderDoc(
+      'customer_receipt',
+      makeDoc(),
+      makeRenderProfile({ capabilities: { cut: false, qrCode: true, barcode128: true } }),
+    );
     if (noCutter.ok) expect(noCutter.summary.warnings).toContain('cut_skipped_unsupported');
   });
 
@@ -169,12 +229,19 @@ describe('customer receipt template', () => {
     const events = decodeEscpos(r.bytes);
     const cutIdx = events.findIndex((e) => e.kind === 'cut');
     const lfsBefore = events.slice(0, cutIdx).filter((e) => e.kind === 'lf').length;
-    const feedsBefore = events.slice(0, cutIdx).filter((e) => e.kind === 'feed').reduce((s, f) => s + (f as { n: number }).n, 0);
+    const feedsBefore = events
+      .slice(0, cutIdx)
+      .filter((e) => e.kind === 'feed')
+      .reduce((s, f) => s + (f as { n: number }).n, 0);
     expect(lfsBefore + feedsBefore).toBeGreaterThanOrEqual(3);
   });
 
   it('omits missing optional values cleanly (no prices, no totals block)', () => {
-    const doc = makeDoc({ lines: [{ text: 'Coffee', emphasis: 'none', align: 'left' }], totals: [], payments: [] });
+    const doc = makeDoc({
+      lines: [{ text: 'Coffee', emphasis: 'none', align: 'left' }],
+      totals: [],
+      payments: [],
+    });
     const r = renderDoc('customer_receipt', doc, makeRenderProfile());
     expect(r.ok).toBe(true);
     if (!r.ok) return;
@@ -187,12 +254,20 @@ describe('customer receipt template', () => {
   });
 
   it('maps double_height emphasis through GS !', () => {
-    const doc = makeDoc({ lines: [{ text: 'HEADER ITEM', emphasis: 'double_height', align: 'left' }] });
+    const doc = makeDoc({
+      lines: [{ text: 'HEADER ITEM', emphasis: 'double_height', align: 'left' }],
+    });
     const r = renderDoc('customer_receipt', doc, makeRenderProfile());
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     const events = decodeEscpos(r.bytes);
-    const idx = events.findIndex((e) => e.kind === 'text' && (e as { text: string }).text.includes('HEADER ITEM'));
-    expect(events.slice(0, idx)).toContainEqual({ kind: 'size', doubleWidth: false, doubleHeight: true });
+    const idx = events.findIndex(
+      (e) => e.kind === 'text' && (e as { text: string }).text.includes('HEADER ITEM'),
+    );
+    expect(events.slice(0, idx)).toContainEqual({
+      kind: 'size',
+      doubleWidth: false,
+      doubleHeight: true,
+    });
   });
 });

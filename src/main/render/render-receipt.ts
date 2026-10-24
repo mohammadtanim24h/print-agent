@@ -23,7 +23,10 @@ export function renderReceipt(doc: DocV1, ctx: RenderContext): void {
   const { enc } = ctx;
 
   enc.setAlign('center');
-  for (const line of wrapText(sanitizeText(doc.header.restaurant_name).text, ctx.profile.charsPerLine)) {
+  for (const line of wrapText(
+    sanitizeText(doc.header.restaurant_name).text,
+    ctx.profile.charsPerLine,
+  )) {
     writeText(ctx, line, 'center', 'double_height');
   }
   for (const address of doc.header.address_lines) {
@@ -39,8 +42,10 @@ export function renderReceipt(doc: DocV1, ctx: RenderContext): void {
 
   enc.setAlign('left');
   writeText(ctx, `Order: ${sanitizeText(doc.meta.order_ref).text}`, 'left', 'bold');
-  if (doc.meta.table !== undefined) writeText(ctx, `Table: ${sanitizeText(doc.meta.table).text}`, 'left', 'none');
-  if (doc.meta.server_name !== undefined) writeText(ctx, `Server: ${sanitizeText(doc.meta.server_name).text}`, 'left', 'none');
+  if (doc.meta.table !== undefined)
+    writeText(ctx, `Table: ${sanitizeText(doc.meta.table).text}`, 'left', 'none');
+  if (doc.meta.server_name !== undefined)
+    writeText(ctx, `Server: ${sanitizeText(doc.meta.server_name).text}`, 'left', 'none');
   writeText(ctx, doc.meta.created_at.replace('T', ' '), 'left', 'none');
   separator(ctx);
 
@@ -77,7 +82,12 @@ export function renderReceipt(doc: DocV1, ctx: RenderContext): void {
   if (doc.payments.length > 0) {
     separator(ctx);
     for (const payment of doc.payments) {
-      writeTwoColumns(ctx, sanitizeText(payment.method).text, formatMinorUnits(payment.amount_minor), 'none');
+      writeTwoColumns(
+        ctx,
+        sanitizeText(payment.method).text,
+        formatMinorUnits(payment.amount_minor),
+        'none',
+      );
       if (payment.change_minor !== undefined) {
         writeTwoColumns(ctx, 'Change', formatMinorUnits(payment.change_minor), 'none');
       }

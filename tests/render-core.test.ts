@@ -21,7 +21,14 @@ describe('renderDoc dispatch + guards', () => {
     // must fire BEFORE zod validation, so the oversized raw payload reaches
     // payload_too_large, not invalid_doc. (96-char lines serialize to only
     // ~16 KiB total — arithmetically under the cap.)
-    const big = makeDoc({ lines: Array.from({ length: 150 }, (_, i) => ({ text: `Item number ${String(i)} with a reasonably long name for size padding`.padEnd(320, 'x') })) });
+    const big = makeDoc({
+      lines: Array.from({ length: 150 }, (_, i) => ({
+        text: `Item number ${String(i)} with a reasonably long name for size padding`.padEnd(
+          320,
+          'x',
+        ),
+      })),
+    });
     const r = renderDoc('customer_receipt', big);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error.code).toBe('payload_too_large');
@@ -68,7 +75,10 @@ describe('renderDoc dispatch + guards', () => {
     expect(r.ok).toBe(true);
     if (r.ok) {
       const events = decodeEscpos(r.bytes);
-      const text = events.filter((e) => e.kind === 'text').map((e) => (e as { text: string }).text).join('|');
+      const text = events
+        .filter((e) => e.kind === 'text')
+        .map((e) => (e as { text: string }).text)
+        .join('|');
       expect(text).not.toContain('<0x1b>');
       expect(text).not.toContain('<0x1d>');
       // exactly one init comes from the renderer itself

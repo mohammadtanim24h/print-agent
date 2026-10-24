@@ -16,8 +16,7 @@ import { renderReceipt } from './render-receipt';
  * inside the encoder (threat T2, ADR-3/ADR-11).
  */
 export type RenderResult =
-  | { ok: true; bytes: Uint8Array; summary: RenderSummary }
-  | { ok: false; error: RenderError };
+  { ok: true; bytes: Uint8Array; summary: RenderSummary } | { ok: false; error: RenderError };
 
 export const MAX_OUTPUT_BYTES = 256 * 1024;
 
@@ -35,7 +34,10 @@ export function renderDoc(
     // TS types can't express that, so guard the input directly (same
     // observable behavior: payload_too_large before any parsing).
     if (payload === undefined) {
-      throw new RenderError('payload_too_large', `payload exceeds ${String(PAYLOAD_MAX_BYTES)} bytes`);
+      throw new RenderError(
+        'payload_too_large',
+        `payload exceeds ${String(PAYLOAD_MAX_BYTES)} bytes`,
+      );
     }
     let json: string;
     try {
@@ -44,7 +46,10 @@ export function renderDoc(
       throw new RenderError('invalid_doc', 'payload is not JSON-serializable');
     }
     if (typeof json !== 'string' || Buffer.byteLength(json, 'utf8') > PAYLOAD_MAX_BYTES) {
-      throw new RenderError('payload_too_large', `payload exceeds ${String(PAYLOAD_MAX_BYTES)} bytes`);
+      throw new RenderError(
+        'payload_too_large',
+        `payload exceeds ${String(PAYLOAD_MAX_BYTES)} bytes`,
+      );
     }
     const parsed = DocV1Schema.safeParse(payload);
     if (!parsed.success) {

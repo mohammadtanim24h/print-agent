@@ -47,7 +47,10 @@ export function renderKitchen(doc: DocV1, ctx: RenderContext): void {
     if (line.note !== undefined) {
       // Post-wrap indentation — wrapText splits on spaces, so a prepended
       // indent would be dropped.
-      for (const noteLine of wrapText(`* ${sanitizeText(line.note).text}`, Math.max(8, width - 2))) {
+      for (const noteLine of wrapText(
+        `* ${sanitizeText(line.note).text}`,
+        Math.max(8, width - 2),
+      )) {
         writeText(ctx, `  ${noteLine}`, 'left', 'bold');
       }
     }

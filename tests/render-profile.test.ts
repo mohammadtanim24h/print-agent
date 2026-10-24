@@ -8,7 +8,11 @@ describe('DEFAULT_80MM_PROFILE', () => {
     expect(DEFAULT_80MM_PROFILE.printableDots).toBe(576);
     expect(DEFAULT_80MM_PROFILE.charsPerLine).toBe(48);
     expect(DEFAULT_80MM_PROFILE.codepage).toBe('cp437');
-    expect(DEFAULT_80MM_PROFILE.capabilities).toEqual({ cut: true, qrCode: true, barcode128: true });
+    expect(DEFAULT_80MM_PROFILE.capabilities).toEqual({
+      cut: true,
+      qrCode: true,
+      barcode128: true,
+    });
     // Safe default: reject non-ASCII unless the raster fallback is explicitly enabled.
     expect(DEFAULT_80MM_PROFILE.rasterFallback.enabled).toBe(false);
   });
@@ -31,7 +35,15 @@ describe('renderProfileFromPrinterConfig', () => {
 
   it('honors disabled cutting', () => {
     const p = renderProfileFromPrinterConfig(
-      makeProfile({ capabilities: { cut: false, qrCode: true, barcode128: true, statusPolling: false, cashDrawer: false } }),
+      makeProfile({
+        capabilities: {
+          cut: false,
+          qrCode: true,
+          barcode128: true,
+          statusPolling: false,
+          cashDrawer: false,
+        },
+      }),
     );
     expect(p.capabilities.cut).toBe(false);
   });

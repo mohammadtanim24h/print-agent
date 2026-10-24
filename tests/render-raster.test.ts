@@ -76,7 +76,10 @@ describe('raster fallback end-to-end', () => {
 
   it('fails with text_not_encodable when enabled but the font is unusable', () => {
     const doc = makeDoc({ header: { restaurant_name: 'প্রিন্ট', address_lines: [] } });
-    const badProfile = { ...makeRenderProfile(), rasterFallback: { enabled: true, fontPaths: ['Z:/nope.ttf'] } };
+    const badProfile = {
+      ...makeRenderProfile(),
+      rasterFallback: { enabled: true, fontPaths: ['Z:/nope.ttf'] },
+    };
     const r = renderDoc('customer_receipt', doc, badProfile);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error.code).toBe('text_not_encodable');
@@ -92,6 +95,8 @@ describe('raster fallback end-to-end', () => {
     if (!r.ok) return;
     const events = decodeEscpos(r.bytes);
     expect(events.some((e) => e.kind === 'image')).toBe(true);
-    expect(events.some((e) => e.kind === 'text' && (e as { text: string }).text.includes('Coffee'))).toBe(true);
+    expect(
+      events.some((e) => e.kind === 'text' && (e as { text: string }).text.includes('Coffee')),
+    ).toBe(true);
   });
 });

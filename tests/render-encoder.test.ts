@@ -72,7 +72,9 @@ describe('ThermalPrinterEncoder', () => {
     expect(b).toContain(0x1d);
     expect(Buffer.from(b).toString('latin1')).toContain('https://saas.example/r/ORD-1');
     // Decoded data must be exact (guards against slice-bound drift).
-    const qrData = decodeEscpos(b).filter((e) => e.kind === 'qr').map((e) => (e as { data: string }).data);
+    const qrData = decodeEscpos(b)
+      .filter((e) => e.kind === 'qr')
+      .map((e) => (e as { data: string }).data);
     expect(qrData).toContain('XY');
     expect(qrData.join('')).toContain('https://saas.example/r/ORD-1');
   });

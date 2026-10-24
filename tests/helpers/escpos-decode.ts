@@ -30,7 +30,7 @@ export function decodeEscpos(bytes: Uint8Array): DecodedEvent[] {
       text = '';
     }
   };
-  for (let i = 0; i < bytes.length; ) {
+  for (let i = 0; i < bytes.length;) {
     const b = bytes[i] ?? -1;
     if (b === 0x1b) {
       const cmd = bytes[i + 1];
@@ -103,7 +103,11 @@ export function decodeEscpos(bytes: Uint8Array): DecodedEvent[] {
       }
       if (cmd === 0x21) {
         const n = bytes[i + 2] ?? 0;
-        events.push({ kind: 'size', doubleWidth: (n & 0x10) !== 0, doubleHeight: (n & 0x01) !== 0 });
+        events.push({
+          kind: 'size',
+          doubleWidth: (n & 0x10) !== 0,
+          doubleHeight: (n & 0x01) !== 0,
+        });
         i += 3;
         continue;
       }

@@ -88,9 +88,7 @@ export class ThermalPrinterEncoder implements EscposEncoder {
     // contiguous 5-byte block pinned by tests/render-encoder.test.ts:
     // ESC @ (reset) immediately followed by ESC t <table>.
     this.printer.setBuffer(Buffer.alloc(0));
-    this.printer.append(
-      Buffer.from([0x1b, 0x40, 0x1b, 0x74, codepageTable(profile.codepage)]),
-    );
+    this.printer.append(Buffer.from([0x1b, 0x40, 0x1b, 0x74, codepageTable(profile.codepage)]));
   }
 
   get strippedCount(): number {

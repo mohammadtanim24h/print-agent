@@ -76,7 +76,9 @@ describe('render output through a virtual ESC/POS printer (TCP)', () => {
   it('delivers a kitchen ticket end to end', async () => {
     const vp = await startVirtualPrinter();
     printers.push(vp);
-    const doc = makeDoc({ meta: { title: 'KITCHEN', order_ref: 'ORD-77', created_at: '2026-10-22T10:00:00.000Z' } });
+    const doc = makeDoc({
+      meta: { title: 'KITCHEN', order_ref: 'ORD-77', created_at: '2026-10-22T10:00:00.000Z' },
+    });
     const rendered = renderDoc('kitchen_ticket', doc, makeRenderProfile());
     expect(rendered.ok).toBe(true);
     if (!rendered.ok) return;

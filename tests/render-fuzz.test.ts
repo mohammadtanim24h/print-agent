@@ -16,8 +16,14 @@ function mulberry32(seed: number): () => number {
 }
 
 const POOL = [
-  'Coffee', 'প্রিন্ট', 'キッチン', '🙂🎉', '\u200b\u200e', // zero-width marks
-  'a\tb', 'x\x1by\x1dz', '‮rtl‬', // bidi controls are 0x202E/0x200E — NOT C0, must pass through as text
+  'Coffee',
+  'প্রিন্ট',
+  'キッチン',
+  '🙂🎉',
+  '\u200b\u200e', // zero-width marks
+  'a\tb',
+  'x\x1by\x1dz',
+  '‮rtl‬', // bidi controls are 0x202E/0x200E — NOT C0, must pass through as text
   'A'.repeat(100),
 ];
 
@@ -107,8 +113,12 @@ describe('renderer fuzz corpus (deterministic seeds)', () => {
   it('produces identical output for identical fuzz inputs (determinism)', () => {
     const r1 = mulberry32(99);
     const r2 = mulberry32(99);
-    const doc1 = makeDoc({ lines: [{ text: mutate(r1, 'Item'), emphasis: 'none', align: 'left' }] });
-    const doc2 = makeDoc({ lines: [{ text: mutate(r2, 'Item'), emphasis: 'none', align: 'left' }] });
+    const doc1 = makeDoc({
+      lines: [{ text: mutate(r1, 'Item'), emphasis: 'none', align: 'left' }],
+    });
+    const doc2 = makeDoc({
+      lines: [{ text: mutate(r2, 'Item'), emphasis: 'none', align: 'left' }],
+    });
     const a = renderDoc('customer_receipt', doc1, makeRenderProfile());
     const b = renderDoc('customer_receipt', doc2, makeRenderProfile());
     // Determinism = same input → same result. The mutated text may legitimately

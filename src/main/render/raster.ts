@@ -35,9 +35,14 @@ export function packMonoToGsV0(bmp: RasterBitmap): Uint8Array {
     );
   }
   const header = [
-    0x1d, 0x76, 0x30, 0x00,
-    rowBytes & 0xff, (rowBytes >> 8) & 0xff,
-    bmp.height & 0xff, (bmp.height >> 8) & 0xff,
+    0x1d,
+    0x76,
+    0x30,
+    0x00,
+    rowBytes & 0xff,
+    (rowBytes >> 8) & 0xff,
+    bmp.height & 0xff,
+    (bmp.height >> 8) & 0xff,
   ];
   return Uint8Array.from([...header, ...bmp.data]);
 }
@@ -95,7 +100,9 @@ function bitmapFromCanvas(canvas: Canvas): RasterBitmap {
     for (let x = 0; x < width; x++) {
       const idx = (y * width + x) * 4;
       const luminance =
-        (rgba[idx] ?? 255) * 0.299 + (rgba[idx + 1] ?? 255) * 0.587 + (rgba[idx + 2] ?? 255) * 0.114;
+        (rgba[idx] ?? 255) * 0.299 +
+        (rgba[idx + 1] ?? 255) * 0.587 +
+        (rgba[idx + 2] ?? 255) * 0.114;
       const alpha = rgba[idx + 3] ?? 0;
       // Black text on a white fill: alpha is 255 everywhere, the luminance
       // test alone decides pixels; the alpha guard is belt-and-braces.

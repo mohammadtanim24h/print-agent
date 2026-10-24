@@ -4,26 +4,49 @@ import { decodeEscpos, decodeLines } from './helpers/escpos-decode';
 import { makeDoc, makeRenderProfile } from './helpers/render';
 
 function texts(bytes: Uint8Array): string[] {
-  return decodeEscpos(bytes).filter((e) => e.kind === 'text').map((e) => (e as { text: string }).text);
+  return decodeEscpos(bytes)
+    .filter((e) => e.kind === 'text')
+    .map((e) => (e as { text: string }).text);
 }
 
 describe('kitchen ticket template', () => {
   it('renders the title double-size and the order ref double-height', () => {
-    const doc = makeDoc({ meta: { title: 'KITCHEN', order_ref: 'ORD-77', created_at: '2026-10-22T10:00:00.000Z' } });
+    const doc = makeDoc({
+      meta: { title: 'KITCHEN', order_ref: 'ORD-77', created_at: '2026-10-22T10:00:00.000Z' },
+    });
     const r = renderDoc('kitchen_ticket', doc, makeRenderProfile());
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     const events = decodeEscpos(r.bytes);
-    const titleIdx = events.findIndex((e) => e.kind === 'text' && (e as { text: string }).text === 'KITCHEN');
-    expect(events.slice(0, titleIdx)).toContainEqual({ kind: 'size', doubleWidth: true, doubleHeight: true });
-    const refIdx = events.findIndex((e) => e.kind === 'text' && (e as { text: string }).text === 'ORD-77');
-    expect(events.slice(0, refIdx)).toContainEqual({ kind: 'size', doubleWidth: false, doubleHeight: true });
+    const titleIdx = events.findIndex(
+      (e) => e.kind === 'text' && (e as { text: string }).text === 'KITCHEN',
+    );
+    expect(events.slice(0, titleIdx)).toContainEqual({
+      kind: 'size',
+      doubleWidth: true,
+      doubleHeight: true,
+    });
+    const refIdx = events.findIndex(
+      (e) => e.kind === 'text' && (e as { text: string }).text === 'ORD-77',
+    );
+    expect(events.slice(0, refIdx)).toContainEqual({
+      kind: 'size',
+      doubleWidth: false,
+      doubleHeight: true,
+    });
   });
 
   it('shows quantities prominently and item names, but never prices', () => {
     const doc = makeDoc({
       lines: [
-        { text: 'Margherita Pizza', qty: 2, unit_price: 1200, note: 'no basil', emphasis: 'none', align: 'left' },
+        {
+          text: 'Margherita Pizza',
+          qty: 2,
+          unit_price: 1200,
+          note: 'no basil',
+          emphasis: 'none',
+          align: 'left',
+        },
         { text: 'Sparkling Water', qty: 9999, unit_price: 300, emphasis: 'none', align: 'left' },
       ],
     });
@@ -39,19 +62,29 @@ describe('kitchen ticket template', () => {
   });
 
   it('renders notes in bold with a * marker', () => {
-    const doc = makeDoc({ lines: [{ text: 'Coffee', qty: 1, note: 'extra hot', emphasis: 'none', align: 'left' }] });
+    const doc = makeDoc({
+      lines: [{ text: 'Coffee', qty: 1, note: 'extra hot', emphasis: 'none', align: 'left' }],
+    });
     const r = renderDoc('kitchen_ticket', doc, makeRenderProfile());
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     const events = decodeEscpos(r.bytes);
-    const noteIdx = events.findIndex((e) => e.kind === 'text' && (e as { text: string }).text.includes('extra hot'));
+    const noteIdx = events.findIndex(
+      (e) => e.kind === 'text' && (e as { text: string }).text.includes('extra hot'),
+    );
     expect(noteIdx).toBeGreaterThan(0);
-    const boldBefore = events.slice(0, noteIdx).filter((e) => e.kind === 'bold').at(-1);
+    const boldBefore = events
+      .slice(0, noteIdx)
+      .filter((e) => e.kind === 'bold')
+      .at(-1);
     expect(boldBefore).toEqual({ kind: 'bold', on: true });
   });
 
   it('bar/station tickets reuse the kitchen layout with the doc title', () => {
-    const doc = makeDoc({ meta: { title: 'BAR', order_ref: 'ORD-5', created_at: '2026-10-22T10:00:00.000Z' }, lines: [{ text: 'Espresso', qty: 1, emphasis: 'none', align: 'left' }] });
+    const doc = makeDoc({
+      meta: { title: 'BAR', order_ref: 'ORD-5', created_at: '2026-10-22T10:00:00.000Z' },
+      lines: [{ text: 'Espresso', qty: 1, emphasis: 'none', align: 'left' }],
+    });
     const r = renderDoc('bar_ticket', doc, makeRenderProfile());
     expect(r.ok).toBe(true);
     if (r.ok) expect(texts(r.bytes)).toContain('BAR');
