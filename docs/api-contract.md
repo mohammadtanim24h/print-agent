@@ -73,6 +73,12 @@ Hard limits (bytes, UTF-8): `lines` ≤ 200, total payload ≤ 32 KiB. Amounts a
 minor units (cents) — no floats. Text fields are printable text only; the renderer
 strips/escapes any bytes in `0x00–0x1F` and `0x7F` before ESC/POS encoding (T2).
 
+Additional limits the agent enforces (server must validate identically):
+`header.address_lines` ≤ 6 entries, `footer.text_lines` ≤ 8 entries, `qty` ≥ 0,
+and all numeric fields (`qty`, `unit_price`, `amount_minor`, `change_minor`) within
+the safe-integer range (≤ 2^53−1). Payloads exceeding these are rejected with
+`rejected{code:"invalid_doc"}`.
+
 ## 3. Agent → server messages
 
 ### 3.1 Acks (WSS, also batchable via REST)
