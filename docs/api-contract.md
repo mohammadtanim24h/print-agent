@@ -45,6 +45,12 @@ rejected, not ignored, within `data` payloads (envelope may gain additive fields
 - `sig`: server-signs job payloads; the agent verifies against a pinned server public
   key fetched at pairing. Protects against a compromised/rogue backend instance
   injecting jobs and is a mitigation for replay of stolen envelopes (threat T2/T4).
+  **Canonical form (normative for v1):** `canonical_json(job)` = JSON serialized with
+  object keys sorted recursively by UTF-16 code unit, no whitespace, UTF-8 bytes;
+  numbers as `JSON.stringify` emits them (v1 amounts are safe integers, so no float
+  formatting ambiguity). The agent verifies the signature over the **raw wire bytes**
+  of `job` — the server must sign the exact JSON it transmits, before any
+  server-side re-serialization with injected defaults.
 - `idempotency_key` uniqueness scope: `(restaurant_id, idempotency_key)`.
 
 ### Document model v1 (common fields)
@@ -121,7 +127,7 @@ overloading `completed`.
   "agent_version": "1.4.2",
   "uptime_s": 8452,
   "queue_depth": 2,
-  "connection": "wss",
+  "connection": "wss", // | "poll" — additive value for polling-mode agents (see §3.3)
   "printers": [{ "printer_id": "018f...", "health": "ok", "last_print_at": "...?" }],
 }
 ```
@@ -136,9 +142,36 @@ Missed heartbeats (≥ 3) mark the agent `offline` server-side.
 | `POST` | `/token/refresh`                 | Rotate device token                                                  |
 | `GET`  | `/jobs?since=<cursor>&limit=100` | Fallback long-poll/pull of pending jobs                              |
 | `POST` | `/acks`                          | Batch acks (idempotent, keyed by `job_id`+`attempt`)                 |
+| `POST` | `/heartbeat`                     | Polling-mode heartbeat (additive — see below)                        |
 | `GET`  | `/config`                        | Printer/station config snapshot + `config_version`                   |
 | `POST` | `/diagnostics`                   | Upload redacted log bundle (support-initiated, agent-user-confirmed) |
 | `GET`  | `/server-keys`                   | Current server signing public key(s), pinned at pairing              |
+
+**Additive v1 clarifications (documented + tested with the agent's cloud-client,
+2026-10-24):**
+
+- `POST /pair` request: `{ pairing_code, device_pubkey(ed25519 raw, base64url),
+  device_name, agent_version }`. Response: §3.4 payload.
+- `POST /token/refresh` request: `{ refresh_token }` (no `Authorization` header — the
+  refresh token travels only in the body). Response:
+  `{ device_token, refresh_token, token_ttl_s }` (rotated pair).
+- `GET /jobs` response: `{ "jobs": [ <envelope, §2/§4/§3.5>, ... ],
+  "next_cursor"?: string≤128 }` — `jobs` ≤ 100 items; envelopes may be any
+  server → agent type (`print_job` | `config_update` | `revoke` | `ping`), so
+  polling-only agents receive control messages without WSS. Server marks the
+  batch delivered; agent acks (idempotent by `job_id`+`attempt`) drive final states.
+- `POST /acks` request body: the §3.1 ack batch envelope
+  (`{ envelope_version, type: "ack", acks: [...] }`, ≤ 100 acks). Response: `204`.
+- `POST /heartbeat` — **additive endpoint for polling-mode agents** (no WSS
+  connection to carry §3.2 heartbeats): request body is the §3.2 heartbeat with
+  `"connection": "poll"`. Response: `204`. Not sent by WSS-connected agents;
+  WSS agents keep §3.2 semantics unchanged.
+- `GET /config` response: the §4 config-update body
+  (`{ config_version, printers: [...] }`, with optional `envelope_version`).
+- `GET /server-keys` response:
+  `{ "keys": [{ "kid": string≤64, "public_key": ed25519-raw-base64url, "active": bool }], }`
+  ≤ 5 keys; the agent pins the `active` key returned at pairing and refreshes it
+  from this endpoint on key rotation.
 
 ### 3.4 Pairing flow
 
