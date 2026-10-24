@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { openDatabase, closeDatabase } from '../src/main/local-store/db';
 import { migrate, MIGRATIONS } from '../src/main/local-store/migrations';
 import { StoreError } from '../src/main/local-store/errors';
+import { createConfigStore } from '../src/main/local-store/config-store';
 
 describe('migrate', () => {
   it('applies all pending migrations to a fresh database and records them', () => {
@@ -71,6 +72,38 @@ describe('migrate', () => {
       db.prepare('insert into schema_migrations values (?, ?, ?)').run(0, 'bogus', 0);
       expect(() => migrate(db)).toThrow(/does not know/);
       expect(() => migrate(db)).toThrow(StoreError);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+});
+
+describe('cloud_config migration (v2)', () => {
+  it('creates the single-row cloud_config table', () => {
+    const db = openDatabase({ file: null });
+    try {
+      migrate(db);
+      const row = db.prepare("SELECT name FROM sqlite_master WHERE name = 'cloud_config'").get();
+      expect(row).toBeDefined();
+    } finally {
+      closeDatabase(db);
+    }
+  });
+});
+
+describe('config store', () => {
+  it('saves, reads, version-guards and clears the latest config', () => {
+    const db = openDatabase({ file: null });
+    try {
+      migrate(db);
+      const store = createConfigStore(db);
+      expect(store.get()).toBeNull();
+      store.save({ config_version: 3, printers: [] });
+      expect(store.get()?.config_version).toBe(3);
+      store.save({ config_version: 5, printers: [] });
+      expect(store.get()?.config_version).toBe(5); // upsert, never two rows
+      store.clear();
+      expect(store.get()).toBeNull();
     } finally {
       closeDatabase(db);
     }

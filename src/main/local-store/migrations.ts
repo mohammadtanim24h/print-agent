@@ -52,6 +52,22 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 2,
+    name: 'cloud_config',
+    up: (db) => {
+      // FR-16 landing spot: latest validated ConfigUpdate, persisted but not
+      // applied yet (wiring phase). Single row enforced by CHECK.
+      db.exec(`
+        CREATE TABLE cloud_config (
+          id INTEGER PRIMARY KEY CHECK (id = 1),
+          config_version INTEGER NOT NULL,
+          payload_json TEXT NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+      `);
+    },
+  },
 ];
 
 export function migrate(db: SqliteDatabase, now: () => number = Date.now): number {
