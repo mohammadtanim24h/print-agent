@@ -181,6 +181,30 @@ describe('customer receipt template', () => {
     }
   });
 
+  it('skips non-ASCII QR data with a warning (library GS ( k length is UTF-16-based)', () => {
+    const doc = makeDoc({ footer: { text_lines: [], qr_data: 'প্রিন্ট-পে-' + 'x'.repeat(40) } });
+    const r = renderDoc('customer_receipt', doc, makeRenderProfile());
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.summary.warnings).toContain('qr_skipped_invalid');
+      expect(r.summary.features.qr).toBe(false);
+      expect(Buffer.from(r.bytes).indexOf(Buffer.from([0x1d, 0x28, 0x6b]))).toBe(-1);
+    }
+  });
+
+  it('round-trips ASCII QR data intact through the decoder', () => {
+    const url = 'https://saas.example/r/ORD-1001?src=receipt';
+    const doc = makeDoc({ footer: { text_lines: [], qr_data: url } });
+    const r = renderDoc('customer_receipt', doc, makeRenderProfile());
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const qrData = decodeEscpos(r.bytes)
+      .filter((e) => e.kind === 'qr')
+      .map((e) => (e as { data: string }).data)
+      .join('');
+    expect(qrData).toBe(url);
+  });
+
   it('emits a CODE128 barcode when present and supported', () => {
     const doc = makeDoc({ footer: { text_lines: [], barcode_data: 'ORD-1001-X' } });
     const r = renderDoc('customer_receipt', doc, makeRenderProfile());

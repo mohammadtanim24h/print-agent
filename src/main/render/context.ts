@@ -147,6 +147,14 @@ export function applyCut(ctx: RenderContext, requested?: 'full' | 'partial' | 'n
   else if (want === 'partial') ctx.enc.cutPartial();
 }
 
+/**
+ * QR policy mirrors the barcode: printable ASCII only after sanitization.
+ * The library's `GS ( k` store-segment length prefix is computed from
+ * `str.length` (UTF-16 units) while the payload is appended as UTF-8 bytes —
+ * for non-ASCII data the declared length is wrong and trailing bytes spill
+ * into the command stream. QR stays ASCII until a byte-length-correct local
+ * builder is justified (R-VAL-1 conservatism).
+ */
 export function writeQr(ctx: RenderContext, data: string | undefined): void {
   if (data === undefined || data === '') return;
   if (!ctx.profile.capabilities.qrCode) {
@@ -154,7 +162,7 @@ export function writeQr(ctx: RenderContext, data: string | undefined): void {
     return;
   }
   const clean = sanitizeText(data).text;
-  if (clean === '') {
+  if (clean === '' || !isAsciiPrintable(clean)) {
     ctx.summary.warnings.push('qr_skipped_invalid');
     return;
   }
