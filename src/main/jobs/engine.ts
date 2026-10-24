@@ -47,7 +47,9 @@ export interface JobEngineDeps {
 export interface JobEngine {
   /** Durable intake. Returns the accepted/rejected ack. Throws JobEngineError('store_unavailable') on DB failure (no ack — server re-delivers). */
   submit(job: PrintJobInput): JobAck;
-  /** Startup recovery: sending → ambiguous; accepted/rendered re-enqueued. (Task 9) */
+  /** Startup recovery: sending → ambiguous; accepted/rendered re-enqueued for
+   *  execution (rows with an unknown printer are left as-is — config may
+   *  restore the printer later; they still count against the queue bound). */
   recover(): void;
   /** Read one job row (for UI/diagnostics). */
   getJob(jobId: string): JobRow | null;
@@ -448,14 +450,48 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
     return store.countByStatus(...NON_TERMINAL);
   }
 
+  // ---- startup recovery (docs/architecture.md §5, ADR-5) -------------------
+
+  function recover(): void {
+    // 1) Jobs caught mid-transmission by a crash: the write outcome is unknowable.
+    //    They land in ambiguous — resolution is operator/policy action, never
+    //    automatic re-sending (ADR-5).
+    for (const row of store.listByStatus('sending')) {
+      store.recordAttempt(
+        row.id,
+        Math.max(row.attempts, 1),
+        {
+          outcome: 'ambiguous_crash',
+          errorCode: 'restarted_in_flight',
+          errorMessage: 'agent restarted while job was transmitting',
+        },
+        now(),
+      );
+      store.updateStatus(row.id, 'ambiguous', {
+        lastError: encodeStoredError('restarted_in_flight', 'agent restarted while job was transmitting'),
+      });
+      const fresh = store.get(row.id);
+      if (fresh !== null) {
+        emit(fresh, 'ambiguous', {
+          code: 'restarted_in_flight',
+          message: 'agent restarted while job was transmitting',
+        });
+      }
+    }
+    // 2) Pre-transmission jobs survive the restart and resume from the queue.
+    //    Rows whose printer is unknown stay put: the printer may be restored by
+    //    config later, and they still count against the queue bound.
+    for (const row of store.listByStatus('accepted', 'rendered')) {
+      if (printers.get(row.printerId) !== null) enqueueExecution(row.printerId, row.id);
+    }
+  }
+
   return {
     submit,
     getJob,
     listAttempts,
     pendingCount,
-    recover: (): void => {
-      throw new Error('recover: implemented in Task 9');
-    },
+    recover,
     retryJob: (): void => {
       throw new Error('retryJob: implemented in Task 10');
     },
