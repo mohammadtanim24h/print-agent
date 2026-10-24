@@ -30,6 +30,7 @@ interface Harness {
   states: ConnectionState[];
   revoked: Array<{ reason: string }>;
   revokedWipes: string[];
+  logs: string[];
 }
 
 function makeHarness(script: ConstructorParameters<typeof FakeTransport>[0] = {}): Harness {
@@ -42,6 +43,7 @@ function makeHarness(script: ConstructorParameters<typeof FakeTransport>[0] = {}
   const states: ConnectionState[] = [];
   const revoked: Array<{ reason: string }> = [];
   const revokedWipes: string[] = [];
+  const logs: string[] = [];
   const client = createPollingCloudClient({
     transport,
     secrets,
@@ -51,12 +53,13 @@ function makeHarness(script: ConstructorParameters<typeof FakeTransport>[0] = {}
     pollIntervalMs: 30_000,
     refreshCooldownMs: 30_000,
     onRevoked: (reason) => revokedWipes.push(reason),
+    log: (message) => logs.push(message),
   });
   client.on('job', (envelope) => jobs.push(envelope));
   client.on('config', (config) => configs.push(config));
   client.on('state', (s) => states.push(s));
   client.on('revoked', (r) => revoked.push(r));
-  return { client, transport, scheduler, secrets, jobs, configs, states, revoked, revokedWipes };
+  return { client, transport, scheduler, secrets, jobs, configs, states, revoked, revokedWipes, logs };
 }
 
 class MemoryKvAdapter {
@@ -334,6 +337,74 @@ describe('revocation envelope', () => {
 });
 
 describe('acks and heartbeat', () => {
+  /** A minimal valid ack item for submitAcks tests. */
+  function makeAckItem(): {
+    job_id: string;
+    status: 'completed';
+    printer_status: 'unknown';
+    printed: false;
+    attempt: number;
+    at: string;
+  } {
+    return {
+      job_id: '018f3c2e-0000-7000-8000-000000000005',
+      status: 'completed',
+      printer_status: 'unknown',
+      printed: false,
+      attempt: 1,
+      at: '2026-10-24T10:00:02.000Z',
+    };
+  }
+
+  it.each(['applied', 'duplicate', 'stale'] as const)(
+    'ack result %s is a success-no-op: stays online, no retry',
+    async (result) => {
+      const h = makeHarness({
+        acks: { results: [{ job_id: '018f3c2e-0000-7000-8000-000000000005', result }] },
+      });
+      await startAndSettle(h);
+      await h.client.submitAcks({ envelope_version: 1, type: 'ack', acks: [makeAckItem()] });
+      expect(h.client.state()).toBe('online');
+      expect(h.transport.callsOf('acks')).toHaveLength(1); // never retried
+      if (result !== 'applied') {
+        expect(h.logs.some((l) => l.includes(result))).toBe(false);
+      }
+    },
+  );
+
+  it('ack result not_found is surfaced as an anomaly and not retried', async () => {
+    const h = makeHarness({
+      acks: { results: [{ job_id: '018f3c2e-0000-7000-8000-000000000005', result: 'not_found' }] },
+    });
+    await startAndSettle(h);
+    await h.client.submitAcks({ envelope_version: 1, type: 'ack', acks: [makeAckItem()] });
+    expect(h.transport.callsOf('acks')).toHaveLength(1);
+    expect(h.logs.some((l) => l.includes('not_found'))).toBe(true);
+  });
+
+  it('ack result rejected is logged for diagnostics and not retried', async () => {
+    const h = makeHarness({
+      acks: { results: [{ job_id: '018f3c2e-0000-7000-8000-000000000005', result: 'rejected' }] },
+    });
+    await startAndSettle(h);
+    await h.client.submitAcks({ envelope_version: 1, type: 'ack', acks: [makeAckItem()] });
+    expect(h.transport.callsOf('acks')).toHaveLength(1);
+    expect(h.logs.some((l) => l.includes('rejected by server'))).toBe(true);
+  });
+
+  it('per-call ack result scripts are consumed in order', async () => {
+    const h = makeHarness({
+      acks: [
+        { results: [{ job_id: '018f3c2e-0000-7000-8000-000000000005', result: 'applied' }] },
+        { results: [{ job_id: '018f3c2e-0000-7000-8000-000000000005', result: 'not_found' }] },
+      ],
+    });
+    await startAndSettle(h);
+    await h.client.submitAcks({ envelope_version: 1, type: 'ack', acks: [makeAckItem()] });
+    await h.client.submitAcks({ envelope_version: 1, type: 'ack', acks: [makeAckItem()] });
+    expect(h.logs.filter((l) => l.includes('not_found'))).toHaveLength(1);
+  });
+
   it('submitAcks sends the batch authenticated', async () => {
     const h = makeHarness({});
     await startAndSettle(h);

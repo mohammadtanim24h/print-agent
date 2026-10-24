@@ -337,7 +337,20 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
   }
 
   function doSubmitAcks(batch: AckBatch): Promise<void> {
-    return withAuth((auth) => transport.sendAcks(auth, batch));
+    return withAuth(async (auth) => {
+      const res = await transport.sendAcks(auth, batch);
+      for (const r of res.results) {
+        // duplicate/stale are success-no-ops (§7.1): never retry, never re-print.
+        if (r.result === 'applied' || r.result === 'duplicate' || r.result === 'stale') continue;
+        if (r.result === 'not_found') {
+          // A job we actually hold being unknown to the server means tenant
+          // trouble or retention pruning — surface it, never re-print.
+          log(`cloud: ack anomaly — server has no record of job ${r.job_id} (not_found)`);
+        } else {
+          log(`cloud: ack rejected by server for job ${r.job_id}`);
+        }
+      }
+    });
   }
 
   function handleRevocation(reason: string): void {
