@@ -1,22 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { makeHarness, makeJob } from './helpers/job-engine-harness';
-import type { HarnessOptions } from './helpers/job-engine-harness';
 import { FakeTransportRegistry } from './helpers/fake-transport';
+import { TransportError } from '../src/main/transport/errors';
 
 async function drained(): Promise<void> {
   await new Promise<void>((resolve) => setTimeout(resolve, 0));
-}
-
-/** The harness's limits option type predates the retention knobs; routing the
- *  object through a non-fresh reference lets retention limits flow through to
- *  the engine, which spreads them over DEFAULT_LIMITS. */
-function withRetention(limits: {
-  maxPending?: number;
-  maxAttempts?: number;
-  retentionDays?: number;
-  retentionMaxRows?: number;
-}): NonNullable<HarnessOptions['limits']> {
-  return limits;
 }
 
 describe('engine retention cleanup', () => {
@@ -25,7 +13,7 @@ describe('engine retention cleanup', () => {
     const h = await makeHarness({
       now: () => t,
       transports: new FakeTransportRegistry(() => ({})),
-      limits: withRetention({ retentionDays: 1, retentionMaxRows: 100 }),
+      limits: { retentionDays: 1, retentionMaxRows: 100 },
     });
     try {
       h.engine.submit(makeJob(h.printerId, { jobId: 'old', idempotencyKey: 'key-old' }));
@@ -54,7 +42,7 @@ describe('engine retention cleanup', () => {
     const h = await makeHarness({
       now: () => t,
       transports,
-      limits: withRetention({ retentionDays: 0, retentionMaxRows: 100 }),
+      limits: { retentionDays: 0, retentionMaxRows: 100 },
     });
     try {
       h.engine.submit(makeJob(h.printerId));
@@ -75,7 +63,7 @@ describe('engine retention cleanup', () => {
     const h = await makeHarness({
       now: () => t,
       transports: new FakeTransportRegistry(() => ({})),
-      limits: withRetention({ retentionDays: 0, retentionMaxRows: 2 }),
+      limits: { retentionDays: 0, retentionMaxRows: 2 },
     });
     try {
       // Each iteration: submit at t, advance 1s, then drain — completion stamps
@@ -97,6 +85,32 @@ describe('engine retention cleanup', () => {
       expect(remaining()).toEqual(['j3', 'j4']); // the two oldest were deleted
       expect(h.engine.getJob('j3')?.status).toBe('completed');
       expect(h.engine.getJob('j4')?.status).toBe('completed');
+    } finally {
+      h.dispose();
+    }
+  });
+
+  it('deletes an unresolved ambiguous job past the cutoff (ambiguous is terminal)', async () => {
+    let t = 1_000_000;
+    const transports = new FakeTransportRegistry(() => ({
+      failWriteNumber: 1,
+      writeError: new TransportError('write_timeout', 'printer vanished mid-ticket'),
+    }));
+    const h = await makeHarness({
+      now: () => t,
+      transports,
+      limits: { retentionDays: 1, retentionMaxRows: 100 },
+    });
+    try {
+      h.engine.submit(makeJob(h.printerId));
+      await drained();
+      // Ambiguous = terminal: operator resolution is expected within retentionDays.
+      expect(h.engine.getJob('job-1')?.status).toBe('ambiguous');
+
+      t += 3 * 86_400_000; // 3 days later — past the cutoff, still unresolved
+      expect(h.engine.cleanup()).toBe(1); // retention silently reaps it
+      expect(h.engine.getJob('job-1')).toBeNull();
+      expect(h.engine.listAttempts('job-1')).toEqual([]); // history deleted with the job
     } finally {
       h.dispose();
     }

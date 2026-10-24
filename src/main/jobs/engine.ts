@@ -596,7 +596,11 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
   /** Retention: delete terminal rows past the age cutoff and/or the row cap.
    *  Safe-deletion rule: terminalIdsOlderThan itself only ever returns
    *  TERMINAL rows (rejected/completed/failed/ambiguous), so a job whose final
-   *  state is not durably recorded is never eligible. */
+   *  state is not durably recorded is never eligible.
+   *  `ambiguous` is terminal, so UNRESOLVED ambiguous rows are retention-eligible:
+   *  operator resolution is expected within `retentionDays` — after that window
+   *  retention may silently delete an unresolved ambiguous job (with its attempt
+   *  history). */
   function cleanup(): number {
     const cutoff = now() - limits.retentionDays * 86_400_000;
     const ids = store.terminalIdsOlderThan(cutoff, limits.retentionMaxRows);

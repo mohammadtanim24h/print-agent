@@ -6,7 +6,7 @@ import { createPrinterStore } from '../../src/main/printers/store';
 import type { TransportRegistry } from '../../src/main/transport/registry';
 import { createJobEngine } from '../../src/main/jobs/engine';
 import type { JobEngine } from '../../src/main/jobs/engine';
-import type { JobAck, PrintJobInput } from '../../src/main/jobs/types';
+import type { EngineLimits, JobAck, PrintJobInput } from '../../src/main/jobs/types';
 import { memoryAdapter } from './memory-adapter';
 import { makeDraft } from './printers';
 import type { PrinterProfile } from '../../src/main/printers/profile';
@@ -33,7 +33,7 @@ export interface HarnessOptions {
   readonly transports?: TransportRegistry;
   /** 'manual' (default): retry timers are collected in `timers`. 'immediate': fired synchronously. */
   readonly scheduling?: 'manual' | 'immediate';
-  readonly limits?: { readonly maxPending?: number; readonly maxAttempts?: number };
+  readonly limits?: Partial<EngineLimits>;
   /** Number of printers to configure (default 1). */
   readonly printerCount?: number;
   /** Test hook for fault injection (e.g. a store whose insert throws). */
