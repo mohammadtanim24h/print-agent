@@ -224,7 +224,7 @@ export class FakeTransport implements AgentTransport {
   readonly baseUrl = 'https://cloud.test';
   readonly calls: TransportCall[] = [];
 
-  constructor(private readonly script: TransportScript) {}
+  constructor(readonly script: TransportScript) {}
 
   private static resolve<T>(value: T | Error | ((arg: string) => T | Error), arg: string): T {
     const resolved = typeof value === 'function' ? (value as (a: string) => T | Error)(arg) : value;

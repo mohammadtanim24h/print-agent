@@ -36,13 +36,23 @@ export class CloudError extends Error implements TypedError {
   /** Static agent-authored context; never a raw server response body. */
   readonly detail?: string;
   readonly retryAfterMs?: number;
+  /** The server's machine `error.code` from a 4xx body (§7.1), when present
+   *  and code-shaped. Drives behavior like `device_revoked` handling; never
+   *  logged raw and never echoed to the renderer. */
+  readonly serverCode?: string;
 
-  constructor(code: CloudErrorCode, detail?: string, retryAfterMs?: number) {
+  constructor(
+    code: CloudErrorCode,
+    detail?: string,
+    retryAfterMs?: number,
+    serverCode?: string,
+  ) {
     super(detail === undefined ? `cloud: ${code}` : `cloud: ${code} (${detail})`);
     this.name = 'CloudError';
     this.code = code;
     if (detail !== undefined) this.detail = detail;
     if (retryAfterMs !== undefined) this.retryAfterMs = retryAfterMs;
+    if (serverCode !== undefined) this.serverCode = serverCode;
   }
 
   /** Network-class failures that a bounded retry with backoff may resolve. */

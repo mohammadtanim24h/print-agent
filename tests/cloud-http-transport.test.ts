@@ -416,3 +416,36 @@ describe('outbound payloads are schema-checked', () => {
     expect(calls).toHaveLength(0);
   });
 });
+
+describe('server error.code capture (§7.1)', () => {
+  it('attaches the machine error.code from a 401 body', async () => {
+    const { fetchMock } = fetchScript(() =>
+      jsonResponse(401, { error: { code: 'device_revoked', message: 'revoked' } }),
+    );
+    await expect(makeTransport(fetchMock).pollJobs(auth, '')).rejects.toMatchObject({
+      code: 'unauthorized',
+      serverCode: 'device_revoked',
+    });
+  });
+
+  it('attaches error.code from 4xx rejections (pairing UX)', async () => {
+    const { fetchMock } = fetchScript(() =>
+      jsonResponse(410, { error: { code: 'pairing_code_expired', message: 'x' } }),
+    );
+    await expect(
+      makeTransport(fetchMock).pair({
+        pairing_code: 'ABCD1234',
+        device_pubkey: makeB64Url32(),
+        device_name: 'n',
+        agent_version: 'v',
+      }),
+    ).rejects.toMatchObject({ code: 'request_rejected', serverCode: 'pairing_code_expired' });
+  });
+
+  it('omits serverCode when the body carries no code-shaped error.code', async () => {
+    const { fetchMock } = fetchScript(() => jsonResponse(401, { nope: true }));
+    await expect(makeTransport(fetchMock).pollJobs(auth, '')).rejects.toMatchObject({
+      code: 'unauthorized',
+    });
+  });
+});

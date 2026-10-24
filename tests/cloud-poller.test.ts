@@ -15,8 +15,10 @@ import {
   makeRefreshResponse,
   makeSecrets,
   makeSignedEnvelope,
+  makePairResponse,
   OTHER_TENANT_ID,
   settle,
+  DEVICE_ID,
 } from './helpers/cloud';
 
 /** Polling-client behavior with a scripted transport and manual clock. */
@@ -53,6 +55,7 @@ function makeHarness(script: ConstructorParameters<typeof FakeTransport>[0] = {}
     now: () => scheduler.nowMs,
     pollIntervalMs: 30_000,
     refreshCooldownMs: 30_000,
+    random: () => 0.5, // deterministic jitter: healthy cadence stays exactly 30 s
     onRevoked: (reason) => revokedWipes.push(reason),
     log: (message) => logs.push(message),
   });
@@ -581,5 +584,80 @@ describe('acks and heartbeat', () => {
     await startAndSettle(h);
     expect(h.client.state()).toBe('online');
     expect(h.transport.callsOf('refresh')).toHaveLength(1);
+  });
+
+  it('healthy cadence jitters ±10% around pollIntervalMs', async () => {
+    for (const [randomValue, expected] of [
+      [0, 27_000],
+      [0.5, 30_000],
+      [1, 33_000],
+    ] as const) {
+      const scheduler = new ManualScheduler();
+      const secrets = createSafeStorageSecretStore(new MemoryKvAdapter(), new FakeSafeStorage());
+      secrets.save(makeSecrets());
+      const client = createPollingCloudClient({
+        transport: new FakeTransport({}),
+        secrets,
+        agentVersion: '0.1.0',
+        schedule: scheduler.schedule,
+        pollIntervalMs: 30_000,
+        random: () => randomValue,
+      });
+      client.start();
+      await scheduler.runNext();
+      await settle();
+      expect(scheduler.nextDelay()).toBe(expected);
+      client.stop();
+    }
+  });
+});
+
+describe('device_revoked error.code (§7 note 8)', () => {
+  function revokedError(): CloudError {
+    return new CloudError('unauthorized', 'status 401: device_revoked', undefined, 'device_revoked');
+  }
+
+  it('device_revoked on a data call revokes immediately without attempting refresh', async () => {
+    const h = makeHarness({ poll: revokedError() });
+    await startAndSettle(h);
+    expect(h.client.state()).toBe('revoked');
+    expect(h.transport.callsOf('refresh')).toHaveLength(0);
+    expect(h.secrets.load()).toBeNull();
+    expect(h.revoked).toEqual([{ reason: 'device_revoked' }]);
+    expect(h.revokedWipes).toEqual(['device_revoked']);
+  });
+
+  it('device_revoked on refresh revokes with the device_revoked reason', async () => {
+    const h = makeHarness({
+      poll: new CloudError('unauthorized'),
+      refresh: revokedError(),
+    });
+    await startAndSettle(h);
+    expect(h.client.state()).toBe('revoked');
+    expect(h.revoked).toEqual([{ reason: 'device_revoked' }]);
+    expect(h.secrets.load()).toBeNull();
+  });
+
+  it('after revocation, pairing with a fresh code recovers to online (§3.5 UX)', async () => {
+    let pollCount = 0;
+    const h = makeHarness({
+      poll: () => {
+        pollCount += 1;
+        if (pollCount === 1) throw revokedError();
+        return makePollResponse([]);
+      },
+    });
+    await startAndSettle(h);
+    expect(h.client.state()).toBe('revoked');
+    // Fresh pairing code → new identity → loop starts again.
+    h.transport.script.pair = makePairResponse({ device_token: 'token-new' });
+    const identity = await h.client.pair({ pairingCode: 'FRESH123', deviceName: 'PC' });
+    if (h.scheduler.pendingCount > 0) await h.scheduler.runNext();
+    await settle();
+    expect(identity.deviceId).toBe(DEVICE_ID);
+    expect(h.client.state()).toBe('online');
+    expect(h.secrets.load()?.deviceToken).toBe('token-new'); // the fresh pair, not the revoked one
+    // The loop is polling again.
+    expect(h.scheduler.pendingCount).toBeGreaterThan(0);
   });
 });

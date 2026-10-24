@@ -44,6 +44,8 @@ export interface PollingClientDeps {
   readonly pollIntervalMs?: number;
   /** Minimum spacing between token refresh attempts (loop prevention). */
   readonly refreshCooldownMs?: number;
+  /** Injected randomness for cadence/backoff jitter; defaults to Math.random. */
+  readonly random?: () => number;
   /** Queue/printer facts for the in-cycle heartbeat; cycle heartbeat is sent only when provided. */
   readonly heartbeatSample?: () => HeartbeatSample;
   /** Wired in composition: wipes jobs + cached printers on revocation (§3.5). */
@@ -97,6 +99,7 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
     });
   const pollIntervalMs = deps.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   const refreshCooldownMs = deps.refreshCooldownMs ?? DEFAULT_REFRESH_COOLDOWN_MS;
+  const random = deps.random ?? Math.random;
   const log = deps.log ?? ((): void => {});
   const sampleProvider = deps.heartbeatSample;
   // Indirection through functions defeats TS control-flow narrowing of the
@@ -136,9 +139,16 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
     for (const listener of listeners.state) listener(next);
   }
 
+  /** Healthy cadence: pollIntervalMs ± 10 % jitter (§7: heartbeats "every
+   *  ~30 s ± jitter"; the 90 s offline window must never be raced by a
+   *  synchronized fleet). */
+  function healthyDelayMs(): number {
+    return Math.floor(pollIntervalMs * (0.9 + 0.2 * random()));
+  }
+
   function backoffDelayMs(): number {
     const delay = Math.min(pollIntervalMs * 2 ** Math.max(0, backoffAttempt - 1), MAX_BACKOFF_MS);
-    return Math.floor(delay / 2 + Math.random() * (delay / 2)); // half-jitter, never zero-cadence
+    return Math.floor(delay / 2 + random() * (delay / 2)); // half-jitter, never zero-cadence
   }
 
   function scheduleCycle(delayMs: number): void {
@@ -194,7 +204,9 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
       }
     } finally {
       cycling = false;
-      if (!isStopped()) scheduleCycle(backoffAttempt === 0 ? pollIntervalMs : backoffDelayMs());
+      if (!isStopped()) {
+        scheduleCycle(backoffAttempt === 0 ? healthyDelayMs() : backoffDelayMs());
+      }
     }
   }
 
@@ -247,7 +259,9 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
           err instanceof CloudError &&
           (err.code === 'unauthorized' || err.code === 'forbidden')
         ) {
-          handleRevocation('token_refresh_refused');
+          handleRevocation(
+            isDeviceRevoked(err) ? 'device_revoked' : 'token_refresh_refused',
+          );
         }
         throw err;
       }
@@ -295,6 +309,13 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
         (err.code !== 'unauthorized' && err.code !== 'forbidden')
       ) {
         throw err;
+      }
+      // §7 note 8: the server answers 401 {error:{code:"device_revoked"}} on
+      // EVERY call for a revoked device. Revocation is already terminal — do
+      // not attempt a refresh, go straight to wipe + pairing screen.
+      if (isDeviceRevoked(err)) {
+        handleRevocation('device_revoked');
+        throw new CloudError('revoked', 'server reported device_revoked');
       }
       await refreshTokens(); // throws 'revoked' downstream when refused
       return await fn(auth()); // single retry with the rotated token
@@ -426,6 +447,10 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
     });
   }
 
+  function isDeviceRevoked(err: unknown): boolean {
+    return err instanceof CloudError && err.serverCode === 'device_revoked';
+  }
+
   function handleRevocation(reason: string): void {
     if (state === 'revoked') return;
     stopped = true;
@@ -445,6 +470,10 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
     state: () => state,
     async pair(request) {
       stop();
+      // §3.5 recovery UX: after a revocation wiped the identity, pairing with
+      // a fresh code is the way back — clear the terminal state so start()
+      // below can run.
+      if (state === 'revoked') setState('unpaired');
       const paired = await pairDevice(
         { transport, secrets: deps.secrets, agentVersion: deps.agentVersion },
         request,
