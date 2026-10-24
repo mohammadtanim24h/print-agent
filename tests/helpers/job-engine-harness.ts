@@ -9,6 +9,7 @@ import type { JobEngine } from '../../src/main/jobs/engine';
 import type { JobAck, PrintJobInput } from '../../src/main/jobs/types';
 import { memoryAdapter } from './memory-adapter';
 import { makeDraft } from './printers';
+import type { PrinterProfile } from '../../src/main/printers/profile';
 import { makeDoc } from './render';
 
 const T0 = 1_767_225_600_000; // 2026-01-01T00:00:00Z
@@ -18,7 +19,10 @@ export const HARNESS_T0 = T0;
 export interface Harness {
   readonly engine: JobEngine;
   readonly acks: JobAck[];
+  /** First printer (backward-compat alias for `printerIds[0]`). */
   readonly printerId: string;
+  /** All configured printers, in creation order. */
+  readonly printerIds: string[];
   /** Jobs waiting on the injected schedule timer; tests flush them manually. */
   readonly timers: Array<() => void>;
   dispose(): void;
@@ -30,6 +34,8 @@ export interface HarnessOptions {
   /** 'manual' (default): retry timers are collected in `timers`. 'immediate': fired synchronously. */
   readonly scheduling?: 'manual' | 'immediate';
   readonly limits?: { readonly maxPending?: number; readonly maxAttempts?: number };
+  /** Number of printers to configure (default 1). */
+  readonly printerCount?: number;
   /** Test hook for fault injection (e.g. a store whose insert throws). */
   readonly wrapStore?: (base: JobStore) => JobStore;
 }
@@ -50,7 +56,13 @@ export async function makeHarness(options: HarnessOptions = {}): Promise<Harness
     // Deterministic but schema-valid UUIDs (PrinterProfileSchema requires z.uuid()).
     newId: () => `00000000-0000-4000-8000-${String((printerCounter += 1)).padStart(12, '0')}`,
   });
-  const profile = await printers.add(makeDraft());
+  const printerCount = options.printerCount ?? 1;
+  const profiles: PrinterProfile[] = [];
+  for (let i = 0; i < printerCount; i += 1) {
+    profiles.push(await printers.add(makeDraft({ name: `Printer-${String(i + 1)}` })));
+  }
+  const [profile] = profiles;
+  if (profile === undefined) throw new Error('unreachable: printerCount defaults to 1');
   const schedule =
     options.scheduling === 'immediate'
       ? (fn: () => void): void => {
@@ -78,6 +90,7 @@ export async function makeHarness(options: HarnessOptions = {}): Promise<Harness
     engine,
     acks,
     printerId: profile.printerId,
+    printerIds: profiles.map((p) => p.printerId),
     timers,
     dispose: (): void => {
       closeDatabase(db);
