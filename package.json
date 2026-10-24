@@ -25,6 +25,7 @@
   },
   "dependencies": {
     "@napi-rs/canvas": "1.0.13",
+    "better-sqlite3": "13.0.3",
     "electron-log": "5.4.4",
     "node-thermal-printer": "4.6.1",
     "react": "19.3.1",
@@ -54,6 +55,7 @@
   },
   "pnpm": {
     "onlyBuiltDependencies": [
+      "better-sqlite3",
       "electron",
       "esbuild"
     ]
