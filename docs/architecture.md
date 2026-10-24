@@ -81,6 +81,8 @@ requires reaching into another module's internals.
   ambiguity detection (crash-recovery: jobs found in `sending` state at startup are
   moved to `ambiguous`), and duplicate-reprint policy.
 
+  Implementation: `docs/job-engine.md`.
+
 ### 3.3 `renderer`
 
 - Pure function: validated doc model (JSON) → ESC/POS command stream (Buffer) via
