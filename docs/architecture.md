@@ -88,6 +88,9 @@ requires reaching into another module's internals.
 - Doc version v1 only; unknown versions rejected upstream. Deterministic, unit-testable,
   no I/O except reading logo assets from the local store.
 
+Implementation: `src/main/render/` — see `docs/render-pipeline.md` (module map,
+encodability policy, raster fallback design, diagnostic summary contract).
+
 ### 3.4 `transport-registry` + transports
 
 - `Transport` interface: `open()`, `write(bytes)`, `status?()` (best-effort DLE EOT),

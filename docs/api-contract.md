@@ -36,7 +36,7 @@ rejected, not ignored, within `data` payloads (envelope may gain additive fields
     "doc_version": 1,
     "issued_at": "2026-10-22T10:00:00Z",
     "expires_at": "2026-10-22T10:10:00Z",
-    "payload": {/* doc model v1, §4 — structured, never raw ESC/POS bytes */},
+    "payload": {/* doc model v1, §2 — structured, never raw ESC/POS bytes */},
   },
   "sig": "base64url(ed25519(server-signing-key, canonical_json(job)))",
 }
