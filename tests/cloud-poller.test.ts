@@ -4,6 +4,7 @@ import { CloudError } from '../src/main/cloud-client/errors';
 import type { PrintJobEnvelope } from '../src/main/cloud-client/schemas';
 import type { ConnectionState } from '../src/main/cloud-client/types';
 import { createSafeStorageSecretStore } from '../src/main/cloud-client/secret-store';
+import type { SecretStore } from '../src/main/cloud-client/secret-store';
 import {
   FakeSafeStorage,
   FakeTransport,
@@ -246,6 +247,88 @@ describe('token refresh (no infinite retry loop)', () => {
     expect(h.scheduler.pendingCount).toBe(0);
     await h.scheduler.runNext().catch(() => undefined);
     expect(h.transport.callsOf('poll').length).toBe(pollsAfter);
+  });
+
+  it('persists the rotated pair BEFORE any subsequent request uses it (persist-then-swap)', async () => {
+    const events: string[] = [];
+    const scheduler = new ManualScheduler();
+    const transport = new FakeTransport({
+      poll: () => {
+        events.push(`poll:${transport.calls.at(-1)?.auth?.deviceToken ?? '?'}`);
+        if (transport.callsOf('poll').length === 1) throw new CloudError('unauthorized');
+        return makePollResponse([]);
+      },
+      refresh: makeRefreshResponse({ device_token: 'token-v2', refresh_token: 'refresh-v2' }),
+    });
+    const inner = createSafeStorageSecretStore(new MemoryKvAdapter(), new FakeSafeStorage());
+    inner.save(makeSecrets());
+    const recording: SecretStore & { history: string[] } = {
+      history: [],
+      load: () => inner.load(),
+      save: (s) => {
+        recording.history.push(`save:${s.deviceToken}/${s.refreshToken}`);
+        inner.save(s);
+      },
+      clear: () => inner.clear(),
+    };
+    const client = createPollingCloudClient({
+      transport,
+      secrets: recording,
+      agentVersion: '0.1.0',
+      schedule: scheduler.schedule,
+      now: () => scheduler.nowMs,
+      pollIntervalMs: 30_000,
+      refreshCooldownMs: 30_000,
+    });
+    client.start();
+    await scheduler.runNext();
+    await settle();
+    expect(client.state()).toBe('online');
+    // The durable save of the v2 pair is recorded before the request that used it.
+    const saveIdx = events.findIndex((e) => e.startsWith('poll:token-v2'));
+    expect(recording.history).toEqual(['save:token-v2/refresh-v2']);
+    expect(saveIdx).toBeGreaterThan(-1);
+  });
+
+  it('a failed durable persist after rotation poisons refresh: loop stops, superseded token is never replayed', async () => {
+    const scheduler = new ManualScheduler();
+    const transport = new FakeTransport({
+      poll: new CloudError('unauthorized'), // always 401
+      refresh: makeRefreshResponse({ device_token: 'token-v2', refresh_token: 'refresh-v2' }),
+    });
+    const inner = createSafeStorageSecretStore(new MemoryKvAdapter(), new FakeSafeStorage());
+    inner.save(makeSecrets());
+    const logs: string[] = [];
+    const failing: SecretStore = {
+      load: () => inner.load(),
+      save: (s) => {
+        throw new CloudError('secure_storage_unavailable', 'injected persist failure');
+      },
+      clear: () => inner.clear(),
+    };
+    const client = createPollingCloudClient({
+      transport,
+      secrets: failing,
+      agentVersion: '0.1.0',
+      schedule: scheduler.schedule,
+      now: () => scheduler.nowMs,
+      pollIntervalMs: 30_000,
+      refreshCooldownMs: 30_000,
+      log: (m) => logs.push(m),
+    });
+    client.start();
+    await scheduler.runNext(); // 401 → refresh OK → persist fails → poisoned, loop stopped
+    expect(client.state()).toBe('offline');
+    expect(transport.callsOf('refresh')).toHaveLength(1);
+    expect(logs.some((l) => l.includes('could not be persisted'))).toBe(true);
+    // The superseded pair was never swapped in: durable identity is still pre-rotation.
+    expect(inner.load()?.refreshToken).toBe('refresh-token-abc');
+    // The loop is stopped — no further cycle can replay the dead refresh token.
+    expect(scheduler.pendingCount).toBe(0);
+    client.pollNow();
+    await settle();
+    expect(transport.callsOf('refresh')).toHaveLength(1);
+    expect(transport.callsOf('poll')).toHaveLength(1);
   });
 
   it('at most one refresh attempt per cooldown window across repeated 401 cycles', async () => {

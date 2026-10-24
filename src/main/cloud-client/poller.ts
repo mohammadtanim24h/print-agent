@@ -122,6 +122,13 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
   let appliedConfigVersion = -1;
   let lastRefreshAt = -Infinity;
   let refreshInFlight: Promise<void> | null = null;
+  /**
+   * Set when a rotation could not be durably persisted after the server
+   * already rotated (§7 note 8): the on-disk refresh token is now superseded
+   * and replaying it REVOKES the device. Refresh is poisoned for the rest of
+   * the session — the loop stops and no retry may ever send the dead token.
+   */
+  let refreshPersistBroken = false;
 
   function setState(next: ConnectionState): void {
     if (state === next) return;
@@ -220,6 +227,11 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
   /** One token refresh per cooldown window; refusal is terminal (§3.5). */
   function refreshTokens(): Promise<void> {
     if (refreshInFlight !== null) return refreshInFlight;
+    if (refreshPersistBroken) {
+      return Promise.reject(
+        new CloudError('unauthorized', 'rotation could not be persisted; refresh is poisoned'),
+      );
+    }
     if (now() - lastRefreshAt < refreshCooldownMs) {
       return Promise.reject(new CloudError('unauthorized', 'refresh cooldown active'));
     }
@@ -242,8 +254,21 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
       // Re-read: a concurrent revocation may have cleared the identity while awaiting.
       const after = currentIdentity();
       if (after === null) throw new CloudError('revoked', 'identity cleared during refresh');
-      identity = { ...after, deviceToken: res.device_token, refreshToken: res.refresh_token };
-      deps.secrets.save(identity);
+      const next = { ...after, deviceToken: res.device_token, refreshToken: res.refresh_token };
+      // Persist-then-swap (§7 note 8): the NEW pair must be durable before it
+      // becomes live in memory or before any subsequent refresh. If this save
+      // fails, the on-disk refresh token is already superseded — poison
+      // refresh and stop, never replay the dead token.
+      try {
+        deps.secrets.save(next);
+      } catch (err) {
+        refreshPersistBroken = true;
+        stop();
+        setState('offline');
+        log('cloud: token rotation could not be persisted — refresh disabled until restart');
+        throw err;
+      }
+      identity = next;
     })();
     refreshInFlight = attempt.finally(() => {
       refreshInFlight = null;
@@ -254,12 +279,14 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
   async function withAuth<T>(
     fn: (auth: { deviceId: string; deviceToken: string }) => Promise<T>,
   ): Promise<T> {
-    const id = identity;
-    if (id === null) throw new CloudError('not_paired');
-    const auth = (): { deviceId: string; deviceToken: string } => ({
-      deviceId: id.deviceId,
-      deviceToken: id.deviceToken,
-    });
+    if (identity === null) throw new CloudError('not_paired');
+    // Read the CURRENT identity at call time: the retry after a refresh must
+    // carry the rotated token, never the one that just 401'd.
+    const auth = (): { deviceId: string; deviceToken: string } => {
+      const current = currentIdentity();
+      if (current === null) throw new CloudError('not_paired');
+      return { deviceId: current.deviceId, deviceToken: current.deviceToken };
+    };
     try {
       return await fn(auth());
     } catch (err) {
