@@ -106,6 +106,57 @@ describe('engine operator actions', () => {
     }
   });
 
+  it('reprintJob refuses to insert past the maxPending queue bound', async () => {
+    const transports = new FakeTransportRegistry((printerId) =>
+      printerId === h.printerIds[0] ? {} : { hang: true },
+    );
+    const h = await makeHarness({ transports, limits: { maxPending: 2 }, printerCount: 2 });
+    try {
+      // job-1 completes (terminal, reprintable); job-2 hangs mid-transmission
+      // ('sending') and job-3 queues behind it ('accepted') → 2 non-terminal
+      // rows, i.e. the queue is at capacity.
+      h.engine.submit(makeJob(h.printerIds[0] ?? ''));
+      await drained();
+      expect(h.engine.getJob('job-1')?.status).toBe('completed');
+      h.engine.submit(makeJob(h.printerIds[1] ?? '', { jobId: 'job-2', idempotencyKey: 'key-2' }));
+      h.engine.submit(makeJob(h.printerIds[1] ?? '', { jobId: 'job-3', idempotencyKey: 'key-3' }));
+      await drained();
+      expect(h.engine.getJob('job-2')?.status).toBe('sending');
+      expect(h.engine.getJob('job-3')?.status).toBe('accepted');
+
+      expect(() => h.engine.reprintJob('job-1')).toThrow(JobEngineError);
+      expect(() => h.engine.reprintJob('job-1')).toThrow(/capacity/);
+    } finally {
+      h.dispose();
+    }
+  });
+
+  it('cancel during a backoff window wins: the retry timer fires but nothing is printed', async () => {
+    let failFirst = 1; // first open only
+    const transports = new OpenScriptRegistry(() =>
+      failFirst-- > 0 ? new TransportError('connect_refused', 'printer refused') : undefined,
+    );
+    const h = await makeHarness({ transports, limits: { maxAttempts: 2 } });
+    try {
+      h.engine.submit(makeJob(h.printerId));
+      await drained();
+      // Connect failure #1 → back to 'rendered' with a pending retry timer.
+      expect(h.engine.getJob('job-1')?.status).toBe('rendered');
+      expect(h.timers).toHaveLength(1);
+
+      expect(h.engine.cancel('job-1')).toBe(true);
+      expect(h.engine.getJob('job-1')?.status).toBe('failed');
+
+      // The queued retry still fires, but runJob bails on the terminal guard.
+      for (const fire of h.timers) fire();
+      await drained();
+      expect(h.engine.getJob('job-1')?.status).toBe('failed');
+      expect(transports.get(h.printerId)?.writes).toHaveLength(0);
+    } finally {
+      h.dispose();
+    }
+  });
+
   it('reprintJob allows ambiguous, refuses rejected and non-terminal jobs', async () => {
     const transports = new FakeTransportRegistry((printerId) =>
       printerId === h.printerIds[0]

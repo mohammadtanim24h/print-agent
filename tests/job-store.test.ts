@@ -141,8 +141,11 @@ describe('sqlite JobStore', () => {
       store.insert(makeRow());
       expect(store.incrementAttempts('job-1')).toBe(1);
       expect(store.incrementAttempts('job-1')).toBe(2);
+      store.recordAttempt('job-1', 1, { outcome: 'connect_error' }, 5_000);
       store.resetAttempts('job-1');
       expect(store.get('job-1')?.attempts).toBe(0);
+      // A fresh attempt cycle clears the superseded cycle's history too.
+      expect(store.listAttempts('job-1')).toEqual([]);
     } finally {
       closeDatabase(db);
     }

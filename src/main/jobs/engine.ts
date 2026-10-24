@@ -531,6 +531,14 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
         `reprintJob: job ${jobId} is ${row.status}; only completed/failed/ambiguous jobs can be reprinted`,
       );
     }
+    // The pending-queue bound applies to operator reprints too — the operator
+    // sees this typed error instead of a silent override of the bound.
+    if (store.countByStatus(...NON_TERMINAL) >= limits.maxPending) {
+      throw new JobEngineError(
+        'illegal_transition',
+        `reprintJob: local queue is at capacity (${String(limits.maxPending)} pending)`,
+      );
+    }
     // A NEW row with a unique idempotency key (the original key is taken by the
     // unique index) so the server-side duplicate ledger is never disturbed.
     const id = newId();
