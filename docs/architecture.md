@@ -147,8 +147,10 @@ encodability policy, raster fallback design, diagnostic summary contract).
    with `status: "completed"` and `printed: false-claim-avoided`: the ack conveys
    _hand-off success_, never a physical-print guarantee (§5, PRD FR-13/G8).
 
-Failure paths: transport errors → retry N times with backoff → `failed` → report.
-Crash between 5 and 7 → on restart, `sending` rows → `ambiguous` → report + policy.
+Failure paths: connect-phase transport errors are retried with bounded backoff before
+transmission; failures after transmission begins mark the job `ambiguous` (ADR-5/6 —
+no automatic reprint). Crash between 5 and 7 → on restart, `sending` rows →
+`ambiguous` → report + policy.
 
 ## 5. Job state machine (authoritative)
 
@@ -163,14 +165,17 @@ Crash between 5 and 7 → on restart, `sending` rows → `ambiguous` → report 
               └─────┬─────┘                     └────┬─────┘ (terminal; manual reprint)
                     │ transport open+write issued
                     ▼
-              ┌───────────┐   crash/power loss while in flight (on restart)
-              │  sending  ├──────────────────▶ ┌───────────┐
+              ┌───────────┐   connect failure (retryable — nothing written yet):
+              │  sending  │◀───── retry with bounded backoff (ADR-6,
+              │           │       pre-transmission only), then re-issue
+              │           │   crash/power loss while in flight (on restart)
+              │           ├──────────────────▶ ┌───────────┐
               └─────┬─────┘                    │ ambiguous │ (reported; operator or
                     │ write accepted            └───────────┘  duplicate-policy reprint)
                     ▼
-              ┌───────────┐   transport error (retryable)
-              │ sent_to_  ├──────────────────▶ retry → sending (bounded attempts)
-              │ printer   │
+              ┌───────────┐   transport error after transmission has started:
+              │ sent_to_  ├──────────────────▶ ambiguous (outcome unknowable —
+              │ printer   │                    never auto-retried, ADR-5/6)
               └─────┬─────┘
                     │ hand-off confirmed (optional: printer_ack first)
                     ▼

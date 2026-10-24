@@ -44,7 +44,14 @@ and `printer_ack` → `completed` for re-delivery).
   JSON the renderer later guards, so the render-stage `payload_too_large` is not
   reachable through intake). Tenant/restaurant scope is enforced upstream
   (architecture §7 — the device token bounds what the server may send); the engine
-  keys idempotency per `(restaurant_id, idempotency_key)`.
+  keys idempotency per `(restaurant_id, idempotency_key)`. Rejected jobs (including
+  `queue_full`) are never persisted — the `duplicateAck` rejected branch exists for
+  forward-compatibility; re-delivery of a previously queue-full job simply retries
+  intake.
+- **Expiry is enforced at intake only:** a job that expires while already queued still
+  executes (stale-ticket semantics are a deliberate P1 simplification — revisit with
+  the duplicate-policy/config phase if the restaurant use case requires expiry
+  re-checks).
 - **Intake DB failure:** `submit` throws `JobEngineError('store_unavailable')` with
   **no ack** — the server re-delivers (at-least-once delivery to the agent).
 - **Duplicate re-delivery** per `(restaurant_id, idempotency_key)` is answered from
