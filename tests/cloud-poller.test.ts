@@ -272,7 +272,7 @@ describe('token refresh (no infinite retry loop)', () => {
         recording.history.push(`save:${s.deviceToken}/${s.refreshToken}`);
         inner.save(s);
       },
-      clear: () => inner.clear(),
+      clear: () => { inner.clear(); },
     };
     const client = createPollingCloudClient({
       transport,
@@ -304,10 +304,10 @@ describe('token refresh (no infinite retry loop)', () => {
     const logs: string[] = [];
     const failing: SecretStore = {
       load: () => inner.load(),
-      save: (s) => {
+      save: () => {
         throw new CloudError('secure_storage_unavailable', 'injected persist failure');
       },
-      clear: () => inner.clear(),
+      clear: () => { inner.clear(); },
     };
     const client = createPollingCloudClient({
       transport,
