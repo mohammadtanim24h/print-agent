@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { Channel, RequestSchemas } from '../src/shared/ipc-contract';
+import {
+  AgentInfoSchema,
+  AppSettingsSchema,
+  Channel,
+  RequestSchemas,
+} from '../src/shared/ipc-contract';
 import { createIpcRouter, IpcUnknownChannelError } from '../src/main/ipc/register';
 
 describe('ipc contract', () => {
@@ -101,5 +106,57 @@ describe('ipc router', () => {
     await expect(
       incomplete.dispatch('settings:set-launch-at-login', { enabled: true }, trustedFrame),
     ).rejects.toThrow(IpcUnknownChannelError);
+  });
+});
+
+describe('wiring-phase channels', () => {
+  it('registers the new agent/pairing/printers/jobs/diagnostics channels', () => {
+    expect(Channel.PairWithCode).toBe('pair:with-code');
+    expect(Channel.AgentSnapshot).toBe('agent:snapshot');
+    expect(Channel.AgentUnpair).toBe('agent:unpair');
+    expect(Channel.PrintersList).toBe('printers:list');
+    expect(Channel.PrintersAdd).toBe('printers:add');
+    expect(Channel.PrintersUpdate).toBe('printers:update');
+    expect(Channel.PrintersRemove).toBe('printers:remove');
+    expect(Channel.PrintersTest).toBe('printers:test');
+    expect(Channel.JobsList).toBe('jobs:list');
+    expect(Channel.JobsRetry).toBe('jobs:retry');
+    expect(Channel.JobsReprint).toBe('jobs:reprint');
+    expect(Channel.DiagnosticsReport).toBe('diagnostics:report');
+    expect(Channel.DiagnosticsChecks).toBe('diagnostics:checks');
+    expect(Channel.LogsRecent).toBe('logs:recent');
+  });
+
+  it('validates the pairing code per api-contract §3.4 (8 alnum chars)', () => {
+    expect(RequestSchemas[Channel.PairWithCode].safeParse({ code: '7QJ2K9XD' }).success).toBe(true);
+    expect(RequestSchemas[Channel.PairWithCode].safeParse({ code: '7QJ2K9X' }).success).toBe(false);
+    expect(RequestSchemas[Channel.PairWithCode].safeParse({ code: '7QJ2K9XD1' }).success).toBe(false);
+    expect(RequestSchemas[Channel.PairWithCode].safeParse({ code: '7QJ2K9X!' }).success).toBe(false);
+    expect(
+      RequestSchemas[Channel.PairWithCode].safeParse({ code: '7QJ2K9XD', extra: 1 }).success,
+    ).toBe(false);
+  });
+
+  it('bounds printer/job id payloads and rejects unknown fields', () => {
+    const uuid = '11111111-1111-4111-8111-111111111111';
+    expect(RequestSchemas[Channel.PrintersTest].safeParse({ printerId: uuid }).success).toBe(true);
+    expect(RequestSchemas[Channel.PrintersTest].safeParse({ printerId: 'nope' }).success).toBe(false);
+    expect(RequestSchemas[Channel.JobsRetry].safeParse({ jobId: uuid }).success).toBe(true);
+  });
+
+  it('widens AgentInfo connectionState to the cloud union', () => {
+    for (const s of ['unpaired', 'connecting', 'online', 'offline', 'revoked'] as const) {
+      expect(AgentInfoSchema.safeParse({ name: 'print-agent', version: '0.1.0', connectionState: s }).success).toBe(true);
+    }
+    expect(AgentInfoSchema.safeParse({ name: 'print-agent', version: '0.1.0', connectionState: 'disabled' }).success).toBe(false);
+  });
+
+  it('extends AppSettings with startMinimized and logLevel (defaults for old files)', () => {
+    expect(AppSettingsSchema.safeParse({ launchAtLogin: false }).success).toBe(true);
+    const parsed = AppSettingsSchema.parse({ launchAtLogin: false });
+    expect(parsed.startMinimized).toBe(true);
+    expect(parsed.logLevel).toBe('info');
+    expect(parsed.pairedAt).toBeNull();
+    expect(AppSettingsSchema.safeParse({ launchAtLogin: false, logLevel: 'verbose' }).success).toBe(false);
   });
 });

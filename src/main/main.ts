@@ -92,7 +92,7 @@ async function start(): Promise<void> {
       [Channel.GetAgentInfo]: () => ({
         name: 'print-agent',
         version: app.getVersion(),
-        connectionState: 'disabled' as const,
+        connectionState: 'unpaired' as const,
       }),
       [Channel.GetSettings]: () => settings.get(),
       [Channel.SetLaunchAtLogin]: async ({ enabled }: { enabled: boolean }) => {
