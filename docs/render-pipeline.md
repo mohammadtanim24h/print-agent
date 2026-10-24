@@ -57,7 +57,8 @@ Related policies:
   (`capabilities.cut = false` → `summary.cut = 'none'` + warning
   `cut_skipped_unsupported` if a cut was requested). When a cutter exists, `partial`
   is the default; `full`/`none` are explicit via `station_hints.cut`.
-- **QR:** sanitized (control chars stripped, non-ASCII allowed — QR is byte-native);
+- **QR:** printable ASCII only after sanitization (library `GS ( k` length prefix is
+  UTF-16-based; non-ASCII is skipped with `qr_skipped_invalid`), matching CODE128;
   skipped with a warning when unsupported or empty after sanitization.
 - **Barcode (CODE128):** printable ASCII only; skipped with a warning otherwise.
 - **Kitchen/bar/station tickets carry no money:** prices, totals, payments, QR and
@@ -121,7 +122,7 @@ Warnings are a closed string-literal union — eight tokens:
 | --- | --- |
 | `cut_skipped_unsupported` | Cut requested, printer has no cutter (`capabilities.cut = false`) |
 | `qr_skipped_unsupported` | Footer QR data present, `capabilities.qrCode = false` |
-| `qr_skipped_invalid` | Footer QR data empty after sanitization |
+| `qr_skipped_invalid` | Footer QR data empty or not printable ASCII after sanitization |
 | `barcode_skipped_unsupported` | Footer barcode data present, `capabilities.barcode128 = false` |
 | `barcode_skipped_invalid` | Footer barcode data empty or not printable ASCII |
 | `logo_skipped_no_asset_store` | `logo_asset_id` present; asset pipeline deferred (R-VAL-10) |
@@ -137,7 +138,10 @@ as `GS v 0`, instead of sending UTF-8 into a CP437/CP850 codepage (mojibake — 
   **Noto Sans Bengali** Regular (`assets/fonts/`), licensed **SIL OFL 1.1**
   (`assets/fonts/OFL.txt`). No system-font fallback: if a configured font path fails to
   register, `createCanvasRasterizer` returns `null` and non-ASCII text fails with
-  `text_not_encodable` rather than silently rendering wrong glyphs.
+  `text_not_encodable` rather than silently rendering wrong glyphs. The module-level
+  `registered` Set in `raster.ts` is a deliberate dedup cache over @napi-rs/canvas's
+  process-global `GlobalFonts` registry — the renderer's only ambient state, documented
+  as the exception to the injected-dependencies rule.
 - **Sizing:** shrink-to-fit with a **12 px floor** — a string too wide for
   `profile.printableDots` is scaled down until it fits or hits 12 px, then **clips at
   the canvas edge**. An oversized string can never widen the stream beyond the
@@ -156,7 +160,7 @@ as `GS v 0`, instead of sending UTF-8 into a CP437/CP850 codepage (mojibake — 
 | --- | --- |
 | Unit | Byte-level assertions (init prefix, style transitions, cut bytes) and decoded-stream assertions per test file: schema, sanitize, layout, profile, encoder, core, receipt, kitchen, raster |
 | Decoding | In-house ESC/POS decoder for the exact subset this renderer emits (`tests/helpers/escpos-decode.ts`), plus `decodeLines` for physical-line assertions — unknown bytes surface as `<0xNN>` text events so sanitization gaps are visible |
-| Fuzz | `tests/render-fuzz.test.ts` — 400 deterministic cases (mulberry32, seed 42042): command injection, oversize strings, unicode/zero-width/bidi input. Asserts `renderDoc` never throws, never emits injected control bytes, and stays under the 256 KiB output cap |
+| Fuzz | `tests/render-fuzz.test.ts` — 520 deterministic cases (mulberry32, seed 42042): 400 dispatched as `customer_receipt`, 120 as `kitchen_ticket`; command injection, oversize strings, unicode/zero-width/bidi input. Asserts `renderDoc` never throws, never emits injected control bytes, and stays under the 256 KiB output cap |
 | Integration | `tests/render-virtual-printer.test.ts` — end-to-end receipt through a virtual TCP printer bound to ephemeral `127.0.0.1:0` (`tests/helpers/virtual-printer.ts`), byte-for-byte and semantic assertions on what the socket received |
 | CI-optional | `escpos-emulator` (TCP :9100 + REST decoded-output assertions, `docs/printer-compatibility.md` §5) can be layered on in CI later; the in-house mock keeps `pnpm test` hermetic |
 

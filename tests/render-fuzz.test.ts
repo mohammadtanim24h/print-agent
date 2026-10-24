@@ -51,10 +51,10 @@ describe('renderer fuzz corpus (deterministic seeds)', () => {
   const rand = mulberry32(42_042);
 
   it('never throws, never emits injected control bytes, and bounds output size', () => {
-    for (let caseNo = 0; caseNo < 400; caseNo++) {
-      // Vitest's second expect argument labels any failure with the fuzz case
-      // number so a red run can be replayed from the seed.
-      const where = `fuzz case ${String(caseNo)} (seed 42042)`;
+    // Per-case doc + profile construction, shared by both dispatch passes so
+    // the kitchen pass fuzzes the same kinds of mutated inputs as the receipt
+    // pass (both loops run against the one seeded PRNG).
+    const buildCase = () => {
       const doc = makeDoc({
         header: {
           restaurant_name: mutate(rand, 'Fuzz Cafe'),
@@ -84,7 +84,14 @@ describe('renderer fuzz corpus (deterministic seeds)', () => {
       const profile = makeRenderProfile(
         rand() < 0.3 ? { capabilities: { cut: false, qrCode: false, barcode128: false } } : {},
       );
+      return { doc, profile };
+    };
 
+    for (let caseNo = 0; caseNo < 400; caseNo++) {
+      // Vitest's second expect argument labels any failure with the fuzz case
+      // number so a red run can be replayed from the seed.
+      const where = `fuzz case ${String(caseNo)} (seed 42042)`;
+      const { doc, profile } = buildCase();
       const result = renderDoc('customer_receipt', doc, profile);
       if (!result.ok) {
         // Errors must be typed and finite — never a crash.
@@ -105,6 +112,24 @@ describe('renderer fuzz corpus (deterministic seeds)', () => {
         }
         if (event.kind === 'barcode') {
           expect(/[\u0000-\u001F\u007F]/.test(event.data), where).toBe(false);
+        }
+      }
+    }
+
+    // Second pass over the same generator, dispatched as kitchen_ticket — the
+    // receipt loop alone never exercised the shared ticket template.
+    for (let caseNo = 0; caseNo < 120; caseNo++) {
+      const where = `kitchen fuzz case ${String(caseNo)} (seed 42042)`;
+      const { doc, profile } = buildCase();
+      const result = renderDoc('kitchen_ticket', doc, profile);
+      if (!result.ok) {
+        expect(VALID_ERROR_CODES, where).toContain(result.error.code);
+        continue;
+      }
+      expect(result.bytes.byteLength, where).toBeLessThanOrEqual(MAX_OUTPUT_BYTES);
+      for (const event of decodeEscpos(result.bytes)) {
+        if (event.kind === 'text') {
+          expect(event.text, where).not.toMatch(/<0x(0[0-9a-f]|1[0-9a-f]|7f)>/);
         }
       }
     }
