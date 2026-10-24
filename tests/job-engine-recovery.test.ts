@@ -111,6 +111,7 @@ describe('engine startup recovery', () => {
       const acks2: JobAck[] = [];
       p2 = await boot(file, transports2, acks2);
       p2.engine.recover();
+      await drained(); // let a (buggy) re-enqueue actually execute before asserting
 
       expect(p2.engine.getJob('job-1')?.status).toBe('ambiguous');
       expect(transports2.get(PRINTER_ID)?.opens ?? 0).toBe(0); // nothing re-sent

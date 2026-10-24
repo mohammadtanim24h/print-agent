@@ -49,7 +49,8 @@ export interface JobEngine {
   submit(job: PrintJobInput): JobAck;
   /** Startup recovery: sending → ambiguous; accepted/rendered re-enqueued for
    *  execution (rows with an unknown printer are left as-is — config may
-   *  restore the printer later; they still count against the queue bound). */
+   *  restore the printer later; they still count against the queue bound).
+   *  Never throws; per-row failures are reported and skipped. */
   recover(): void;
   /** Read one job row (for UI/diagnostics). */
   getJob(jobId: string): JobRow | null;
@@ -453,36 +454,47 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
   // ---- startup recovery (docs/architecture.md §5, ADR-5) -------------------
 
   function recover(): void {
+    // Startup recovery never throws: a single bad row must not veto resuming healthy
+    // jobs. Per-row failures are reported and skipped; they remain in their current
+    // status and are retried on the next restart.
     // 1) Jobs caught mid-transmission by a crash: the write outcome is unknowable.
     //    They land in ambiguous — resolution is operator/policy action, never
     //    automatic re-sending (ADR-5).
     for (const row of store.listByStatus('sending')) {
-      store.recordAttempt(
-        row.id,
-        Math.max(row.attempts, 1),
-        {
-          outcome: 'ambiguous_crash',
-          errorCode: 'restarted_in_flight',
-          errorMessage: 'agent restarted while job was transmitting',
-        },
-        now(),
-      );
-      store.updateStatus(row.id, 'ambiguous', {
-        lastError: encodeStoredError('restarted_in_flight', 'agent restarted while job was transmitting'),
-      });
-      const fresh = store.get(row.id);
-      if (fresh !== null) {
-        emit(fresh, 'ambiguous', {
-          code: 'restarted_in_flight',
-          message: 'agent restarted while job was transmitting',
+      try {
+        store.recordAttempt(
+          row.id,
+          Math.max(row.attempts, 1),
+          {
+            outcome: 'ambiguous_crash',
+            errorCode: 'restarted_in_flight',
+            errorMessage: 'agent restarted while job was transmitting',
+          },
+          now(),
+        );
+        store.updateStatus(row.id, 'ambiguous', {
+          lastError: encodeStoredError('restarted_in_flight', 'agent restarted while job was transmitting'),
         });
+        const fresh = store.get(row.id);
+        if (fresh !== null) {
+          emit(fresh, 'ambiguous', {
+            code: 'restarted_in_flight',
+            message: 'agent restarted while job was transmitting',
+          });
+        }
+      } catch (err) {
+        report(`job engine: recovery failed for ${row.id}: ${String(err)}`);
       }
     }
     // 2) Pre-transmission jobs survive the restart and resume from the queue.
     //    Rows whose printer is unknown stay put: the printer may be restored by
     //    config later, and they still count against the queue bound.
     for (const row of store.listByStatus('accepted', 'rendered')) {
-      if (printers.get(row.printerId) !== null) enqueueExecution(row.printerId, row.id);
+      try {
+        if (printers.get(row.printerId) !== null) enqueueExecution(row.printerId, row.id);
+      } catch (err) {
+        report(`job engine: recovery re-enqueue failed for ${row.id}: ${String(err)}`);
+      }
     }
   }
 
