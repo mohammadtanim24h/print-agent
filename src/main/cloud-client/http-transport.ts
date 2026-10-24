@@ -10,11 +10,11 @@ import {
   RefreshResponseSchema,
   ServerKeysResponseSchema,
   PROTOCOL_VERSION,
-  type Heartbeat,
   type PairRequest,
   type PairResponse,
   type RefreshResponse,
 } from './schemas';
+import type { HeartbeatSample } from './types';
 import { CloudError } from './errors';
 import { DEFAULT_RETRY_POLICY, nextBackoffMs, type RetryPolicy } from './backoff';
 import type { ZodType } from 'zod';
@@ -110,7 +110,9 @@ function statusToError(res: Response, body: unknown): CloudError {
   const parsed = ApiErrorSchema.safeParse(body);
   const serverCode = parsed.success ? parsed.data.error.code : undefined;
   const safeCode =
-    typeof serverCode === 'string' && /^[a-z0-9_.-]{1,64}$/i.test(serverCode) ? serverCode : undefined;
+    typeof serverCode === 'string' && /^[a-z0-9_.-]{1,64}$/i.test(serverCode)
+      ? serverCode
+      : undefined;
   return new CloudError(
     'request_rejected',
     `status ${String(res.status)}${safeCode === undefined ? '' : `: ${safeCode}`}`,
@@ -208,9 +210,9 @@ export function createHttpTransport(options: HttpTransportOptions): AgentTranspo
   return {
     baseUrl: trimmed,
     async pair(request: PairRequest): Promise<PairResponse> {
-      return requestOnce('POST', '/pair', PairResponseSchema, {
-        body: PairRequestSchema.parse(request), // outbound is schema-checked too
-      });
+      // Outbound is schema-checked too; async so violations reject, never throw sync.
+      const body = PairRequestSchema.parse(request);
+      return requestOnce('POST', '/pair', PairResponseSchema, { body });
     },
     async refresh(refreshToken: string): Promise<RefreshResponse> {
       return requestOnce('POST', '/token/refresh', RefreshResponseSchema, {
@@ -221,20 +223,20 @@ export function createHttpTransport(options: HttpTransportOptions): AgentTranspo
       const query = since === '' ? '' : `?since=${encodeURIComponent(since)}`;
       return requestWithRetry('GET', `/jobs${query}`, PollResponseSchema, authed(auth));
     },
-    sendAcks(auth, batch: AckBatch) {
-      return requestWithRetry('POST', '/acks', EmptyResponseSchema, {
-        ...authed(auth),
-        body: AckBatchSchema.parse(batch),
-      }).then(() => undefined);
+    async sendAcks(auth: TransportAuth, batch: AckBatch): Promise<void> {
+      const body = AckBatchSchema.parse(batch);
+      await requestWithRetry('POST', '/acks', EmptyResponseSchema, { ...authed(auth), body });
     },
     getConfig(auth) {
       return requestWithRetry('GET', '/config', ConfigUpdateSchema, authed(auth));
     },
-    heartbeat(auth, sample: Heartbeat) {
-      return requestWithRetry('POST', '/heartbeat', EmptyResponseSchema, {
-        ...authed(auth),
-        body: HeartbeatSchema.parse(sample),
-      }).then(() => undefined);
+    async heartbeat(auth: TransportAuth, sample: HeartbeatSample): Promise<void> {
+      const body = HeartbeatSchema.parse({
+        type: 'heartbeat' as const,
+        agent_version: options.agentVersion,
+        ...sample,
+      });
+      await requestWithRetry('POST', '/heartbeat', EmptyResponseSchema, { ...authed(auth), body });
     },
     serverKeys(auth) {
       return requestWithRetry('GET', '/server-keys', ServerKeysResponseSchema, authed(auth));

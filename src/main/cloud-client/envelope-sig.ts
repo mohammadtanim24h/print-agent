@@ -31,7 +31,11 @@ export function generateDeviceKeyPair(): { privateKeyPkcs8: string; publicKeyRaw
   const { publicKey, privateKey } = generateKeyPairSync('ed25519');
   return {
     privateKeyPkcs8: privateKey.export({ format: 'der', type: 'pkcs8' }).toString('base64url'),
-    publicKeyRaw: encodeEd25519PublicKey(new Uint8Array(publicKey.export({ format: 'der', type: 'spki' }).subarray(-ED25519_RAW_LENGTH))),
+    publicKeyRaw: encodeEd25519PublicKey(
+      new Uint8Array(
+        publicKey.export({ format: 'der', type: 'spki' }).subarray(-ED25519_RAW_LENGTH),
+      ),
+    ),
   };
 }
 
@@ -49,7 +53,11 @@ function importRawPublicKey(raw: Uint8Array): KeyObject {
 
 /** Verify an envelope's `sig` over canonical_json(job). Never throws on a bad
  *  signature — returns false; throw is reserved for a malformed pinned key. */
-export function verifyEnvelopeSig(job: unknown, sigBase64Url: string, pinnedPubKeyRaw: Uint8Array): boolean {
+export function verifyEnvelopeSig(
+  job: unknown,
+  sigBase64Url: string,
+  pinnedPubKeyRaw: Uint8Array,
+): boolean {
   const key = importRawPublicKey(pinnedPubKeyRaw);
   const data = Buffer.from(canonicalJson(job), 'utf8');
   let sig: Buffer;

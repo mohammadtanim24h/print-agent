@@ -72,10 +72,16 @@ export interface SecretStore {
   clear(): void;
 }
 
-export function createSafeStorageSecretStore(kv: SecretKv, safeStorage: SafeStorageLike): SecretStore {
+export function createSafeStorageSecretStore(
+  kv: SecretKv,
+  safeStorage: SafeStorageLike,
+): SecretStore {
   function encrypt(value: string): string {
     if (!safeStorage.isEncryptionAvailable()) {
-      throw new CloudError('secure_storage_unavailable', 'refusing to persist secrets without OS-level encryption');
+      throw new CloudError(
+        'secure_storage_unavailable',
+        'refusing to persist secrets without OS-level encryption',
+      );
     }
     return safeStorage.encryptString(value).toString('base64');
   }

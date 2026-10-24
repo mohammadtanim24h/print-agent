@@ -3,7 +3,14 @@ import { decodeEd25519PublicKey, verifyEnvelopeSig } from './envelope-sig';
 import { parseServerMessage, ENVELOPE_VERSION } from './schemas';
 import type { ConfigUpdate, PrintJobEnvelope } from './schemas';
 import { pairDevice } from './pairing';
-import type { AgentTransport, CloudClient, CloudListener, ConnectionState, HeartbeatSample, AckBatch } from './types';
+import type {
+  AgentTransport,
+  CloudClient,
+  CloudListener,
+  ConnectionState,
+  HeartbeatSample,
+  AckBatch,
+} from './types';
 import type { IdentitySecrets, SecretStore } from './secret-store';
 
 /**
@@ -74,7 +81,12 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
   const isStopped = (): boolean => stopped;
   const currentIdentity = (): IdentitySecrets | null => identity;
 
-  const listeners: Listeners = { job: new Set(), config: new Set(), state: new Set(), revoked: new Set() };
+  const listeners: Listeners = {
+    job: new Set(),
+    config: new Set(),
+    state: new Set(),
+    revoked: new Set(),
+  };
 
   let state: ConnectionState = 'unpaired';
   /** Full secret record in memory while paired; token rotations mutate a copy. */
@@ -138,13 +150,13 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
       }
       try {
         if (sampleProvider !== undefined) {
-          await withAuth((auth) =>
-            transport.heartbeat(auth, { type: 'heartbeat', agent_version: deps.agentVersion, ...sampleProvider() }),
-          );
+          await withAuth((auth) => transport.heartbeat(auth, sampleProvider()));
         }
         const res = await withAuth((auth) => transport.pollJobs(auth, cursor));
         cursor = res.next_cursor ?? '';
         for (const raw of res.jobs) handleServerMessage(raw);
+        // A revoke envelope mid-batch stops the loop — never surface 'online' over 'revoked'.
+        if (isStopped()) return;
         backoffAttempt = 0;
         setState('online');
       } catch (err) {
@@ -157,6 +169,9 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
   }
 
   function handleCycleError(err: unknown): void {
+    // A refusal-driven revocation (or revoke envelope) already transitioned the
+    // client to its terminal state — never overwrite it with 'offline'.
+    if (isStopped() || state === 'revoked') return;
     if (err instanceof CloudError && err.code === 'revoked') return; // already handled
     if (err instanceof CloudError && err.code === 'not_paired') {
       setState('unpaired');
@@ -193,7 +208,10 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
       try {
         res = await transport.refresh(before.refreshToken);
       } catch (err) {
-        if (err instanceof CloudError && (err.code === 'unauthorized' || err.code === 'forbidden')) {
+        if (
+          err instanceof CloudError &&
+          (err.code === 'unauthorized' || err.code === 'forbidden')
+        ) {
           handleRevocation('token_refresh_refused');
         }
         throw err;
@@ -210,7 +228,9 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
     return refreshInFlight;
   }
 
-  async function withAuth<T>(fn: (auth: { deviceId: string; deviceToken: string }) => Promise<T>): Promise<T> {
+  async function withAuth<T>(
+    fn: (auth: { deviceId: string; deviceToken: string }) => Promise<T>,
+  ): Promise<T> {
     const id = identity;
     if (id === null) throw new CloudError('not_paired');
     const auth = (): { deviceId: string; deviceToken: string } => ({
@@ -220,7 +240,10 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
     try {
       return await fn(auth());
     } catch (err) {
-      if (!(err instanceof CloudError) || (err.code !== 'unauthorized' && err.code !== 'forbidden')) {
+      if (
+        !(err instanceof CloudError) ||
+        (err.code !== 'unauthorized' && err.code !== 'forbidden')
+      ) {
         throw err;
       }
       await refreshTokens(); // throws 'revoked' downstream when refused
@@ -232,7 +255,7 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
     const msg = parseServerMessage(raw);
     switch (msg.kind) {
       case 'print_job':
-        handleJobEnvelope(msg.envelope);
+        handleJobEnvelope(msg.envelope, msg.rawJob);
         return;
       case 'config_update':
         handleConfig(msg.config);
@@ -241,7 +264,9 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
         handleRevocation(msg.reason);
         return;
       case 'unsupported_version':
-        log(`cloud: refused envelope with unsupported envelope_version ${String(msg.envelopeVersion)}`);
+        log(
+          `cloud: refused envelope with unsupported envelope_version ${String(msg.envelopeVersion)}`,
+        );
         return;
       case 'malformed':
         log('cloud: dropped malformed server message');
@@ -254,7 +279,7 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
   /** Defense in depth (architecture §7): the token scopes us to one
    *  restaurant; the agent re-checks every job against that scope before the
    *  engine ever sees it. Signature verified against the pairing-pinned key. */
-  function handleJobEnvelope(envelope: PrintJobEnvelope): void {
+  function handleJobEnvelope(envelope: PrintJobEnvelope, rawJob: unknown): void {
     if (identity === null) return;
     const job = envelope.job;
     if (job.tenant_id !== identity.tenantId || job.restaurant_id !== identity.restaurantId) {
@@ -266,9 +291,15 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
       }).catch(() => undefined);
       return;
     }
+    // Sig covers the raw wire bytes of `job` (schema defaults must not leak
+    // into the canonical form the server signed).
     let sigOk = false;
     try {
-      sigOk = verifyEnvelopeSig(job, envelope.sig, decodeEd25519PublicKey(identity.serverSigningPubkey));
+      sigOk = verifyEnvelopeSig(
+        rawJob,
+        envelope.sig,
+        decodeEd25519PublicKey(identity.serverSigningPubkey),
+      );
     } catch {
       sigOk = false;
     }
@@ -309,7 +340,8 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
     return withAuth((auth) => transport.sendAcks(auth, batch));
   }
 
-  function handleRevocation(reason: string): void {    if (state === 'revoked') return;
+  function handleRevocation(reason: string): void {
+    if (state === 'revoked') return;
     stopped = true;
     cancelTimer?.();
     cancelTimer = null;
@@ -327,7 +359,10 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
     state: () => state,
     async pair(request) {
       stop();
-      const paired = await pairDevice({ transport, secrets: deps.secrets, agentVersion: deps.agentVersion }, request);
+      const paired = await pairDevice(
+        { transport, secrets: deps.secrets, agentVersion: deps.agentVersion },
+        request,
+      );
       cursor = '';
       appliedConfigVersion = -1;
       start();
@@ -343,9 +378,7 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
       await doSubmitAcks(batch);
     },
     async sendHeartbeat(sample: HeartbeatSample): Promise<void> {
-      await withAuth((auth) =>
-        transport.heartbeat(auth, { type: 'heartbeat', agent_version: deps.agentVersion, ...sample }),
-      );
+      await withAuth((auth) => transport.heartbeat(auth, sample));
     },
     async refreshConfig(): Promise<void> {
       const config = await withAuth((auth) => transport.getConfig(auth));

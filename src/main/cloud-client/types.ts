@@ -47,7 +47,10 @@ export interface CloudClient {
 
   /** Exchange a dashboard-generated pairing code for a device credential.
    *  Throws CloudError('pairing_failed'-class codes) on rejection. */
-  pair(request: { readonly pairingCode: string; readonly deviceName: string }): Promise<AgentIdentity>;
+  pair(request: {
+    readonly pairingCode: string;
+    readonly deviceName: string;
+  }): Promise<AgentIdentity>;
 
   /** Begin the poll loop (no-op unless paired). The first cycle runs
    *  immediately to recover pending work after (re)connect. */
@@ -77,7 +80,8 @@ export interface AgentTransport {
   pollJobs(auth: TransportAuth, since: string): Promise<PollResponse>;
   sendAcks(auth: TransportAuth, batch: AckBatch): Promise<void>;
   getConfig(auth: TransportAuth): Promise<ConfigUpdate>;
-  heartbeat(auth: TransportAuth, sample: Heartbeat): Promise<void>;
+  /** Implementations add the `type: 'heartbeat'` discriminator and validate. */
+  heartbeat(auth: TransportAuth, sample: HeartbeatSample): Promise<void>;
   serverKeys(auth: TransportAuth): Promise<ServerKeysResponse>;
 }
 

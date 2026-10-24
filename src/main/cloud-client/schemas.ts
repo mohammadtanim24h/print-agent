@@ -22,12 +22,15 @@ const bytes = (max: number) =>
     );
 
 const b64url = (bytesLen: number) =>
-  z
-    .string()
-    .refine((s) => {
+  z.string().refine(
+    (s) => {
       const buf = Buffer.from(s, 'base64url');
-      return buf.length === bytesLen && Buffer.from(buf.toString('base64url')).equals(Buffer.from(s));
-    }, `must be base64url-encoded ${String(bytesLen)} bytes`);
+      return (
+        buf.length === bytesLen && Buffer.from(buf.toString('base64url')).equals(Buffer.from(s))
+      );
+    },
+    `must be base64url-encoded ${String(bytesLen)} bytes`,
+  );
 
 /** Printer/transport health values shared by heartbeats and acks. */
 export const PRINTER_STATUSES = [
@@ -87,11 +90,7 @@ export const PrinterConfigSchema = z.strictObject({
        *  registry binds it to a configured printer_id at print time. */
       host: bytes(253).refine((s) => !/[\s\x00-\x1f\x7f/\\]/.test(s), 'invalid host'),
       port: z.number().int().min(1).max(65535),
-      connect_timeout_ms: z
-        .number()
-        .int()
-        .min(TRANSPORT_TIMEOUT_MIN)
-        .max(TRANSPORT_TIMEOUT_MAX),
+      connect_timeout_ms: z.number().int().min(TRANSPORT_TIMEOUT_MIN).max(TRANSPORT_TIMEOUT_MAX),
       write_timeout_ms: z.number().int().min(TRANSPORT_TIMEOUT_MIN).max(TRANSPORT_TIMEOUT_MAX),
     }),
     z.strictObject({
@@ -138,7 +137,14 @@ export const PingMessageSchema = z.looseObject({
 
 /** One validated server → agent message (poll item or future WSS frame). */
 export type ServerMessage =
-  | { readonly kind: 'print_job'; readonly envelope: PrintJobEnvelope }
+  | {
+      readonly kind: 'print_job';
+      readonly envelope: PrintJobEnvelope;
+      /** The untouched wire form of `job` — signature verification MUST use
+       *  this, not the zod output (schema defaults would change the
+       *  canonical bytes the server signed). */
+      readonly rawJob: unknown;
+    }
   | { readonly kind: 'config_update'; readonly config: ConfigUpdate }
   | { readonly kind: 'revoke'; readonly reason: string }
   | { readonly kind: 'ping' }
@@ -159,7 +165,9 @@ export function parseServerMessage(raw: unknown): ServerMessage {
     return { kind: 'unsupported_version', envelopeVersion: version };
   }
   const asJob = PrintJobEnvelopeSchema.safeParse(raw);
-  if (asJob.success) return { kind: 'print_job', envelope: asJob.data };
+  if (asJob.success) {
+    return { kind: 'print_job', envelope: asJob.data, rawJob: (raw as { job: unknown }).job };
+  }
   const asConfig = ConfigUpdateSchema.safeParse(raw);
   if (asConfig.success) return { kind: 'config_update', config: asConfig.data };
   const asRevoke = RevokeMessageSchema.safeParse(raw);
