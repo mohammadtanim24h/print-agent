@@ -1,6 +1,7 @@
 import { BrowserWindow } from 'electron';
 import { join } from 'node:path';
 import { getCsp, getWindowOptions } from './security/window-options';
+import { RENDERER_ORIGIN_PREFIX } from './security/renderer-protocol';
 import type { Logger } from './services/logger/logger';
 
 /**
@@ -62,7 +63,7 @@ export function createMainWindow(
   if (env.devServerUrl !== undefined) {
     void window.loadURL(env.devServerUrl);
   } else {
-    void window.loadFile(join(__dirname, '../renderer/index.html'));
+    void window.loadURL(RENDERER_ORIGIN_PREFIX + 'index.html');
   }
 
   return window;

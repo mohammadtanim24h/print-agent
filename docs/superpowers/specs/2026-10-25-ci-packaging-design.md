@@ -129,6 +129,8 @@ Notes:
   running it against dist-release binaries would disable asar integrity).
 - Renderer is packaged-files-only by construction (electron-vite bundles it; no
   dev-server origin exists in the packaged app; no debug ports introduced).
+- Renderer is served over a privileged `app://` custom scheme (fs-level asar reads);
+  the file-protocol fuse stays off.
 - The release workflow runs the **no-listen smoke against the packaged exe**
   (`dist-release/win-unpacked/Print Agent.exe`, same netstat assertion) — the
   packaged binary must prove AC-4, not just `out/`.

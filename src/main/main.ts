@@ -1,8 +1,10 @@
-import { app, ipcMain, safeStorage } from 'electron';
+import { app, ipcMain, protocol, safeStorage } from 'electron';
 import electronLog from 'electron-log/main';
+import { readFile } from 'node:fs/promises';
 import net from 'node:net';
 import { hostname } from 'node:os';
 import { join } from 'node:path';
+import type { CustomScheme } from 'electron';
 import {
   Channel,
   RequestSchemas,
@@ -14,6 +16,13 @@ import { closeDatabase, openDatabase } from './local-store/db';
 import { migrate } from './local-store/migrations';
 import { createSenderGuard } from './security/sender-guard';
 import { installNoListenGuard } from './security/no-listen-guard';
+import {
+  RENDERER_ORIGIN_PREFIX,
+  RENDERER_SCHEME,
+  rendererContentType,
+  rendererSchemePrivileges,
+  resolveRendererUrl,
+} from './security/renderer-protocol';
 import { createIpcRouter } from './ipc/register';
 import { createLogger, getRecentLogLines, setupLogging } from './services/logger/logger';
 import { createSettingsStore } from './services/settings';
@@ -26,6 +35,11 @@ import { createTray, type TrayController } from './tray';
 installNoListenGuard(net.Server.prototype);
 // Sandboxed renderers, process-wide, before app.ready.
 app.enableSandbox();
+// The renderer is served over a privileged custom scheme (see module docs);
+// registration must happen before app.ready.
+protocol.registerSchemesAsPrivileged(
+  rendererSchemePrivileges as unknown as CustomScheme[],
+);
 
 let quitting = false;
 
@@ -42,6 +56,23 @@ async function start(): Promise<void> {
   const log = createLogger('main');
 
   await app.whenReady();
+
+  // Renderer origin (threat model T3): the app:// handler serves bytes only
+  // from out/renderer via fs-level asar reads; traversal and foreign hosts
+  // never resolve (resolveRendererUrl). Dev uses the vite server instead.
+  const rendererRoot = join(app.getAppPath(), 'out/renderer');
+  protocol.handle(RENDERER_SCHEME, async (request) => {
+    const filePath = resolveRendererUrl(rendererRoot, request.url);
+    if (filePath === undefined) return new Response('forbidden', { status: 403 });
+    try {
+      const data = await readFile(filePath);
+      return new Response(new Uint8Array(data), {
+        headers: { 'content-type': rendererContentType(filePath) },
+      });
+    } catch {
+      return new Response('not found', { status: 404 });
+    }
+  });
 
   const devServerUrl = !app.isPackaged ? process.env['ELECTRON_RENDERER_URL'] : undefined;
   if (!app.isPackaged && devServerUrl === undefined) {
@@ -115,12 +146,11 @@ async function start(): Promise<void> {
   });
 
   // Trust boundary: only our own bundled/dev-server renderer may call IPC.
-  const filePrefix = `file:///${app.getAppPath().replace(/\\/g, '/').replace(/\/+$/, '')}/`;
   const guard = createSenderGuard({
     allowedUrlPrefixes:
       devServerUrl !== undefined
-        ? [`${devServerUrl.replace(/\/+$/, '')}/`, filePrefix]
-        : [filePrefix],
+        ? [`${devServerUrl.replace(/\/+$/, '')}/`, RENDERER_ORIGIN_PREFIX]
+        : [RENDERER_ORIGIN_PREFIX],
     log: (message) => {
       log.warn(message);
     },

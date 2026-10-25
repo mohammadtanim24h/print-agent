@@ -40,7 +40,7 @@ describe('ipc contract', () => {
 });
 
 describe('ipc router', () => {
-  const trustedFrame = { senderFrame: { url: 'file:///app/out/renderer/index.html' } };
+  const trustedFrame = { senderFrame: { url: 'app://bundle/index.html' } };
   const schemas = {
     'settings:set-launch-at-login': RequestSchemas[Channel.SetLaunchAtLogin],
   };
@@ -48,7 +48,7 @@ describe('ipc router', () => {
   const router = createIpcRouter({
     guard: {
       assertTrusted(event) {
-        if (event.senderFrame?.url !== 'file:///app/out/renderer/index.html') {
+        if (event.senderFrame?.url !== 'app://bundle/index.html') {
           throw new Error('denied');
         }
       },
@@ -111,7 +111,7 @@ describe('ipc router', () => {
 });
 
 describe('ipc router error serialization', () => {
-  const trustedFrame = { senderFrame: { url: 'file:///app/out/renderer/index.html' } };
+  const trustedFrame = { senderFrame: { url: 'app://bundle/index.html' } };
   const router = createIpcRouter({
     guard: { assertTrusted: () => undefined },
     schemas: { 'settings:set-launch-at-login': RequestSchemas[Channel.SetLaunchAtLogin] },
