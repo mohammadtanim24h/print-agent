@@ -1,13 +1,19 @@
-// AC-4 smoke: launch the built app and assert it opens zero LISTEN sockets.
-// Windows-only (project target). Run after `pnpm build`: `pnpm no-listen`.
-import { spawn } from 'node:child_process';
+// AC-4 smoke: launch the app and assert it opens zero LISTEN sockets.
+// Windows-only (project target).
+//   pnpm no-listen                             — dev electron against out/main
+//   node scripts/no-listen-smoke.mjs <exe>     — a packaged build (release gate)
+// Note: PIDs are matched by image name, so quit any running instance of the
+// same binary before running this (local dev machines may have one in the tray).
+import { execSync, spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
 
 const require = createRequire(import.meta.url);
-const electronExe = require('electron'); // path to electron.exe when run from Node
 const root = dirname(fileURLToPath(import.meta.url));
+const electronExe = process.argv[2] ?? require('electron'); // electron.exe path or packaged exe
+const isDevElectron = basename(electronExe).toLowerCase() === 'electron.exe';
+const imageName = basename(electronExe);
 
 const SETTLE_MS = 7000;
 
@@ -16,38 +22,42 @@ function fail(message) {
   process.exit(1);
 }
 
-function electronPids() {
-  const out = require('node:child_process').execSync(
-    'tasklist /FI "IMAGENAME eq electron.exe" /FO CSV /NH',
-    { encoding: 'utf8' },
-  );
+function appPids() {
+  const out = execSync(`tasklist /FI "IMAGENAME eq ${imageName}" /FO CSV /NH`, {
+    encoding: 'utf8',
+  });
   return new Set(
     out
       .split(/\r?\n/)
-      .filter((l) => l.startsWith('"electron.exe"'))
+      .filter((l) => l.startsWith(`"${imageName}"`))
       .map((l) => l.split('","')[1])
       .filter(Boolean),
   );
 }
 
 function listeningLines() {
-  return require('node:child_process')
-    .execSync('netstat -ano -p tcp', { encoding: 'utf8' })
+  return execSync('netstat -ano -p tcp', { encoding: 'utf8' })
     .split(/\r?\n/)
     .filter((l) => l.includes('LISTENING'));
 }
 
-const child = spawn(electronExe, [join(root, '../out/main/main.js')], {
-  cwd: join(root, '..'),
-  stdio: 'ignore',
-  windowsHide: true,
-});
+const child = spawn(
+  electronExe,
+  // The packaged exe boots its own embedded app; only dev electron needs the
+  // entry script passed explicitly.
+  isDevElectron ? [join(root, '../out/main/main.js')] : [],
+  {
+    cwd: join(root, '..'),
+    stdio: 'ignore',
+    windowsHide: true,
+  },
+);
 
 await new Promise((resolve) => setTimeout(resolve, SETTLE_MS));
 
 try {
-  const pids = electronPids();
-  if (pids.size === 0) fail('no electron processes found — app did not start');
+  const pids = appPids();
+  if (pids.size === 0) fail(`no ${imageName} processes found — app did not start`);
 
   const offenders = listeningLines().filter((line) => {
     const pid = line.trim().split(/\s+/).at(-1);
@@ -57,7 +67,7 @@ try {
   if (offenders.length > 0) {
     fail(`LISTEN sockets found:\n${offenders.join('\n')}`);
   }
-  console.log(`OK: ${pids.size} electron process(es), zero LISTEN sockets (AC-4).`);
+  console.log(`OK: ${pids.size} ${imageName} process(es), zero LISTEN sockets (AC-4).`);
 } finally {
   // /T kills the whole process tree (gpu/renderer helpers included).
   spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
