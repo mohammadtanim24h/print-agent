@@ -187,7 +187,7 @@ Environment overrides (development only — never set these on restaurant PCs):
   `PRINT_AGENT_API_URL=https://staging.example-saas.test pnpm dev`. The compiled
   default is the placeholder `https://print-api.example-saas.test` — **it must
   be replaced with the Laravel team's production URL before release**
-  (release checklist §6, item 3).
+  (release checklist §6, item 4).
 - `ELECTRON_RENDERER_URL` is set by `electron-vite dev` itself (renderer dev
   server); it also forces the window visible and widens the IPC sender guard to
   accept the dev-server origin.
