@@ -3,6 +3,7 @@
   "productName": "Print Agent",
   "version": "0.1.1",
   "private": true,
+  "author": "mohammadtanim24h",
   "description": "Windows x64 Electron print agent for the restaurant SaaS (outbound-only, ESC/POS).",
   "type": "module",
   "main": "./out/main/main.js",
