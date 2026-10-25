@@ -1,6 +1,7 @@
-// Hardens the Electron binary with the ADR P0 fuse set. Run against the
-// packaged binary at release time; running `pnpm fuse:dev` also hardens the
-// local dev binary. Packaging (P8) must repeat this — fuses live in the exe.
+// Hardens the DEV Electron binary with the project fuse set. This script
+// always resolves `require('electron')` — the dev binary. Packaged builds
+// get their fuse set from `electronFuses` in electron-builder.yml; never run
+// this against dist-release binaries (it would disable asar integrity).
 import { flipFuses, FuseV1Options, FuseVersion } from '@electron/fuses';
 import { createRequire } from 'node:module';
 
