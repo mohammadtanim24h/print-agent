@@ -10,7 +10,7 @@ import {
 const cleanPkg = {
   dependencies: { zod: '4.6.7' },
   devDependencies: { vitest: '5.0.5' },
-  pnpm: { onlyBuiltDependencies: ['better-sqlite3', 'electron', 'esbuild'] },
+  pnpm: { onlyBuiltDependencies: ['electron', 'esbuild'] },
 };
 
 const cleanLicenses = {
@@ -61,17 +61,21 @@ describe('exactPinViolations', () => {
 
 describe('buildAllowlistViolations', () => {
   it('passes the pinned allowlist in any order', () => {
-    expect(
-      buildAllowlistViolations({ onlyBuiltDependencies: ['esbuild', 'electron', 'better-sqlite3'] }),
-    ).toEqual([]);
+    expect(buildAllowlistViolations({ onlyBuiltDependencies: ['esbuild', 'electron'] })).toEqual([]);
   });
 
   it('flags additions and removals', () => {
-    expect(buildAllowlistViolations({ onlyBuiltDependencies: ['better-sqlite3', 'electron'] })).toHaveLength(1);
+    expect(buildAllowlistViolations({ onlyBuiltDependencies: ['electron'] })).toHaveLength(1);
     expect(
-      buildAllowlistViolations({ onlyBuiltDependencies: ['better-sqlite3', 'electron', 'esbuild', 'node-gyp'] }),
+      buildAllowlistViolations({ onlyBuiltDependencies: ['electron', 'esbuild', 'node-gyp'] }),
     ).toHaveLength(1);
     expect(buildAllowlistViolations(undefined)).toHaveLength(1);
+  });
+
+  it('rejects better-sqlite3: tarball prebuilds make its build script unnecessary', () => {
+    expect(
+      buildAllowlistViolations({ onlyBuiltDependencies: ['better-sqlite3', 'electron', 'esbuild'] }),
+    ).toHaveLength(1);
   });
 });
 

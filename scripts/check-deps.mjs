@@ -16,7 +16,10 @@ const ALLOWED_LICENSES = new Set([
   'BSD-2-Clause',
   'BSD-3-Clause',
 ]);
-const BUILD_SCRIPT_ALLOWLIST = ['better-sqlite3', 'electron', 'esbuild'];
+// better-sqlite3 is deliberately NOT here: its tarball ships prebuilds/ and
+// lib/binding.js loads them at runtime — no build script is needed, and
+// allowing one would run node-gyp (needs Visual Studio) for nothing.
+const BUILD_SCRIPT_ALLOWLIST = ['electron', 'esbuild'];
 const EXACT_PIN = /^\d+\.\d+\.\d+$/;
 
 /** SPDX expression check: an OR passes if any branch is fully allowed; every
