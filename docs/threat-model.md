@@ -6,7 +6,7 @@ Trust boundaries: (B1) Internet ↔ Agent, (B2) LAN ↔ Agent, (B3) Renderer ↔
 
 Standing mitigations across all threats: outbound-only networking (no listeners),
 zod strict validation at every boundary, Ed25519 device identity, signed jobs,
-DPAPI-protected secrets, signed updates, minimal dependency surface, no dynamic code
+DPAPI-protected secrets, minimal dependency surface, no dynamic code
 execution anywhere (`eval`/`Function`/remote content banned by lint + CLAUDE.md).
 
 ## T1 — Stolen agent credentials (device token / keypair)
@@ -99,13 +99,19 @@ enables rebuild-from-source.
 **Scenario:** attacker serves a malicious update (MitM on update channel, hijacked
 feed, downgrade attack).
 
-| Mitigation                                                                                                  | Notes                                                                        |
-| ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `electron-updater` with publisher signature validation; installer Authenticode-signed; feed over HTTPS only | Addresses GHSA-9jxc-qjr9-vjxq class issues — keep `electron-updater` current |
-| Update feed is versioned, append-only manifest; agent refuses `version <= current` (downgrade protection)   |                                                                              |
-| Staged rollout + server-side kill switch (feed can pin a max version)                                       | Bad release can be halted                                                    |
-| Electron security fuses enabled (runAsNode off, cookie encryption on)                                       |                                                                              |
-| Auto-update optional-with-default-on; enterprise doc explains how a restaurant can pin for compliance       |                                                                              |
+| Mitigation                                                                                                                 | Notes                                                                                                                                        |
+| -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| No update channel exists at all (ADR-14): no auto-updater, no feed — CLAUDE.md rule 11 forbids any update channel that is not signature-verified end to end | The update-feed RCE surface (compromised feed, fake `latest.yml`, MitM'd updater) is eliminated by absence, not by signature validation |
+| Installer distribution is manual: download from the SaaS download page; SHA-256 checksum published with the GitHub Release | Checksum is verified by the release engineer at publish time — a publish-time integrity check, not an end-user cryptographic guarantee      |
+| On-device mitigations unchanged: DPAPI-protected identity store; Electron fuses (RunAsNode off, asar integrity validation on, onlyLoadAppFromAsar); no listening sockets | Limits blast radius if a tampered installer is ever run                              |
+
+**Residual:** accepted and reviewed at ADR-14 — no downgrade protection (installing an
+older installer file simply reverts the version), no kill switch, no staged rollout; a
+broken release is pulled from the download page and restaurants reinstall the previous
+installer (operations.md §3). A malicious or compromised download page serving a
+tampered installer is an honest residual risk — checksum verification is not an
+end-user guarantee. Revisit trigger: SmartScreen becomes an operational support
+burden, or any decision to add an update channel.
 
 ## T7 — Local privilege / data exposure on the cashier PC (secondary)
 
