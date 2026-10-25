@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: deps · lint · typecheck · test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Dependency admission (CLAUDE.md rule 10)
+        run: node scripts/check-deps.mjs
+      - name: SBOM (CycloneDX, uploaded per run)
+        uses: anchore/sbom-action@v0
+        with:
+          format: cyclonedx-json
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+
+  smoke:
+    name: build · fuses · no-listen (AC-4)
+    needs: gate
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm fuse:dev
+      - run: pnpm no-listen

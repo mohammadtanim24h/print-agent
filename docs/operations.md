@@ -179,3 +179,20 @@ Environment overrides (development only — never set these on restaurant PCs):
   server); it also forces the window visible and widens the IPC sender guard to
   accept the dev-server origin.
 
+## 9. CI
+
+Two GitHub Actions workflows (`.github/workflows/`), both on Windows runners:
+
+- **CI** — every PR and every push to `main`: dependency-admission gate
+  (`check-deps.mjs`: license allowlist MIT/Apache-2.0/BSD/ISC, exact pins,
+  build-script allowlist — CLAUDE.md rule 10), CycloneDX SBOM (uploaded as a
+  workflow artifact per run), lint, typecheck, full test suite (renderer fuzz
+  corpus included), then build + dev fuses + the `no-listen` smoke
+  (zero LISTEN sockets, AC-4).
+- **Release** — a pushed `vX.Y.Z` tag: full gate again, electron-builder NSIS
+  package with production fuses, `no-listen` smoke against the packaged exe,
+  SHA-256 checksum, GitHub Release with installer + checksum (§6).
+
+Artifacts: installers live on GitHub Releases; every CI run keeps a CycloneDX
+SBOM artifact (90-day default retention).
+
