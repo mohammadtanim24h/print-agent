@@ -1,4 +1,6 @@
 import { resolve, sep } from 'node:path';
+// Type-only import: erased at runtime, so this module stays electron-free for vitest.
+import type { CustomScheme } from 'electron';
 
 /**
  * The renderer is served over a privileged custom scheme instead of file://:
@@ -8,10 +10,11 @@ import { resolve, sep } from 'node:path';
  * are core Electron and fuse-independent.
  */
 export const RENDERER_SCHEME = 'app';
-export const RENDERER_ORIGIN_PREFIX = 'app://bundle/';
+export const RENDERER_HOST = 'bundle';
+export const RENDERER_ORIGIN_PREFIX = `app://${RENDERER_HOST}/`;
 
 /** Must be passed to protocol.registerSchemesAsPrivileged BEFORE app.ready. */
-export const rendererSchemePrivileges = [
+export const rendererSchemePrivileges: CustomScheme[] = [
   {
     scheme: RENDERER_SCHEME,
     privileges: {
@@ -21,7 +24,7 @@ export const rendererSchemePrivileges = [
       codeCache: true,
     },
   },
-] as const;
+];
 
 /**
  * Pure URL→disk-path resolution for `app://bundle/<path>`; returns undefined
@@ -38,7 +41,8 @@ export function resolveRendererUrl(
   } catch {
     return undefined;
   }
-  if (url.protocol !== `${RENDERER_SCHEME}:` || url.hostname !== 'bundle') return undefined;
+  if (url.protocol !== `${RENDERER_SCHEME}:` || url.hostname !== RENDERER_HOST)
+    return undefined;
   if (url.pathname.includes('\0')) return undefined;
   // decodeURIComponent: standard-scheme URLs percent-encode path segments.
   let relative: string;

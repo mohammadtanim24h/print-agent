@@ -4,7 +4,6 @@ import { readFile } from 'node:fs/promises';
 import net from 'node:net';
 import { hostname } from 'node:os';
 import { join } from 'node:path';
-import type { CustomScheme } from 'electron';
 import {
   Channel,
   RequestSchemas,
@@ -37,9 +36,7 @@ installNoListenGuard(net.Server.prototype);
 app.enableSandbox();
 // The renderer is served over a privileged custom scheme (see module docs);
 // registration must happen before app.ready.
-protocol.registerSchemesAsPrivileged(
-  rendererSchemePrivileges as unknown as CustomScheme[],
-);
+protocol.registerSchemesAsPrivileged(rendererSchemePrivileges);
 
 let quitting = false;
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { resolve } from 'node:path';
+import { resolve, sep } from 'node:path';
 import {
   RENDERER_ORIGIN_PREFIX,
   RENDERER_SCHEME,
@@ -50,7 +50,7 @@ describe('resolveRendererUrl', () => {
     ]) {
       const result = resolveRendererUrl(root, url);
       if (result !== undefined) {
-        expect(result.startsWith(root + '\\') || result === root).toBe(true);
+        expect(result.startsWith(root + sep) || result === root).toBe(true);
       }
     }
   });
@@ -84,8 +84,10 @@ describe('rendererSchemePrivileges', () => {
   it('registers the app scheme as standard/secure with fetch and code cache', () => {
     expect(rendererSchemePrivileges).toHaveLength(1);
     const entry = rendererSchemePrivileges[0];
+    expect(entry).toBeDefined();
+    if (!entry) return;
     expect(entry.scheme).toBe(RENDERER_SCHEME);
-    expect(Object.keys(entry.privileges).sort()).toEqual([
+    expect(Object.keys(entry.privileges ?? {}).sort()).toEqual([
       'codeCache',
       'standard',
       'secure',
@@ -100,7 +102,10 @@ describe('rendererSchemePrivileges', () => {
   });
 
   it('grants no extra privileges beyond the four required', () => {
-    const privileges = rendererSchemePrivileges[0].privileges as Record<string, unknown>;
+    const privileges = (rendererSchemePrivileges[0]?.privileges ?? {}) as Record<
+      string,
+      unknown
+    >;
     expect(privileges['bypassCSP']).toBeUndefined();
     expect(privileges['corsEnabled']).toBeUndefined();
     expect(privileges['allowServiceWorkers']).toBeUndefined();
