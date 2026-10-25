@@ -1,30 +1,64 @@
-import type { SettingsFileAdapter } from './services/settings';
+import { readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { basename, dirname, join } from 'node:path';
 import type { SecretKv } from './cloud-client/secret-store';
 
 /**
- * `SecretKv` over a `{ [key: string]: string }` JSON file. The injected
- * `SettingsFileAdapter` writes atomically (tmp file + rename), so one key =
- * one whole-file rewrite — the all-or-nothing single-record requirement of
- * the identity store (secret-store.ts) holds even across a crash mid-write.
+ * `SecretKv` over a `{ [key: string]: string }` JSON file, persisted
+ * SYNCHRONOUSLY (tmp file + rename on the same volume). Callers rely on
+ * durability-before-return: `SecretStore.save` (secret-store.ts) is
+ * sync-void, and the poller's token-rotation path (§7 note 8) treats a
+ * thrown save as "on-disk token is superseded — poison refresh". An async
+ * write chain would let save() return before the bytes hit disk, so a crash
+ * in the persistence window would replay a rotated refresh token and get the
+ * device revoked. One key = one whole-file rewrite: the all-or-nothing
+ * single-record requirement holds across a crash mid-write (rename is
+ * atomic on Windows and POSIX).
  *
  * Reads are served from an in-memory cache loaded once at creation; writes
- * update the cache synchronously and persist through a serialized write
- * chain. If the file is corrupt or missing, the kv starts empty: an unreadable
- * identity presents as "unpaired" (fail-safe — no plaintext ever leaks and
- * re-pairing is always possible).
+ * hit disk FIRST and only then update the cache, so the cache never claims a
+ * value that is not durable. If the file is corrupt or missing, the kv starts
+ * empty: an unreadable identity presents as "unpaired" (fail-safe — no
+ * plaintext ever leaks and re-pairing is always possible).
  */
-export interface JsonFileKv extends SecretKv {
-  /** Resolves when every queued persist has settled (durability seam for tests and shutdown). */
-  flush(): Promise<void>;
+
+/** Injectable sync seams over the filesystem (test double entry points).
+ *  Defaults do direct `node:fs` I/O. */
+export interface JsonFileKvSeams {
+  readSync?(filePath: string): string | null;
+  writeSync?(filePath: string, contents: string): void;
 }
 
-export async function createJsonFileKv(
-  filePath: string,
-  adapter: SettingsFileAdapter,
-  onError?: (err: unknown) => void,
-): Promise<JsonFileKv> {
+function defaultReadSync(filePath: string): string | null {
+  try {
+    return readFileSync(filePath, 'utf8');
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw err;
+  }
+}
+
+function defaultWriteSync(filePath: string, contents: string): void {
+  // Temp file in the SAME directory: rename is atomic within one volume.
+  const tmpPath = join(dirname(filePath), `.${basename(filePath)}.${process.pid}.tmp`);
+  try {
+    writeFileSync(tmpPath, contents);
+    renameSync(tmpPath, filePath);
+  } catch (err) {
+    try {
+      rmSync(tmpPath, { force: true }); // best-effort cleanup of the orphaned tmp file
+    } catch {
+      // Nothing sensible left to do — the original error is what matters.
+    }
+    throw err;
+  }
+}
+
+export function createJsonFileKv(filePath: string, seams: JsonFileKvSeams = {}): SecretKv {
+  const readSync = seams.readSync ?? defaultReadSync;
+  const writeSync = seams.writeSync ?? defaultWriteSync;
+
   let cache: Record<string, string> = {};
-  const raw = await adapter.read(filePath);
+  const raw = readSync(filePath);
   if (raw !== null) {
     try {
       const parsed: unknown = JSON.parse(raw) as unknown;
@@ -40,33 +74,22 @@ export async function createJsonFileKv(
     }
   }
 
-  // Serialize persists: concurrent set/delete must never interleave the
-  // tmp+rename sequences of two writes. The chain itself never rejects.
-  let writeTail: Promise<void> = Promise.resolve();
-  const persist = (): void => {
-    writeTail = writeTail
-      .then(() => adapter.writeAtomic(filePath, JSON.stringify(cache)))
-      .catch((err: unknown) => {
-        onError?.(err); // cache keeps the value; disk may be stale (fail-safe on restart)
-      });
-  };
-
   return {
     get: (key) => cache[key] ?? null,
+    // Persist first, mutate the cache second: if the write throws, the cache
+    // still reflects exactly what is on disk (a failed set/delete claims nothing).
     set(key, value) {
-      cache = { ...cache, [key]: value };
-      persist();
+      const next = { ...cache, [key]: value };
+      writeSync(filePath, JSON.stringify(next));
+      cache = next;
     },
     delete(key) {
       if (!(key in cache)) return;
       // Rest-destructure instead of `delete` (no dynamic delete, still one rewrite).
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars -- _removed is the omitted entry
       const { [key]: _removed, ...rest } = cache;
+      void _removed;
+      writeSync(filePath, JSON.stringify(rest));
       cache = rest;
-      persist();
-    },
-    flush() {
-      return writeTail.then(() => undefined);
     },
   };
 }

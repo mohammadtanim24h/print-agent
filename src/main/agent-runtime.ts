@@ -145,11 +145,10 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
 
   const fileAdapter: SettingsFileAdapter =
     deps.env?.adapterOverride ?? createNodeSettingsAdapter();
-  const kv: SecretKv =
-    deps.env?.kvOverride ??
-    (await createJsonFileKv(deps.paths.identityKvFile, fileAdapter, (err) => {
-      log.error(`runtime: identity kv persist failed: ${describeErr(err)}`);
-    }));
+  // Sync-persisting kv (secret-kv.ts): save() failures now THROW, so the
+  // token-rotation/pairing callers observe them directly (poller poisons
+  // refresh; pairing fails closed) instead of an onError swallow.
+  const kv: SecretKv = deps.env?.kvOverride ?? createJsonFileKv(deps.paths.identityKvFile);
   const secrets: SecretStore = createSafeStorageSecretStore(kv, deps.safeStorage);
   const transport =
     deps.env?.transportOverride ??
