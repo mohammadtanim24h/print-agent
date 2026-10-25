@@ -6,7 +6,11 @@ release engineers.
 ## 1. Installation (per restaurant)
 
 1. Download installer (`PrintAgent-Setup-x.y.z.exe`) from the SaaS download page
-   (Authenticode-signed; verify signature before run).
+   (unsigned — verify the SHA-256 checksum from the GitHub Release before run).
+   **SmartScreen note:** Windows shows "Windows protected your PC / Unknown
+   publisher" on first run. This is expected for our unsigned installer
+   (ADR-14): choose **More info → Run anyway**. It appears on every install
+   until code signing is adopted.
 2. Run installer (per-user install, no admin required unless the spooler transport is
    used — driver installation is a separate vendor step).
 3. Launch → tray icon → pairing wizard → enter pairing code from web app
@@ -31,16 +35,19 @@ Site network prerequisites: outbound TCP 443 (wss+https) to `*.saas-host`; outbo
 
 ## 3. Updates
 
-| Aspect      | Policy                                                                                                         |
-| ----------- | -------------------------------------------------------------------------------------------------------------- |
-| Channel     | Stable only; staged rollout 5% → 25% → 100% over 72 h                                                          |
-| Feed        | HTTPS feed, append-only `latest.yml`, publisher-signed installer                                               |
-| Downgrades  | Refused by agent (T6)                                                                                          |
-| Kill switch | Feed can pin `max_version`; support can freeze a broken release                                                |
-| Pre-req     | Electron major upgrades (8-week cadence) tested against our contract test suite before release-train inclusion |
+There is **no auto-updater** (ADR-14). New versions ship as
+`PrintAgent-Setup-x.y.z.exe` on the SaaS download page (built by the Release
+workflow from a `vX.Y.Z` tag); updating means running the new installer.
 
-Rollback procedure: kill switch to previous manifest + silent reinstall of prior
-signed installer (downgrade-guard override is a support-tool flag, never a default).
+Consequences of the unsigned manual model, accepted by ADR-14:
+
+- SmartScreen warns "unknown publisher" on every install (§1) — expected.
+- Downgrades are not refused: installing an older installer file simply reverts
+  the version.
+- There is no kill switch or staged rollout. A broken release is pulled from the
+  download page and restaurants reinstall the previous installer.
+- Electron major upgrades are still tested against the contract test suite
+  before entering a release (§6).
 
 ## 4. Diagnostics & support runbooks
 
