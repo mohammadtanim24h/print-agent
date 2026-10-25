@@ -13,8 +13,8 @@ await flipFuses(electronExe, {
   [FuseV1Options.EnableCookieEncryption]: true,
   [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,
   [FuseV1Options.EnableNodeCliInspectArguments]: false, // no inspect port in prod (AC-4)
-  // Requires asar + embedded integrity headers, i.e. the packaged app
-  // (electron-builder enables it at P8). Turning it on unpackaged breaks startup.
+  // Requires asar + embedded integrity headers. Packaged builds set this via
+  // `electronFuses` in electron-builder.yml (keep the two sets in sync).
   [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: false,
   [FuseV1Options.GrantFileProtocolExtraPrivileges]: false,
   [FuseV1Options.GrantNetworkProtocolExtraPrivileges]: false,
