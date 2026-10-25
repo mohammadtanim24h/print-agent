@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createPrivateKey } from 'node:crypto';
 import { createAgentRuntime, type AgentRuntime, type RuntimeDeps } from '../src/main/agent-runtime';
 import { openDatabase, closeDatabase } from '../src/main/local-store/db';
 import type { SqliteDatabase } from '../src/main/local-store/db';
@@ -20,10 +21,16 @@ import type {
   ServerKeysResponse,
 } from '../src/main/cloud-client/schemas';
 import { CloudError } from '../src/main/cloud-client/errors';
-import { generateDeviceKeyPair } from '../src/main/cloud-client/envelope-sig';
+import {
+  generateDeviceKeyPair,
+  signJobForTest,
+} from '../src/main/cloud-client/envelope-sig';
+import { ENVELOPE_VERSION } from '../src/main/cloud-client/schemas';
 import type { TransportRegistry } from '../src/main/transport/registry';
+import { TransportError } from '../src/main/transport/errors';
 import { memoryAdapter } from './helpers/memory-adapter';
 import { makeDraft } from './helpers/printers';
+import { makeDoc } from './helpers/render';
 
 /**
  * AgentRuntime tests: fake transport + kv + safeStorage over an in-memory
@@ -134,9 +141,56 @@ function stubTransports(): TransportRegistry {
   };
 }
 
+function failingTransports(): TransportRegistry {
+  return {
+    forPrinter: () => ({
+      open: () => Promise.reject(new TransportError('host_unreachable', 'stub: unreachable')),
+      write: () => Promise.reject(new TransportError('write_failed', 'stub: not connected')),
+      close: () => Promise.resolve(),
+      healthCheck: () => Promise.reject(new TransportError('host_unreachable', 'stub: unreachable')),
+    }),
+  };
+}
+
 // ---- signed envelope fixture --------------------------------------------------
 
 const serverKeys = generateDeviceKeyPair();
+const serverPrivateKey = createPrivateKey({
+  key: Buffer.from(serverKeys.privateKeyPkcs8, 'base64url'),
+  format: 'der',
+  type: 'pkcs8',
+});
+
+let jobSeq = 0;
+
+/** A print_job envelope whose signature verifies against the paired pubkey. */
+function signedJobEnvelope(
+  printerId: string,
+  jobOverrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  jobSeq += 1;
+  const job = {
+    job_id: makeUuid(100 + jobSeq),
+    idempotency_key: `ord-${String(jobSeq)}`,
+    tenant_id: TENANT_ID,
+    restaurant_id: RESTAURANT_ID,
+    printer_id: printerId,
+    priority: 5,
+    copies: 1,
+    doc_type: 'customer_receipt',
+    doc_version: 1,
+    issued_at: '2026-10-01T10:00:00.000Z',
+    expires_at: '2030-01-01T10:00:00.000Z',
+    payload: makeDoc(),
+    ...jobOverrides,
+  };
+  return {
+    envelope_version: ENVELOPE_VERSION,
+    type: 'print_job',
+    job,
+    sig: signJobForTest(job, serverPrivateKey),
+  };
+}
 
 // ---- db seeding ----------------------------------------------------------------
 
@@ -248,6 +302,36 @@ async function makeRuntime(
   });
   runtimes.push(runtime);
   return { runtime, transport, db, settings, log };
+}
+
+/** Manual scheduler: collects timers; tick() fires only sub-second timers
+ *  (poll cadence, engine backoffs) so the ack buffer's 5 s delay timer never
+ *  auto-fires — retained acks can then only reach the wire via flushNow. */
+function manualSchedule(): {
+  schedule: (fn: () => void, delayMs: number) => () => void;
+  tick: () => Promise<void>;
+} {
+  const timers: Array<{ fn: () => void; delayMs: number; cancelled: boolean }> = [];
+  const settle = async (ticks = 8): Promise<void> => {
+    for (let i = 0; i < ticks; i += 1) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+  };
+  return {
+    schedule: (fn, delayMs) => {
+      const t = { fn, delayMs, cancelled: false };
+      timers.push(t);
+      return () => {
+        t.cancelled = true;
+      };
+    },
+    async tick() {
+      const due = timers.filter((t) => !t.cancelled && t.delayMs < 1_000);
+      for (const t of due) t.cancelled = true;
+      for (const t of due) t.fn();
+      await settle();
+    },
+  };
 }
 
 // ---- tests ---------------------------------------------------------------------
@@ -382,5 +466,158 @@ describe('AgentRuntime diagnostics', () => {
   it('recentLogs delegates to the logger ring', async () => {
     const { runtime } = await makeRuntime();
     expect(runtime.diagnostics.recentLogs()).toEqual([]);
+  });
+});
+
+describe('cloud event plumbing', () => {
+  it('a polled signed job becomes an engine row and produces acks on the wire', async () => {
+    const { runtime, transport } = await makeRuntime();
+    runtime.start();
+    await runtime.pair(PAIRING_CODE);
+    const printer = await runtime.printers.add(makeDraft());
+    transport.queuedJobs.push(signedJobEnvelope(printer.config.printerId));
+    await vi.waitFor(() => {
+      const jobs = runtime.jobs.list();
+      expect(jobs).toHaveLength(1);
+      expect(['completed', 'failed']).toContain(jobs[0]?.status);
+    });
+    await vi.waitFor(() => {
+      // Batches may flush incrementally — wait until the accepted AND the
+      // terminal ack both reached the wire before asserting on the set.
+      const statuses = transport.acks.flatMap((b) => b.acks.map((a) => a.status));
+      expect(statuses).toContain('accepted');
+      // Stub transport hand-off succeeds: 'completed' means hand-off, never 'printed' (§3.1).
+      expect(statuses).toContain('completed');
+    });
+    const statuses = transport.acks.flatMap((b) => b.acks.map((a) => a.status));
+    expect(statuses).not.toContain('rejected');
+  });
+
+  it('heartbeat sample reports queue depth and printer health', async () => {
+    const { runtime, transport } = await makeRuntime();
+    runtime.start();
+    await runtime.pair(PAIRING_CODE);
+    const printer = await runtime.printers.add(makeDraft());
+    await vi.waitFor(() => {
+      expect(transport.heartbeats.length).toBeGreaterThanOrEqual(1);
+    });
+    const sample = transport.heartbeats.at(-1);
+    expect(sample).toMatchObject({
+      connection: 'poll',
+      queue_depth: 0,
+      printers: [{ printer_id: printer.config.printerId, health: 'unknown' }],
+    });
+    expect(sample?.uptime_s).toBeGreaterThanOrEqual(0);
+  });
+
+  it('a config_update in the poll response persists to cloud_config', async () => {
+    const { runtime, transport, db } = await makeRuntime();
+    runtime.start();
+    await runtime.pair(PAIRING_CODE);
+    transport.queuedJobs.push({ type: 'config_update', config_version: 7, printers: [] });
+    await vi.waitFor(() => {
+      const row = db.prepare('SELECT config_version FROM cloud_config').get();
+      expect(row).toMatchObject({ config_version: 7 });
+    });
+  });
+
+  it('revocation wipes local state and surfaces the revoked snapshot', async () => {
+    const { runtime, transport, settings } = await makeRuntime();
+    runtime.start();
+    await runtime.pair(PAIRING_CODE);
+    await runtime.printers.add(makeDraft());
+    transport.failNextPoll = new CloudError(
+      'unauthorized',
+      'device revoked',
+      undefined,
+      'device_revoked',
+    );
+    await vi.waitFor(async () => {
+      expect((await runtime.snapshot()).connection).toBe('revoked');
+    });
+    expect((await runtime.snapshot()).identity).toBeNull();
+    expect(runtime.printers.list()).toEqual([]);
+    expect(runtime.jobs.list()).toEqual([]);
+    expect(settings.get().pairedAt).toBeNull();
+    expect(runtime.agentInfo().connectionState).toBe('revoked');
+  });
+
+  it('retained acks drain when the client transitions back to online (flushNow)', async () => {
+    const sched = manualSchedule();
+    const { runtime, transport } = await makeRuntime({ schedule: sched.schedule });
+    runtime.start();
+    await runtime.pair(PAIRING_CODE);
+    await sched.tick(); // cycle 1 → online
+    expect((await runtime.snapshot()).connection).toBe('online');
+
+    const printer = await runtime.printers.add(makeDraft());
+    transport.queuedJobs.push(signedJobEnvelope(printer.config.printerId));
+    await sched.tick(); // cycle 2 → job submitted; acks retained (the 5 s delay timer never fires)
+    expect(runtime.jobs.list()).toHaveLength(1);
+    expect(transport.acks).toHaveLength(0);
+
+    transport.failNextPoll = new CloudError('network', 'link down');
+    await sched.tick(); // cycle 3 → offline
+    expect((await runtime.snapshot()).connection).toBe('offline');
+
+    transport.failNextPoll = null;
+    await sched.tick(); // cycle 4 → online transition → flushNow drains the retained acks
+    expect(transport.acks.length).toBeGreaterThanOrEqual(1);
+    expect(transport.acks.flatMap((b) => b.acks.map((a) => a.status))).toContain('accepted');
+  });
+
+  it('reprint creates a new row with reprint_of set and refuses retrying completed jobs', async () => {
+    const { runtime, transport, db } = await makeRuntime();
+    runtime.start();
+    await runtime.pair(PAIRING_CODE);
+    const printer = await runtime.printers.add(makeDraft());
+    transport.queuedJobs.push(signedJobEnvelope(printer.config.printerId));
+    await vi.waitFor(() => {
+      const jobs = runtime.jobs.list();
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0]?.status).toBe('completed');
+    });
+    const original = runtime.jobs.list()[0];
+    if (original === undefined) throw new Error('unreachable: original job missing');
+
+    const reprinted = await runtime.jobs.reprint(original.jobId);
+    expect(reprinted.jobId).not.toBe(original.jobId);
+    expect(reprinted.idempotencyKey).toContain('#reprint-');
+    expect(reprinted.destinationPrinterName).toBe('Kitchen');
+    await vi.waitFor(() => {
+      expect(
+        runtime.jobs.list().some((j) => j.jobId === reprinted.jobId && j.status === 'completed'),
+      ).toBe(true);
+    });
+    expect(db.prepare('SELECT reprint_of FROM jobs WHERE id = ?').get(reprinted.jobId)).toMatchObject(
+      { reprint_of: original.jobId },
+    );
+
+    // Completed jobs are not retryable — the typed engine error propagates.
+    await expect(runtime.jobs.retry(reprinted.jobId)).rejects.toThrow(/only failed jobs/);
+  });
+
+  it('retry re-queues a failed job through a fresh attempt cycle', async () => {
+    const { runtime, transport } = await makeRuntime({ transports: failingTransports() });
+    runtime.start();
+    await runtime.pair(PAIRING_CODE);
+    const printer = await runtime.printers.add(makeDraft());
+    transport.queuedJobs.push(signedJobEnvelope(printer.config.printerId));
+    await vi.waitFor(() => {
+      const jobs = runtime.jobs.list();
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0]?.status).toBe('failed');
+    });
+    const failed = runtime.jobs.list()[0];
+    if (failed === undefined) throw new Error('unreachable: failed job missing');
+
+    const retried = await runtime.jobs.retry(failed.jobId);
+    expect(retried.jobId).toBe(failed.jobId);
+    // The retry exhausts its fresh attempt budget against the failing transport.
+    await vi.waitFor(() => {
+      const record = runtime.jobs.list()[0];
+      expect(record?.status).toBe('failed');
+      expect(record?.attempts).toBe(3);
+    });
   });
 });

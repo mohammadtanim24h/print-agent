@@ -8,6 +8,10 @@ import type { JobAck } from './jobs/types';
 export interface AckBuffer {
   add(ack: JobAck): void;
   pendingCount(): number;
+  /** Immediate flush without stopping: the runtime calls this when the cloud
+   *  client transitions TO 'online' so acks retained during an outage drain
+   *  on reconnect instead of waiting out the delay timer. */
+  flushNow(): void;
   /** Final flush; resolves after the attempt (even if it failed — callers
    *  must not block shutdown on a dead network). */
   stop(): Promise<void>;
@@ -84,6 +88,11 @@ export function createAckBuffer(options: AckBufferOptions): AckBuffer {
       else armTimer();
     },
     pendingCount: () => queue.length,
+    flushNow() {
+      timer?.();
+      timer = null;
+      flush();
+    },
     async stop() {
       timer?.();
       timer = null;

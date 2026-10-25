@@ -76,6 +76,41 @@ describe('AckBuffer', () => {
     expect(env.submitted.length).toBe(1);
   });
 
+  it('flushNow() flushes without firing (or waiting for) the delay timer', async () => {
+    const env = makeEnv();
+    const buf = createAckBuffer({ submitAcks: env.submitAcks, schedule: env.schedule, maxBatch: 100, maxDelayMs: 60_000, envelopeVersion: 1 });
+    buf.add(ack('a'));
+    buf.add(ack('b'));
+    expect(env.submitted.length).toBe(0);
+    buf.flushNow();
+    await vi.waitFor(() => expect(env.submitted.length).toBe(1));
+    expect(env.submitted[0]?.acks.map((a) => a.job_id)).toEqual(['a', 'b']);
+    expect(buf.pendingCount()).toBe(0);
+    // The delay timer was armed but never fired — flushNow must not depend on it.
+    for (const timer of env.timers) timer(); // firing the stale timer afterwards is a no-op
+    expect(env.submitted.length).toBe(1);
+  });
+
+  it('flushNow() after a flush failure retains and re-delivers the batch', async () => {
+    const env = makeEnv();
+    let fail = true;
+    const submitAcks = vi.fn(async (batch: AckBatch) => {
+      if (fail) throw new Error('down');
+      env.submitted.push(batch);
+    });
+    const buf = createAckBuffer({ submitAcks, schedule: env.schedule, maxBatch: 1, maxDelayMs: 60_000, envelopeVersion: 1 });
+    buf.add(ack('a'));
+    await vi.waitFor(() => expect(submitAcks).toHaveBeenCalledTimes(1));
+    // The failed chunk must be back in the queue before flushing again.
+    await vi.waitFor(() => expect(buf.pendingCount()).toBe(1));
+    fail = false;
+    buf.flushNow();
+    await vi.waitFor(() => expect(submitAcks).toHaveBeenCalledTimes(2));
+    expect(env.submitted.length).toBe(1); // only the successful attempt is recorded
+    expect(env.submitted[0]?.acks.map((a) => a.job_id)).toEqual(['a']);
+    expect(buf.pendingCount()).toBe(0);
+  });
+
   it('drains a queue larger than the wire cap in chunks that each satisfy AckBatchSchema', async () => {
     const env = makeEnv();
     let fail = true;

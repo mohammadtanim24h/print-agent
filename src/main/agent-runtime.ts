@@ -10,7 +10,12 @@ import {
   type SecretStore,
 } from './cloud-client/secret-store';
 import { CloudError } from './cloud-client/errors';
-import type { AgentTransport, CloudClient, ConnectionState } from './cloud-client/types';
+import type {
+  AgentTransport,
+  CloudClient,
+  ConnectionState,
+  HeartbeatSample,
+} from './cloud-client/types';
 import { createJobEngine, type JobEngine } from './jobs/engine';
 import type { AckSink } from './jobs/types';
 import { createPrinterStore, type PrinterStore } from './printers/store';
@@ -205,11 +210,41 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
     ...(deps.cloud.pollIntervalMs !== undefined
       ? { pollIntervalMs: deps.cloud.pollIntervalMs }
       : {}),
+    heartbeatSample: () => heartbeatSample(),
+    onRevoked: () => {
+      void wipeLocalState();
+    },
   });
 
   let state: ConnectionState = client.state();
   client.on('state', (next) => {
+    // Acks retained while offline drain the moment we are back online —
+    // never wait out the buffer's delay timer after a reconnect.
+    if (next === 'online' && state !== 'online') ackBuffer.flushNow();
     state = next;
+  });
+
+  // Validated + scope/-signature-checked by the poller — no re-validation here.
+  client.on('job', (envelope) => {
+    const job = envelope.job;
+    engine.submit({
+      jobId: job.job_id,
+      idempotencyKey: job.idempotency_key,
+      tenantId: job.tenant_id,
+      restaurantId: job.restaurant_id,
+      printerId: job.printer_id,
+      priority: job.priority,
+      copies: job.copies,
+      docType: job.doc_type,
+      docVersion: job.doc_version,
+      expiresAt: Date.parse(job.expires_at),
+      payload: job.payload,
+    });
+  });
+
+  // Persist-only this phase; FR-16 (config application) is a later phase.
+  client.on('config', (config) => {
+    configStore.save(config);
   });
 
   // ---- lifecycle -----------------------------------------------------------
@@ -314,6 +349,20 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
 
   function agentInfo() {
     return { name: 'print-agent', version: deps.agentVersion, connectionState: state };
+  }
+
+  /** §3.2 in-cycle heartbeat facts; health stays 'unknown' until status
+   *  polling lands (R-VAL-3). */
+  function heartbeatSample(): HeartbeatSample {
+    return {
+      uptime_s: Math.floor(process.uptime()),
+      queue_depth: engine.pendingCount(),
+      connection: 'poll',
+      printers: printers.list().map((p) => ({
+        printer_id: p.printerId,
+        health: 'unknown' as const,
+      })),
+    };
   }
 
   // ---- printers ------------------------------------------------------------
