@@ -20,7 +20,7 @@ export interface AckBuffer {
 export interface AckBufferOptions {
   submitAcks(batch: AckBatch): Promise<void>;
   schedule(fn: () => void, delayMs: number): () => void;
-  maxBatch?: number;   // default 20 (AckBatchSchema caps at 100)
+  maxBatch?: number;   // default 20; wire-chunked to MAX_ACKS_PER_BATCH in flush()
   maxDelayMs?: number; // default 5_000
   maxQueued?: number;  // default 500
   envelopeVersion?: typeof ENVELOPE_VERSION; // default ENVELOPE_VERSION
@@ -52,11 +52,13 @@ export function createAckBuffer(options: AckBufferOptions): AckBuffer {
   });
 
   function flush(): void {
-    // Drain in wire-capped chunks: a backlog larger than the AckBatchSchema
-    // cap (100) submitted in one call would fail zod parsing in the transport
-    // and re-queue forever. Each chunk is chained on the previous so delivery
+    // Drain in wire-capped chunks: a backlog larger than MAX_ACKS_PER_BATCH
+    // submitted in one call would fail zod parsing in the transport and
+    // re-queue forever. Each chunk is chained on the previous so delivery
     // stays ordered; stop() awaits the last assignment to `inFlight`.
-    const maxChunk = Math.min(maxBatch, MAX_ACKS_PER_BATCH);
+    // Math.max(1, …) guards a degenerate maxBatch (≤ 0): without it
+    // splice(0, 0) never empties the queue and flush loops forever.
+    const maxChunk = Math.max(1, Math.min(maxBatch, MAX_ACKS_PER_BATCH));
     while (queue.length > 0) {
       const batch = queue.splice(0, maxChunk);
       inFlight = inFlight

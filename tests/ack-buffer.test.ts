@@ -117,6 +117,17 @@ describe('AckBuffer', () => {
     expect(buf.pendingCount()).toBe(0);
   });
 
+  it('tolerates a degenerate maxBatch of 0 — stop() still delivers every ack', async () => {
+    const env = makeEnv();
+    const buf = createAckBuffer({ submitAcks: env.submitAcks, schedule: env.schedule, maxBatch: 0, maxDelayMs: 5_000, envelopeVersion: 1 });
+    buf.add(ack('a'));
+    buf.add(ack('b'));
+    buf.add(ack('c'));
+    await buf.stop();
+    expect(env.submitted.flatMap((b) => b.acks.map((a) => a.job_id))).toEqual(['a', 'b', 'c']);
+    expect(buf.pendingCount()).toBe(0);
+  });
+
   it('drains a queue larger than the wire cap in chunks that each satisfy AckBatchSchema', async () => {
     const env = makeEnv();
     let fail = true;

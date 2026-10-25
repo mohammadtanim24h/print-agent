@@ -71,5 +71,8 @@ describe('view-model mappers', () => {
       .toMatchObject({ ok: false, reason: 'expired' });
     expect(mapPairFailure(new CloudError('request_rejected', 'status 422: bad_code')))
       .toMatchObject({ ok: false, reason: 'invalid_code' });
+    // Rejection with no machine-readable serverCode at all → generic invalid_code.
+    expect(mapPairFailure(new CloudError('request_rejected', 'status 422')))
+      .toMatchObject({ ok: false, reason: 'invalid_code' });
   });
 });
