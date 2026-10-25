@@ -3,7 +3,6 @@ import { useAsync, useService } from '../../services/service-context';
 import type { PrinterDraft, PrinterInfo, PrinterProfile, TestPrintResult } from '../../services/types';
 import {
   Card,
-  DemoBadge,
   EmptyState,
   ErrorBanner,
   Field,
@@ -18,15 +17,15 @@ type TestOutcome =
   | { readonly kind: 'ok' | 'fail'; readonly text: string }
   | { readonly kind: 'error'; readonly text: string };
 
+type Capabilities = PrinterProfile['capabilities'];
+
 // Mirrors PRINTER_ROLES in main/printers/profile (a value import would drag
 // node:net/zod into the renderer bundle — hoist to shared/ if this grows).
 const PRINTER_ROLES = ['kitchen', 'receipt', 'bar', 'custom'] as const;
 
-// TODO(wiring Task 10): real add/edit form for role, paper width, physical
-// print metrics and capabilities. Until then the form collects name/role/
-// TCP endpoint and applies these fixed defaults for the remaining required
-// profile fields (values within the schema bounds).
-const DEFAULT_DRAFT_EXTRAS: Omit<PrinterDraft, 'name' | 'role' | 'transport'> = {
+const emptyDraft: PrinterDraft = {
+  name: '',
+  role: 'kitchen',
   paperWidthMm: 80,
   printableDots: 576,
   charsPerLine: 48,
@@ -37,14 +36,29 @@ const DEFAULT_DRAFT_EXTRAS: Omit<PrinterDraft, 'name' | 'role' | 'transport'> = 
     statusPolling: false,
     cashDrawer: false,
   },
-};
-
-const emptyDraft: PrinterDraft = {
-  name: '',
-  role: 'kitchen',
-  ...DEFAULT_DRAFT_EXTRAS,
   transport: { kind: 'tcp_raw', host: '', port: 9100 },
 };
+
+/** Sensible starting points per paper width. They only prefill the form —
+ *  the real per-printer values stay editable (profile.ts: never derived). */
+const PAPER_DEFAULTS: Readonly<Record<PrinterProfile['paperWidthMm'], { readonly printableDots: number; readonly charsPerLine: number }>> = {
+  80: { printableDots: 576, charsPerLine: 48 },
+  58: { printableDots: 384, charsPerLine: 32 },
+};
+
+const CAPABILITIES: ReadonlyArray<{ readonly key: keyof Capabilities; readonly label: string }> = [
+  { key: 'cut', label: 'Auto cut' },
+  { key: 'qrCode', label: 'QR code' },
+  { key: 'barcode128', label: 'Code128' },
+  { key: 'statusPolling', label: 'Status polling' },
+  { key: 'cashDrawer', label: 'Cash drawer' },
+];
+
+/** Keeps the previous value when a number input is momentarily empty/invalid. */
+function parseIntOr(raw: string, fallback: number): number {
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) ? parsed : fallback;
+}
 
 export function transportLabel(transport: PrinterProfile['transport']): string {
   return `TCP ${transport.host}:${String(transport.port)}`;
@@ -125,7 +139,6 @@ export function PrintersScreen(): React.JSX.Element {
       <header className="screen-head">
         <h1>Printers</h1>
         <div className="screen-head-side">
-          {service.demo && <DemoBadge />}
           <button
             type="button"
             className="btn btn-primary"
@@ -174,8 +187,8 @@ export function PrintersScreen(): React.JSX.Element {
                     </div>
                     <p className="row-sub mono">{transportLabel(printer.config.transport)}</p>
                     <p className="row-sub">
-                      {printer.config.paperWidthMm} mm paper · {printer.config.charsPerLine}{' '}
-                      chars/line
+                      {printer.config.paperWidthMm} mm paper · {printer.config.printableDots} dots ·{' '}
+                      {printer.config.charsPerLine} chars/line
                     </p>
                     <p className="row-sub">
                       last print <Timestamp iso={printer.lastPrintAt} />
@@ -278,11 +291,30 @@ function PrinterFormDialog(props: {
   const initial = props.printer?.config ?? null;
   const [name, setName] = useState(initial?.name ?? emptyDraft.name);
   const [role, setRole] = useState<PrinterProfile['role']>(initial?.role ?? emptyDraft.role);
+  const [paperWidthMm, setPaperWidthMm] = useState<PrinterProfile['paperWidthMm']>(
+    initial?.paperWidthMm ?? emptyDraft.paperWidthMm,
+  );
+  const [printableDots, setPrintableDots] = useState(
+    initial?.printableDots ?? emptyDraft.printableDots,
+  );
+  const [charsPerLine, setCharsPerLine] = useState(
+    initial?.charsPerLine ?? emptyDraft.charsPerLine,
+  );
+  const [capabilities, setCapabilities] = useState<Capabilities>(
+    initial?.capabilities ?? emptyDraft.capabilities,
+  );
   const [transport, setTransport] = useState<PrinterProfile['transport']>(
     initial?.transport ?? emptyDraft.transport,
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const changePaperWidth = (width: PrinterProfile['paperWidthMm']): void => {
+    setPaperWidthMm(width);
+    // Prefill the physical metrics with the width's defaults; both stay editable.
+    setPrintableDots(PAPER_DEFAULTS[width].printableDots);
+    setCharsPerLine(PAPER_DEFAULTS[width].charsPerLine);
+  };
 
   const submit = (): void => {
     if (name.trim().length === 0) {
@@ -296,7 +328,10 @@ function PrinterFormDialog(props: {
     const draft: PrinterDraft = {
       name: name.trim(),
       role,
-      ...DEFAULT_DRAFT_EXTRAS,
+      paperWidthMm,
+      printableDots,
+      charsPerLine,
+      capabilities,
       transport,
     };
     setBusy(true);
@@ -335,25 +370,58 @@ function PrinterFormDialog(props: {
               disabled={busy}
             />
           </Field>
-          <Field label="Role" hint="Which tickets this printer receives.">
-            <select
-              className="input"
-              value={role}
-              onChange={(e) => {
-                const match = PRINTER_ROLES.find((r) => r === e.target.value);
-                if (match !== undefined) {
-                  setRole(match);
-                }
-              }}
-              disabled={busy}
-            >
-              {PRINTER_ROLES.map((r) => (
-                <option key={r} value={r}>
-                  {r}
-                </option>
+          <div className="form-grid-2">
+            <Field label="Role" hint="Which tickets this printer receives.">
+              <select
+                className="input"
+                value={role}
+                onChange={(e) => {
+                  const match = PRINTER_ROLES.find((r) => r === e.target.value);
+                  if (match !== undefined) {
+                    setRole(match);
+                  }
+                }}
+                disabled={busy}
+              >
+                {PRINTER_ROLES.map((r) => (
+                  <option key={r} value={r}>
+                    {r}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label="Paper width">
+              <select
+                className="input"
+                value={paperWidthMm}
+                onChange={(e) => {
+                  changePaperWidth(e.target.value === '58' ? 58 : 80);
+                }}
+                disabled={busy}
+              >
+                <option value={80}>80 mm</option>
+                <option value={58}>58 mm</option>
+              </select>
+            </Field>
+          </div>
+          <div className="field">
+            <span className="field-label">Capabilities</span>
+            <div className="check-row">
+              {CAPABILITIES.map((cap) => (
+                <label key={cap.key} className="check-item">
+                  <input
+                    type="checkbox"
+                    checked={capabilities[cap.key]}
+                    disabled={busy}
+                    onChange={(e) => {
+                      setCapabilities({ ...capabilities, [cap.key]: e.target.checked });
+                    }}
+                  />
+                  <span>{cap.label}</span>
+                </label>
               ))}
-            </select>
-          </Field>
+            </div>
+          </div>
           <div className="form-grid-2">
             <Field label="Address">
               <input
@@ -380,6 +448,34 @@ function PrinterFormDialog(props: {
                     host: transport.host,
                     port: Number.isInteger(parsed) ? parsed : transport.port,
                   });
+                }}
+                disabled={busy}
+              />
+            </Field>
+          </div>
+          <div className="form-grid-2">
+            <Field label="Printable dots" hint="Advanced: printable width in dots (192–800).">
+              <input
+                className="input mono"
+                type="number"
+                min={192}
+                max={800}
+                value={printableDots}
+                onChange={(e) => {
+                  setPrintableDots(parseIntOr(e.target.value, printableDots));
+                }}
+                disabled={busy}
+              />
+            </Field>
+            <Field label="Characters per line" hint="Advanced: 16–96.">
+              <input
+                className="input mono"
+                type="number"
+                min={16}
+                max={96}
+                value={charsPerLine}
+                onChange={(e) => {
+                  setCharsPerLine(parseIntOr(e.target.value, charsPerLine));
                 }}
                 disabled={busy}
               />

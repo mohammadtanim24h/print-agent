@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { useAsync, useService } from '../../services/service-context';
 import type { JobRecord } from '../../services/types';
-import { Card, DemoBadge, EmptyState, ErrorBanner, LoadingBlock, Timestamp } from '../primitives';
+import { Card, EmptyState, ErrorBanner, LoadingBlock, Timestamp } from '../primitives';
 import { JOB_STATUS_META, JobStatusPill } from '../status';
 import { ConfirmDialog } from '../ConfirmDialog';
 import { ReceiptIcon, RefreshIcon } from '../icons';
@@ -81,7 +81,6 @@ export function JobHistoryScreen(): React.JSX.Element {
     <div className="screen">
       <header className="screen-head">
         <h1>Job history</h1>
-        {service.demo && <DemoBadge />}
       </header>
 
       <div className="banner banner-info">

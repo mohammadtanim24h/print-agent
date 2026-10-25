@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { useAsync, useService } from '../../services/service-context';
 import type { AgentSnapshot, PairResult } from '../../services/types';
-import { Card, DemoBadge, ErrorBanner, KeyVal, LoadingBlock, Timestamp } from '../primitives';
+import { Card, ErrorBanner, KeyVal, LoadingBlock, Timestamp } from '../primitives';
 import { ConnectionPill } from '../status';
 import { ConfirmDialog } from '../ConfirmDialog';
 
@@ -81,7 +81,6 @@ export function SetupScreen(props: { readonly onPaired?: () => void }): React.JS
       <header className="screen-head">
         <h1>Setup</h1>
         <div className="screen-head-side">
-          {service.demo && <DemoBadge />}
           <ConnectionPill state={snapshot.connection} />
         </div>
       </header>

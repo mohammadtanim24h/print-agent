@@ -79,7 +79,6 @@ export function App(): React.JSX.Element {
           ) : (
             <span className="sidebar-device">Not paired</span>
           )}
-          {service.demo && <span className="demo-tag">demo data</span>}
         </div>
       </nav>
 

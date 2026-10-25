@@ -7,7 +7,6 @@ import type { AgentService } from './agent-service';
 export function createProductionService(): AgentService {
   const bridge = window.printAgent;
   return {
-    demo: false,
     getSnapshot: () => bridge.getSnapshot(),
     pairWithCode: (code) => bridge.pairWithCode(code),
     unpair: () => bridge.unpair(),

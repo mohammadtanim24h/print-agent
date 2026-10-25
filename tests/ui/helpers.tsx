@@ -61,8 +61,6 @@ function profile(input: {
  */
 /* eslint-disable @typescript-eslint/require-await -- AgentService methods are async by contract; the fake resolves synchronously for deterministic tests. */
 class FakeAgentService implements AgentService {
-  readonly demo = false;
-
   private connection: AgentSnapshot['connection'] = 'online';
   private identity: AgentIdentity | null = {
     deviceId: 'dev-0001-a3f2',

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useAsync, useService } from '../../services/service-context';
 import type { LogLevel, UiSettings } from '../../services/types';
-import { Card, DemoBadge, ErrorBanner, Field, LoadingBlock } from '../primitives';
+import { Card, ErrorBanner, Field, LoadingBlock } from '../primitives';
 import { ConnectionPill } from '../status';
 
 const LOG_LEVELS: ReadonlyArray<{ readonly value: LogLevel; readonly label: string }> = [
@@ -56,7 +56,6 @@ export function SettingsScreen(props: {
     <div className="screen">
       <header className="screen-head">
         <h1>Settings</h1>
-        {service.demo && <DemoBadge />}
       </header>
 
       {savedNote && (

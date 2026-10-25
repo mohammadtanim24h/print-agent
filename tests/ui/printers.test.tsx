@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { PrintersScreen } from '../../src/renderer/src/ui/screens/PrintersScreen';
 import { makeService, renderWithService } from './helpers';
@@ -86,5 +86,89 @@ describe('PrintersScreen', () => {
       expect(screen.queryByText('Kitchen-1')).toBeNull();
     });
     expect(await service.getPrinters()).toHaveLength(2);
+  });
+
+  it('collects role, paper width, capabilities and endpoint in the add form', async () => {
+    const user = userEvent.setup();
+    const service = makeService();
+    renderWithService(<PrintersScreen />, service);
+    await user.click(await screen.findByRole('button', { name: /add printer/i }));
+    const dialog = screen.getByRole('dialog');
+
+    await user.type(within(dialog).getByLabelText(/name/i), 'Fry-1');
+    await user.selectOptions(within(dialog).getByDisplayValue('kitchen'), 'bar');
+    await user.type(within(dialog).getByPlaceholderText('192.168.1.87'), '192.168.1.55');
+
+    // Paper width drives printableDots/charsPerLine defaults (still editable).
+    const widthSelect = within(dialog).getByLabelText(/paper width/i);
+    expect(widthSelect).toHaveValue('80');
+    await user.selectOptions(widthSelect, '58');
+    expect(within(dialog).getByDisplayValue('384')).toBeInTheDocument();
+    expect(within(dialog).getByDisplayValue('32')).toBeInTheDocument();
+
+    // Capabilities: five checkboxes, toggled individually.
+    const checkboxes = within(dialog).getAllByRole('checkbox');
+    expect(checkboxes).toHaveLength(5);
+    expect(within(dialog).getByRole('checkbox', { name: /auto cut/i })).toBeChecked();
+    await user.click(within(dialog).getByRole('checkbox', { name: /auto cut/i }));
+    expect(within(dialog).getByRole('checkbox', { name: /auto cut/i })).not.toBeChecked();
+
+    await user.click(within(dialog).getByRole('button', { name: /add printer/i }));
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).toBeNull();
+    });
+    const printers = await service.getPrinters();
+    expect(printers).toHaveLength(4);
+    const added = printers.find((p) => p.config.name === 'Fry-1');
+    expect(added?.config).toMatchObject({
+      role: 'bar',
+      paperWidthMm: 58,
+      printableDots: 384,
+      charsPerLine: 32,
+      transport: { kind: 'tcp_raw', host: '192.168.1.55', port: 9100 },
+    });
+    expect(added?.config.capabilities.cut).toBe(false);
+    expect(added?.config.capabilities.qrCode).toBe(true);
+  });
+
+  it('prefills every field when editing an existing printer', async () => {
+    const user = userEvent.setup();
+    const service = makeService();
+    renderWithService(<PrintersScreen />, service);
+    const kitchenRow = await screen.findByText('Kitchen-1');
+    const row = kitchenRow.closest('li');
+    const editBtn = Array.from(row?.querySelectorAll('button') ?? []).find((b) =>
+      /^edit$/i.test(b.textContent),
+    );
+    await user.click(editBtn as HTMLElement);
+    const dialog = screen.getByRole('dialog');
+    expect(within(dialog).getByLabelText(/name/i)).toHaveValue('Kitchen-1');
+    expect(within(dialog).getByDisplayValue('kitchen')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText(/paper width/i)).toHaveValue('80');
+    expect(within(dialog).getByDisplayValue('576')).toBeInTheDocument(); // dots
+    expect(within(dialog).getByDisplayValue('48')).toBeInTheDocument(); // chars/line
+    expect(within(dialog).getByRole('checkbox', { name: /auto cut/i })).toBeChecked();
+    expect(within(dialog).getByRole('checkbox', { name: /cash drawer/i })).not.toBeChecked();
+    expect(within(dialog).getByPlaceholderText('192.168.1.87')).toHaveValue('192.168.1.87');
+  });
+
+  it('surfaces store-schema validation errors without closing the dialog', async () => {
+    const user = userEvent.setup();
+    const service = makeService({
+      // The real bridge validates the draft against PrinterDraftSchema in the
+      // printer store; the fake stands in for that rejection.
+      addPrinter: () =>
+        Promise.reject(new Error('host must be an IPv4 or IPv6 literal (no hostnames)')),
+    });
+    renderWithService(<PrintersScreen />, service);
+    await user.click(await screen.findByRole('button', { name: /add printer/i }));
+    const dialog = screen.getByRole('dialog');
+    await user.type(within(dialog).getByLabelText(/name/i), 'Bad-1');
+    await user.type(within(dialog).getByPlaceholderText('192.168.1.87'), 'printer.local');
+    await user.click(within(dialog).getByRole('button', { name: /add printer/i }));
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('IPv4 or IPv6');
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    expect(await service.getPrinters()).toHaveLength(3);
   });
 });

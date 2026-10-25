@@ -13,13 +13,10 @@ import type {
 
 /**
  * The renderer's entire view of the agent. Privileged work (network, printers,
- * SQLite) happens in the main process; this interface is the seam where the
- * mock implementation stands in until those services land.
+ * SQLite) happens in the main process; every method is one validated IPC
+ * round-trip onto the preload bridge.
  */
 export interface AgentService {
-  /** True while backed by demo data — the UI must surface this honestly. */
-  readonly demo: boolean;
-
   getSnapshot(): Promise<AgentSnapshot>;
 
   pairWithCode(code: string): Promise<PairResult>;
