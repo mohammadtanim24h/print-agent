@@ -159,4 +159,37 @@ describe('wiring-phase channels', () => {
     expect(parsed.pairedAt).toBeNull();
     expect(AppSettingsSchema.safeParse({ launchAtLogin: false, logLevel: 'verbose' }).success).toBe(false);
   });
+
+  it('registers the settings:update channel for startMinimized/logLevel patches', () => {
+    expect(Channel.SettingsUpdate).toBe('settings:update');
+  });
+
+  it('settings:update accepts partial patches with only known fields', () => {
+    expect(RequestSchemas[Channel.SettingsUpdate].safeParse({}).success).toBe(true);
+    expect(RequestSchemas[Channel.SettingsUpdate].safeParse({ startMinimized: true }).success).toBe(
+      true,
+    );
+    expect(RequestSchemas[Channel.SettingsUpdate].safeParse({ logLevel: 'warn' }).success).toBe(
+      true,
+    );
+    expect(
+      RequestSchemas[Channel.SettingsUpdate].safeParse({ startMinimized: false, logLevel: 'debug' })
+        .success,
+    ).toBe(true);
+  });
+
+  it('settings:update rejects unknown fields, wrong types and bad levels', () => {
+    expect(
+      RequestSchemas[Channel.SettingsUpdate].safeParse({ launchAtLogin: true }).success,
+    ).toBe(false);
+    expect(
+      RequestSchemas[Channel.SettingsUpdate].safeParse({ startMinimized: 'yes' }).success,
+    ).toBe(false);
+    expect(RequestSchemas[Channel.SettingsUpdate].safeParse({ logLevel: 'verbose' }).success).toBe(
+      false,
+    );
+    expect(
+      RequestSchemas[Channel.SettingsUpdate].safeParse({ startMinimized: true, extra: 1 }).success,
+    ).toBe(false);
+  });
 });

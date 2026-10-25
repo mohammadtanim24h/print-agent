@@ -5,7 +5,8 @@ import { z } from 'zod';
  * preload exposes exactly these channels, main handles exactly these channels,
  * request payloads are validated with these strict schemas (unknown fields
  * rejected). Size caps: the only string payloads are the 8-char pairing code
- * (`pair:with-code`) and UUIDs (printer/job ids); no free text crosses IPC.
+ * (`pair:with-code`), UUIDs (printer/job ids) and bounded enums (log levels);
+ * no free text crosses IPC.
  * Every future string-bearing schema MUST declare `.max()` bounds
  * (CLAUDE.md rule 3).
  */
@@ -14,6 +15,7 @@ export const Channel = {
   GetAgentInfo: 'app:info',
   GetSettings: 'settings:get',
   SetLaunchAtLogin: 'settings:set-launch-at-login',
+  SettingsUpdate: 'settings:update',
   HideWindow: 'window:hide',
   QuitApp: 'app:quit',
   AgentSnapshot: 'agent:snapshot',
@@ -35,12 +37,19 @@ export type Channel = (typeof Channel)[keyof typeof Channel];
 
 const noPayload = z.undefined();
 
+export const LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
+
 const printerIdPayload = z.strictObject({ printerId: z.uuid() });
 
 export const RequestSchemas = {
   [Channel.GetAgentInfo]: noPayload,
   [Channel.GetSettings]: noPayload,
   [Channel.SetLaunchAtLogin]: z.strictObject({ enabled: z.boolean() }),
+  // Partial patch: every field optional; an empty object is a valid no-op.
+  [Channel.SettingsUpdate]: z.strictObject({
+    startMinimized: z.boolean().optional(),
+    logLevel: z.enum(LOG_LEVELS).optional(),
+  }),
   [Channel.HideWindow]: noPayload,
   [Channel.QuitApp]: noPayload,
   [Channel.AgentSnapshot]: noPayload,
@@ -69,8 +78,6 @@ export const AgentInfoSchema = z.strictObject({
   version: z.string(),
   connectionState: z.enum(CONNECTION_STATES),
 });
-
-const LOG_LEVELS = ['debug', 'info', 'warn', 'error'] as const;
 
 export const AppSettingsSchema = z.strictObject({
   launchAtLogin: z.boolean(),

@@ -5,6 +5,7 @@ import type {
   ConnectivityCheck,
   DiagnosticsReport,
   JobRecord,
+  LogLevel,
   LogLine,
   PairResult,
   PrinterDraft,
@@ -23,6 +24,8 @@ const api = {
   getSettings: (): Promise<AppSettings> => ipcRenderer.invoke(Channel.GetSettings),
   setLaunchAtLogin: (enabled: boolean): Promise<AppSettings> =>
     ipcRenderer.invoke(Channel.SetLaunchAtLogin, { enabled }),
+  updateSettings: (patch: { startMinimized?: boolean; logLevel?: LogLevel }): Promise<AppSettings> =>
+    ipcRenderer.invoke(Channel.SettingsUpdate, patch),
   hideWindow: (): Promise<void> => ipcRenderer.invoke(Channel.HideWindow),
   quitApp: (): Promise<void> => ipcRenderer.invoke(Channel.QuitApp),
   getSnapshot: (): Promise<AgentSnapshot> => ipcRenderer.invoke(Channel.AgentSnapshot),

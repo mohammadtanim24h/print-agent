@@ -133,6 +133,19 @@ async function start(): Promise<void> {
       log.info('launch-at-login changed', { enabled });
       return next;
     },
+    [Channel.SettingsUpdate]: async (patch: {
+      startMinimized?: boolean;
+      logLevel?: 'debug' | 'info' | 'warn' | 'error';
+    }) => {
+      // Empty patches (e.g. launchAtLogin-only updates from the renderer)
+      // return current settings without a redundant disk write.
+      const next = Object.keys(patch).length === 0 ? settings.get() : await settings.set(patch);
+      if (patch.logLevel !== undefined) {
+        electronLog.transports.file.level = next.logLevel;
+        log.info('log level changed', { level: next.logLevel });
+      }
+      return next;
+    },
     [Channel.HideWindow]: () => {
       window.hide();
     },

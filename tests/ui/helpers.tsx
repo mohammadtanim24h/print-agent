@@ -53,7 +53,7 @@ function profile(input: {
 }
 
 /**
- * In-memory fake implementing `AgentService` directly (demo: false). Same
+ * In-memory fake implementing `AgentService` directly. Same
  * fixture values the UI tests have always asserted: three printers
  * (Kitchen-1 ok, Cashier-1 paper_low, Bar-1 offline), a five-job history
  * spanning completed/failed/ambiguous/sent_to_printer, paired identity
@@ -347,6 +347,10 @@ class FakeAgentService implements AgentService {
     return Promise.resolve({ ...this.settings });
   }
 
+  /** Mirrors the real behavior: all three toggles persist. In production
+   * `launchAtLogin` is routed to its dedicated channel (it also drives the OS
+   * autolaunch registration) while `startMinimized`/`logLevel` go through
+   * `settings:update` — the fake collapses both into this one in-memory write. */
   async updateSettings(patch: Partial<UiSettings>): Promise<UiSettings> {
     this.settings = { ...this.settings, ...patch };
     return { ...this.settings };
