@@ -30,7 +30,8 @@ export function nextVersion(version, part) {
 /** Pure preflight over captured git state. Returns failure strings (empty = go). */
 export function preflightFailures({ status, branch, behindCount, existingTag, part }) {
   const failures = [];
-  if (!PARTS.includes(part)) failures.push(`usage: pnpm release ${PARTS.join('|')} (got "${part}")`);
+  if (!PARTS.includes(part))
+    failures.push(`usage: pnpm release ${PARTS.join('|')} (got "${part}")`);
   if (status.trim() !== '') failures.push('working tree not clean — commit or stash first');
   if (branch !== 'main') failures.push(`must run on main (currently on "${branch}")`);
   if (behindCount > 0) failures.push(`main is ${behindCount} commit(s) behind origin — pull first`);
