@@ -134,6 +134,37 @@ encodability policy, raster fallback design, diagnostic summary contract).
 - Local-only UI: tray icon, agent status, pairing wizard, printer test-print buttons,
   ambiguous-job resolution prompt. Reads state via IPC events.
 
+### 3.10 Composition root
+
+`AgentRuntime` (`src/main/agent-runtime.ts`) is the **only** place modules are
+instantiated: it wires the stores, engine, transports and cloud client with injected
+dependencies and owns the app lifecycle (pairing, wipe-on-revoke/unpair, snapshot
+assembly, cloud-event plumbing). `main.ts` opens + migrates the SQLite database and
+closes it on quit; the runtime never touches the db handle's lifetime.
+
+Event flow:
+
+- **Jobs:** poller (`cloud-client`) validates + scope-checks envelopes →
+  `job-engine.submit()` → acks flow engine → `ack-buffer` → poller
+  (`submitAcks` batched; the buffer reaches the client through a forward
+  reference created before the client exists — the first submit only happens
+  after `start()`/`pair()`).
+- **Connection state:** on `state → 'online'` the runtime drains retained acks
+  immediately (`flushNow()`) — offline-held acks never wait out the buffer's
+  delay timer after a reconnect.
+- **Config:** `config` events are persisted to the `cloud_config` table only;
+  application is a later phase (FR-16).
+
+Recovery ordering: `runtime.start()` runs `engine.recover()` **before**
+`client.start()` — crash-recovered jobs (incl. `sending` → `ambiguous`) must be
+settled before the first poll can deliver new work (§5).
+
+Wipe path (revocation from the server or operator unpair, §7): the runtime stops
+the client and clears secrets, jobs, printers, cached cloud config and
+`pairedAt`. The wipe is best-effort — a failed step is logged, never thrown, so
+a wipe failure cannot wedge the caller; the UI's revoked-state wording claims
+only that the wipe was *triggered*.
+
 ## 4. Job flow (happy path)
 
 1. SaaS enqueues job (server-side durable queue) → pushes over WSS.

@@ -81,6 +81,47 @@ recent 50 job outcomes, OS/print-driver inventory). Upload is user-confirmed.
 - Ask site IT to allow outbound 443 to the SaaS host; proxy with TLS interception is
   unsupported for WSS (cert pinning) — REST polling still works.
 
+### 4.6 Runbook: pairing, unpair & local wipe
+
+Pairing (fresh install or re-pair after revocation):
+
+1. Web app dashboard: `Settings → Printers → Add agent` generates an 8-character
+   code. Codes are **single-use** and expire after **10 minutes** — generate a fresh
+   one per attempt.
+2. Agent UI → **Setup** screen → enter the code. The agent exchanges it for device
+   credentials (stored DPAPI-protected); the pairing date shows in Settings.
+3. If pairing fails with `code_invalid`/`code_expired`, do not retry the same code —
+   issue a new one.
+
+Unpair / revocation — the agent wipes, locally:
+
+| Wiped                     | Notes                                                     |
+| ------------------------- | --------------------------------------------------------- |
+| Device credentials/tokens | The DPAPI-protected identity store                        |
+| Job history               | The entire local `jobs` table                             |
+| Printer configurations    | The local printers store                                  |
+| Cached server config      | The `cloud_config` cache                                  |
+| Pairing date              | `pairedAt` (Settings shows the agent as unpaired)         |
+
+The wipe is best-effort: a failed step is logged, and the agent still reports the
+revoked state honestly ("local data wipe was triggered"). If a wiped device must be
+fully sanitized (lost-device case, §4.4), uninstall + delete `%APPDATA%/print-agent`
+as the belt-and-braces step.
+
+### 4.7 Logs & diagnostics data sources
+
+- Log files: `electron-log` under `%APPDATA%/print-agent/logs/`, 5 MiB rotation
+  (older file kept as `.old`). Every line is redacted before it reaches any
+  transport — no PII or credentials (CLAUDE.md 6/7).
+- Diagnostics screen, and where each number comes from:
+  - **Report** (version, Electron version, platform, uptime, DB size, journal
+    mode, queue depth): live process + local-store introspection.
+  - **Connectivity checks**: cloud API reachability (5 s timeout), per-printer
+    test connection, SQLite `quick_check`.
+  - **Recent logs**: the in-memory ring buffer (last 500 redacted lines) — this
+    is what support sees without pulling the full file bundle; the exported
+    bundle adds the on-disk log files and the recent-50 job outcomes.
+
 ## 5. Monitoring (SaaS side)
 
 | Signal                                                 | Alert                               |
@@ -96,11 +137,38 @@ recent 50 job outcomes, OS/print-driver inventory). Upload is user-confirmed.
 1. CI: `npm ci` (ignore-scripts), unit + contract tests (virtual printer), fuzz corpus
    for renderer, `npm audit` + SBOM license gate, packaging, installer signing.
 2. Upgrade smoke on: Win10 19045, Win11 23H2, clean profile + upgrade path.
-3. Sign installer → upload feed → stage 5%.
-4. Verify update telemetry (version adoption, crash-free rate) before advancing.
+3. **Confirm the production API base URL**: `src/main/main.ts` still ships the
+   `print-api.example-saas.test` placeholder — it MUST be replaced with the Laravel
+   team's real URL before any release build (see §8).
+4. Sign installer → upload feed → stage 5%.
+5. Verify update telemetry (version adoption, crash-free rate) before advancing.
 
 ## 7. Support data retention
 
 - Agent local logs: 14 days rolling, PII-redacted (threat T7).
 - Diagnostics bundles: stored in SaaS support ticket scope, 90 days.
 - Job outcome history: server-side per tenant retention policy (SaaS concern).
+
+## 8. Configuration & environment
+
+Settings live in `%APPDATA%/print-agent/settings.json`, edited via the agent
+Settings screen:
+
+- **Start minimized to tray** (default: on). Honored in packaged builds only —
+  dev mode (`electron-vite dev`) always shows the window.
+- **Log level** (`debug|info|warn|error`, default `info`): applied to the file
+  transport immediately, no restart needed. `debug` is noticeably chattier; use
+  it only while reproducing a ticket.
+- **Launch at login**: also available from the tray menu.
+
+Environment overrides (development only — never set these on restaurant PCs):
+
+- `PRINT_AGENT_API_URL` overrides the cloud API base URL, e.g.
+  `PRINT_AGENT_API_URL=https://staging.example-saas.test pnpm dev`. The compiled
+  default is the placeholder `https://print-api.example-saas.test` — **it must
+  be replaced with the Laravel team's production URL before release**
+  (release checklist §6, item 3).
+- `ELECTRON_RENDERER_URL` is set by `electron-vite dev` itself (renderer dev
+  server); it also forces the window visible and widens the IPC sender guard to
+  accept the dev-server origin.
+
