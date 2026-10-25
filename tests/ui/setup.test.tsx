@@ -14,7 +14,7 @@ describe('SetupScreen', () => {
         getSnapshot: () =>
           Promise.resolve({
             version: '0.1.0',
-            connection: 'disabled' as const,
+            connection: 'unpaired' as const,
             connectionDetail: '',
             identity: null,
             pendingJobs: 0,

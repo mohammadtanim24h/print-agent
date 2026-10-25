@@ -161,7 +161,7 @@ export function OverviewScreen(props: {
                 {printers.map((printer) => (
                   <li key={printer.config.printerId} className="row">
                     <span className="row-title">{printer.config.name}</span>
-                    <span className="row-sub">{printer.config.station}</span>
+                    <span className="row-sub">{printer.config.role}</span>
                     <PrinterHealthPill health={printer.health} />
                     <span className="row-meta">
                       last print <Timestamp iso={printer.lastPrintAt} />

@@ -44,9 +44,10 @@ describe('OverviewScreen', () => {
   it('renders connection, identity, printer health and recent jobs when paired', async () => {
     renderWithService(<OverviewScreen onNavigate={() => undefined} />, makeService());
     expect(await screen.findByText('Trattoria Bella (demo)')).toBeInTheDocument();
-    // Connection pill + demo badge (honesty: mock data is labelled).
+    // Connection pill (online) + printer health wording, not just color.
+    // (The old "demo data" badge assertion served the deleted demo mock.)
+    expect(screen.getByText('Connected')).toBeInTheDocument();
     expect(screen.getByText('Offline')).toBeInTheDocument();
-    expect(screen.getByText(/demo data/i)).toBeInTheDocument();
     // Printer health uses wording, not just color.
     expect(screen.getByText('Paper low')).toBeInTheDocument();
     expect(screen.getByText('Offline')).toBeInTheDocument();

@@ -31,7 +31,7 @@ import { createSqliteJobStore, JOB_STATUSES } from './local-store/job-store';
 import type { SqliteDatabase } from './local-store/db';
 import { createAckBuffer, type AckBuffer } from './ack-buffer';
 import { createJsonFileKv } from './secret-kv';
-import { mapPairFailure, toJobRecord, toPrinterInfo, type PrinterView } from './view-model';
+import { mapPairFailure, toJobRecord, toPrinterInfo } from './view-model';
 import type {
   AgentSnapshot,
   ConnectivityCheck,
@@ -39,6 +39,7 @@ import type {
   JobRecord,
   LogLine,
   PairResult,
+  PrinterInfo,
   TestPrintResult,
 } from '../renderer/src/services/types';
 
@@ -82,27 +83,19 @@ export interface RuntimeDeps {
   };
 }
 
-/** `AgentSnapshot` with the cloud client's ConnectionState. The renderer's
- *  `ConnectionState` still carries the pre-wiring union ('disabled'/'error');
- *  the wiring-composition design §2 swaps it to this union in the renderer
- *  type update (plan Task 9). */
-export type RuntimeSnapshot = Omit<AgentSnapshot, 'connection'> & {
-  readonly connection: ConnectionState;
-};
-
 export interface AgentRuntime {
   /** Idempotent. Crash recovery runs FIRST, then the poll loop's first cycle. */
   start(): void;
   /** Idempotent: stops the client, then flushes retained acks. */
   stop(): Promise<void>;
   agentInfo(): { name: string; version: string; connectionState: ConnectionState };
-  snapshot(): Promise<RuntimeSnapshot>;
+  snapshot(): Promise<AgentSnapshot>;
   pair(code: string): Promise<PairResult>;
   unpair(): Promise<void>;
   readonly printers: {
-    list(): readonly PrinterView[];
-    add(draft: unknown): Promise<PrinterView>;
-    update(printerId: string, patch: unknown): Promise<PrinterView>;
+    list(): readonly PrinterInfo[];
+    add(draft: unknown): Promise<PrinterInfo>;
+    update(printerId: string, patch: unknown): Promise<PrinterInfo>;
     remove(printerId: string): Promise<boolean>;
     testPrint(printerId: string): Promise<TestPrintResult>;
   };
@@ -328,7 +321,7 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
   // ---- snapshot ------------------------------------------------------------
 
   // eslint-disable-next-line @typescript-eslint/require-await -- the interface promises a Promise; the body is intentionally sync
-  async function snapshot(): Promise<RuntimeSnapshot> {
+  async function snapshot(): Promise<AgentSnapshot> {
     const identity = readIdentity();
     const terminal = jobStore.listByStatus('completed', 'failed', 'ambiguous', 'rejected');
     const lastActivityAt =
@@ -372,14 +365,14 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
   // ---- printers ------------------------------------------------------------
 
   const printersApi = {
-    list(): readonly PrinterView[] {
+    list(): readonly PrinterInfo[] {
       return printers.list().map(toPrinterInfo);
     },
-    add(draft: unknown): Promise<PrinterView> {
+    add(draft: unknown): Promise<PrinterInfo> {
       // The store re-validates with PrinterDraftSchema — unknown never reaches disk raw.
       return printers.add(draft as PrinterDraft).then(toPrinterInfo);
     },
-    update(printerId: string, patch: unknown): Promise<PrinterView> {
+    update(printerId: string, patch: unknown): Promise<PrinterInfo> {
       return printers.update(printerId, patch as Partial<PrinterDraft>).then(toPrinterInfo);
     },
     remove(printerId: string): Promise<boolean> {

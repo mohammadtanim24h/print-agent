@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import { screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { JobHistoryScreen } from '../../src/renderer/src/ui/screens/JobHistoryScreen';
-import { MockAgentService } from '../../src/renderer/src/services/mock-agent-service';
 import { makeService, renderWithService } from './helpers';
 
 function findRow(label: RegExp): HTMLLIElement {
@@ -121,8 +120,7 @@ describe('JobHistoryScreen', () => {
   it('shows a filter-specific empty state', async () => {
     const user = userEvent.setup();
     // Seed jobs that contain no failed entries, so the "Failed" filter is empty.
-    const base = new MockAgentService({ latencyMs: 0 });
-    const jobs = (await base.getJobs()).filter((j) => j.status !== 'failed');
+    const jobs = (await makeService().getJobs()).filter((j) => j.status !== 'failed');
     const service = makeService({ getJobs: () => Promise.resolve(jobs) });
     renderWithService(<JobHistoryScreen />, service);
     await screen.findAllByText(/Kitchen ticket/);

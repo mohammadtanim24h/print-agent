@@ -92,11 +92,11 @@ export const JOB_STATUS_META: Readonly<Record<JobStatus, StatusMeta>> = {
 };
 
 export const CONNECTION_META: Readonly<Record<ConnectionState, StatusMeta>> = {
-  disabled: {
-    label: 'Not configured',
+  unpaired: {
+    label: 'Not paired',
     tone: 'neutral',
     Icon: InfoIcon,
-    title: 'The cloud link has not been set up yet.',
+    title: 'This device has no cloud credentials yet. Pair it with a code from the dashboard.',
   },
   connecting: {
     label: 'Connecting…',
@@ -117,11 +117,11 @@ export const CONNECTION_META: Readonly<Record<ConnectionState, StatusMeta>> = {
     title:
       'No connection to the cloud. Jobs sent while offline queue on the server and replay on reconnect.',
   },
-  error: {
-    label: 'Connection error',
+  revoked: {
+    label: 'Revoked',
     tone: 'danger',
     Icon: WarnTriangleIcon,
-    title: 'The last connection attempt failed. Retrying with backoff.',
+    title: 'This device was revoked in the dashboard. Local data was wiped — pair again to continue.',
   },
 };
 

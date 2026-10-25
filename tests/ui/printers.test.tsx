@@ -22,7 +22,8 @@ describe('PrintersScreen', () => {
     expect(screen.getByText('Paper low')).toBeInTheDocument();
     expect(screen.getByText('Offline')).toBeInTheDocument();
     expect(screen.getByText(/192\.168\.1\.87:9100/)).toBeInTheDocument();
-    expect(screen.getByText(/EPSON TM-T88VI/)).toBeInTheDocument();
+    // TCP-only transports now (no spooler); the second printer's endpoint shows too.
+    expect(screen.getByText(/192\.168\.1\.90:9100/)).toBeInTheDocument();
   });
 
   it('runs a test print and shows hand-off wording, not a print claim', async () => {

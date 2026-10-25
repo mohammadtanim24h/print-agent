@@ -1,13 +1,6 @@
 import { useState } from 'react';
 import { useAsync, useService } from '../../services/service-context';
-import type {
-  CutMode,
-  DuplicatePolicy,
-  PrinterDraft,
-  PrinterInfo,
-  TestPrintResult,
-  TransportConfig,
-} from '../../services/types';
+import type { PrinterDraft, PrinterInfo, PrinterProfile, TestPrintResult } from '../../services/types';
 import {
   Card,
   DemoBadge,
@@ -25,20 +18,36 @@ type TestOutcome =
   | { readonly kind: 'ok' | 'fail'; readonly text: string }
   | { readonly kind: 'error'; readonly text: string };
 
-const emptyDraft: PrinterDraft = {
-  name: '',
-  station: 'kitchen',
-  transport: { kind: 'tcp_raw', host: '', port: 9100 },
-  copiesDefault: 1,
-  codepage: 'cp437',
-  cutDefault: 'partial',
-  duplicatePolicy: 'ask_operator',
+// Mirrors PRINTER_ROLES in main/printers/profile (a value import would drag
+// node:net/zod into the renderer bundle — hoist to shared/ if this grows).
+const PRINTER_ROLES = ['kitchen', 'receipt', 'bar', 'custom'] as const;
+
+// TODO(wiring Task 10): real add/edit form for role, paper width, physical
+// print metrics and capabilities. Until then the form collects name/role/
+// TCP endpoint and applies these fixed defaults for the remaining required
+// profile fields (values within the schema bounds).
+const DEFAULT_DRAFT_EXTRAS: Omit<PrinterDraft, 'name' | 'role' | 'transport'> = {
+  paperWidthMm: 80,
+  printableDots: 576,
+  charsPerLine: 48,
+  capabilities: {
+    cut: true,
+    qrCode: true,
+    barcode128: false,
+    statusPolling: false,
+    cashDrawer: false,
+  },
 };
 
-export function transportLabel(transport: TransportConfig): string {
-  return transport.kind === 'tcp_raw'
-    ? `TCP ${transport.host}:${String(transport.port)}`
-    : `Spooler · ${transport.windowsPrinterName}`;
+const emptyDraft: PrinterDraft = {
+  name: '',
+  role: 'kitchen',
+  ...DEFAULT_DRAFT_EXTRAS,
+  transport: { kind: 'tcp_raw', host: '', port: 9100 },
+};
+
+export function transportLabel(transport: PrinterProfile['transport']): string {
+  return `TCP ${transport.host}:${String(transport.port)}`;
 }
 
 export function PrintersScreen(): React.JSX.Element {
@@ -160,13 +169,13 @@ export function PrintersScreen(): React.JSX.Element {
                   <div className="printer-row-main">
                     <div className="printer-row-head">
                       <span className="row-title">{printer.config.name}</span>
-                      <span className="tag">{printer.config.station}</span>
+                      <span className="tag">{printer.config.role}</span>
                       <PrinterHealthPill health={printer.health} />
                     </div>
                     <p className="row-sub mono">{transportLabel(printer.config.transport)}</p>
                     <p className="row-sub">
-                      {printer.config.copiesDefault}× copies · cut: {printer.config.cutDefault} ·
-                      duplicate policy: {policyLabel(printer.config.duplicatePolicy)}
+                      {printer.config.paperWidthMm} mm paper · {printer.config.charsPerLine}{' '}
+                      chars/line
                     </p>
                     <p className="row-sub">
                       last print <Timestamp iso={printer.lastPrintAt} />
@@ -259,17 +268,6 @@ export function PrintersScreen(): React.JSX.Element {
   );
 }
 
-export function policyLabel(policy: DuplicatePolicy): string {
-  switch (policy) {
-    case 'ask_operator':
-      return 'ask operator';
-    case 'auto_reprint':
-      return 'auto reprint';
-    case 'never':
-      return 'never reprint';
-  }
-}
-
 function PrinterFormDialog(props: {
   readonly mode: 'add' | 'edit';
   readonly printer: PrinterInfo | null;
@@ -279,72 +277,27 @@ function PrinterFormDialog(props: {
   const service = useService();
   const initial = props.printer?.config ?? null;
   const [name, setName] = useState(initial?.name ?? emptyDraft.name);
-  const [station, setStation] = useState(initial?.station ?? emptyDraft.station);
-  const [transport, setTransport] = useState<TransportConfig>(
+  const [role, setRole] = useState<PrinterProfile['role']>(initial?.role ?? emptyDraft.role);
+  const [transport, setTransport] = useState<PrinterProfile['transport']>(
     initial?.transport ?? emptyDraft.transport,
-  );
-  const [copies, setCopies] = useState(String(initial?.copiesDefault ?? emptyDraft.copiesDefault));
-  const [codepage, setCodepage] = useState(initial?.codepage ?? emptyDraft.codepage);
-  const [cut, setCut] = useState<CutMode>(initial?.cutDefault ?? emptyDraft.cutDefault);
-  const [policy, setPolicy] = useState<DuplicatePolicy>(
-    initial?.duplicatePolicy ?? emptyDraft.duplicatePolicy,
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const setTransportKind = (kind: TransportConfig['kind']): void => {
-    setTransport(
-      kind === 'tcp_raw'
-        ? {
-            kind,
-            host: transport.kind === 'tcp_raw' ? transport.host : '',
-            port: transport.kind === 'tcp_raw' ? transport.port : 9100,
-          }
-        : {
-            kind,
-            windowsPrinterName:
-              transport.kind === 'spooler_raw' ? transport.windowsPrinterName : '',
-          },
-    );
-  };
 
   const submit = (): void => {
     if (name.trim().length === 0) {
       setError('Give the printer a name.');
       return;
     }
-    const nextTransport: TransportConfig =
-      transport.kind === 'tcp_raw'
-        ? transport.host.trim().length === 0
-          ? { ...transport, host: '' }
-          : transport
-        : transport.windowsPrinterName.trim().length === 0
-          ? { ...transport, windowsPrinterName: '' }
-          : transport;
-    if (nextTransport.kind === 'tcp_raw' && nextTransport.host.trim().length === 0) {
-      setError('Enter the printer IP address or hostname.');
-      return;
-    }
-    if (
-      nextTransport.kind === 'spooler_raw' &&
-      nextTransport.windowsPrinterName.trim().length === 0
-    ) {
-      setError('Enter the exact Windows printer name.');
-      return;
-    }
-    const copiesNum = Number(copies);
-    if (!Number.isInteger(copiesNum) || copiesNum < 1 || copiesNum > 4) {
-      setError('Copies must be a whole number between 1 and 4.');
+    if (transport.host.trim().length === 0) {
+      setError('Enter the printer IP address.');
       return;
     }
     const draft: PrinterDraft = {
       name: name.trim(),
-      station: station.trim().length > 0 ? station.trim() : 'cashier',
-      transport: nextTransport,
-      copiesDefault: copiesNum,
-      codepage,
-      cutDefault: cut,
-      duplicatePolicy: policy,
+      role,
+      ...DEFAULT_DRAFT_EXTRAS,
+      transport,
     };
     setBusy(true);
     setError(null);
@@ -382,137 +335,54 @@ function PrinterFormDialog(props: {
               disabled={busy}
             />
           </Field>
-          <Field label="Station" hint="Free-form label, e.g. kitchen, bar, cashier.">
-            <input
-              className="input"
-              value={station}
-              onChange={(e) => {
-                setStation(e.target.value);
-              }}
-              disabled={busy}
-            />
-          </Field>
-          <Field label="Transport">
+          <Field label="Role" hint="Which tickets this printer receives.">
             <select
               className="input"
-              value={transport.kind}
+              value={role}
               onChange={(e) => {
-                setTransportKind(e.target.value as TransportConfig['kind']);
+                const match = PRINTER_ROLES.find((r) => r === e.target.value);
+                if (match !== undefined) {
+                  setRole(match);
+                }
               }}
               disabled={busy}
             >
-              <option value="tcp_raw">Network (TCP 9100)</option>
-              <option value="spooler_raw">Windows spooler (RAW)</option>
+              {PRINTER_ROLES.map((r) => (
+                <option key={r} value={r}>
+                  {r}
+                </option>
+              ))}
             </select>
           </Field>
-          {transport.kind === 'tcp_raw' ? (
-            <div className="form-grid-2">
-              <Field label="Address">
-                <input
-                  className="input mono"
-                  value={transport.host}
-                  onChange={(e) => {
-                    setTransport({ kind: 'tcp_raw', host: e.target.value, port: transport.port });
-                  }}
-                  placeholder="192.168.1.87"
-                  disabled={busy}
-                />
-              </Field>
-              <Field label="Port">
-                <input
-                  className="input mono"
-                  type="number"
-                  min={1}
-                  max={65535}
-                  value={transport.port}
-                  onChange={(e) => {
-                    const parsed = Number(e.target.value);
-                    setTransport({
-                      kind: 'tcp_raw',
-                      host: transport.host,
-                      port: Number.isInteger(parsed) ? parsed : transport.port,
-                    });
-                  }}
-                  disabled={busy}
-                />
-              </Field>
-            </div>
-          ) : (
-            <Field
-              label="Windows printer name"
-              hint="Must match the name in Windows Settings → Printers."
-            >
+          <div className="form-grid-2">
+            <Field label="Address">
               <input
                 className="input mono"
-                value={transport.windowsPrinterName}
+                value={transport.host}
                 onChange={(e) => {
-                  setTransport({ kind: 'spooler_raw', windowsPrinterName: e.target.value });
+                  setTransport({ kind: 'tcp_raw', host: e.target.value, port: transport.port });
                 }}
-                placeholder="EPSON TM-T88VI"
+                placeholder="192.168.1.87"
                 disabled={busy}
               />
             </Field>
-          )}
-          <div className="form-grid-2">
-            <Field label="Copies">
-              <select
-                className="input"
-                value={copies}
+            <Field label="Port">
+              <input
+                className="input mono"
+                type="number"
+                min={1}
+                max={65535}
+                value={transport.port}
                 onChange={(e) => {
-                  setCopies(e.target.value);
+                  const parsed = Number(e.target.value);
+                  setTransport({
+                    kind: 'tcp_raw',
+                    host: transport.host,
+                    port: Number.isInteger(parsed) ? parsed : transport.port,
+                  });
                 }}
                 disabled={busy}
-              >
-                {[1, 2, 3, 4].map((n) => (
-                  <option key={n} value={String(n)}>
-                    {n}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Codepage">
-              <select
-                className="input"
-                value={codepage}
-                onChange={(e) => {
-                  setCodepage(e.target.value);
-                }}
-                disabled={busy}
-              >
-                <option value="cp437">CP437 (US ASCII)</option>
-                <option value="cp850">CP850 (Western European)</option>
-                <option value="utf8_double_byte">UTF-8 double-byte</option>
-              </select>
-            </Field>
-          </div>
-          <div className="form-grid-2">
-            <Field label="Cut">
-              <select
-                className="input"
-                value={cut}
-                onChange={(e) => {
-                  setCut(e.target.value as CutMode);
-                }}
-                disabled={busy}
-              >
-                <option value="partial">Partial</option>
-                <option value="full">Full</option>
-                <option value="none">None</option>
-              </select>
-            </Field>
-            <Field label="Duplicate policy" hint="What happens when a job's outcome is unknown.">
-              <select
-                className="input"
-                value={policy}
-                onChange={(e) => {
-                  setPolicy(e.target.value as DuplicatePolicy);
-                }}
-                disabled={busy}
-              >
-                <option value="ask_operator">Ask operator</option>
-                <option value="auto_reprint">Auto reprint (DUPLICATE banner)</option>
-                <option value="never">Never reprint</option>
-              </select>
+              />
             </Field>
           </div>
           {error !== null && <ErrorBanner message={error} />}
