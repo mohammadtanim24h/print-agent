@@ -107,10 +107,12 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     ? JSON.parse(readFileSync(licenseFile, 'utf8'))
     : JSON.parse(
         // Static command string, run under a shell only on Windows where pnpm
-        // is a .cmd shim that Node cannot spawn directly (avoids DEP0190).
+        // is a .cmd shim that Node cannot spawn directly (avoids DEP0190);
+        // non-Windows callers must pass --licenses instead.
         execFileSync('pnpm licenses list --prod --json', {
           encoding: 'utf8',
           maxBuffer: 64 * 1024 * 1024,
+          timeout: 120_000,
           shell: process.platform === 'win32',
         }),
       );
