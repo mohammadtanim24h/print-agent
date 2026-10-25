@@ -17,6 +17,5 @@ await flipFuses(electronExe, {
   // `electronFuses` in electron-builder.yml (keep the two sets in sync).
   [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: false,
   [FuseV1Options.GrantFileProtocolExtraPrivileges]: false,
-  [FuseV1Options.GrantNetworkProtocolExtraPrivileges]: false,
 });
 console.log('fuses flipped on', electronExe);
