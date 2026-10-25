@@ -1,11 +1,16 @@
-import { app, ipcMain } from 'electron';
+import { app, ipcMain, safeStorage } from 'electron';
+import electronLog from 'electron-log/main';
 import net from 'node:net';
+import { hostname } from 'node:os';
 import { join } from 'node:path';
 import { Channel, RequestSchemas } from '../shared/ipc-contract';
+import { createAgentRuntime } from './agent-runtime';
+import { closeDatabase, openDatabase } from './local-store/db';
+import { migrate } from './local-store/migrations';
 import { createSenderGuard } from './security/sender-guard';
 import { installNoListenGuard } from './security/no-listen-guard';
 import { createIpcRouter } from './ipc/register';
-import { createLogger, setupLogging } from './services/logger/logger';
+import { createLogger, getRecentLogLines, setupLogging } from './services/logger/logger';
 import { createSettingsStore } from './services/settings';
 import { createNodeSettingsAdapter } from './services/settings-fs';
 import { applyLaunchAtLogin } from './services/autolaunch';
@@ -45,11 +50,45 @@ async function start(): Promise<void> {
       log.warn(message);
     },
   });
+  electronLog.transports.file.level = settings.get().logLevel;
   applyLaunchAtLogin(app, settings.get().launchAtLogin);
+
+  // The database is owned here (main), not by the runtime: opened + migrated
+  // before the runtime, closed on quit (before-quit below).
+  const dbFile = join(app.getPath('userData'), 'print-agent.db');
+  const db = openDatabase({ file: dbFile });
+  migrate(db);
+
+  // TODO(release): the Laravel team owns the production API URL — confirm this
+  // value on the release checklist before shipping.
+  const API_BASE_URL =
+    process.env['PRINT_AGENT_API_URL'] ?? 'https://print-api.example-saas.test';
+
+  const runtime = await createAgentRuntime({
+    db,
+    settings,
+    paths: {
+      dbFile,
+      identityKvFile: join(app.getPath('userData'), 'identity-kv.json'),
+      printersFile: join(app.getPath('userData'), 'printers.json'),
+    },
+    log,
+    agentVersion: app.getVersion(),
+    deviceName: hostname(),
+    safeStorage,
+    cloud: { baseUrl: API_BASE_URL },
+  });
+  // Crash recovery + first poll cycle; no-op while unpaired.
+  runtime.start();
 
   const window = createMainWindow(log, devServerUrl !== undefined ? { devServerUrl } : {}, {
     shouldCloseToTray: () => !quitting,
   });
+  // Tray-resident start; the ready-to-show show() in window.ts fires first —
+  // hiding after is acceptable for this phase.
+  if (settings.get().startMinimized && devServerUrl === undefined) {
+    window.hide();
+  }
 
   const tray: TrayController = createTray({
     app,
@@ -85,31 +124,50 @@ async function start(): Promise<void> {
     },
   });
 
+  // Record<Channel, ...> (not Record<string, ...>) so the compiler rejects the
+  // map if a contract channel is added without a handler.
+  const handlers: Record<Channel, (payload: never) => unknown> = {
+    [Channel.GetAgentInfo]: () => runtime.agentInfo(),
+    [Channel.GetSettings]: () => settings.get(),
+    [Channel.SetLaunchAtLogin]: async ({ enabled }: { enabled: boolean }) => {
+      const next = await settings.set({ launchAtLogin: enabled });
+      applyLaunchAtLogin(app, enabled);
+      tray.refresh();
+      log.info('launch-at-login changed', { enabled });
+      return next;
+    },
+    [Channel.HideWindow]: () => {
+      window.hide();
+    },
+    [Channel.QuitApp]: () => {
+      log.info('quit requested from renderer');
+      app.quit();
+    },
+    [Channel.AgentSnapshot]: () => runtime.snapshot(),
+    [Channel.PairWithCode]: ({ code }: { code: string }) => runtime.pair(code),
+    [Channel.AgentUnpair]: async () => {
+      await runtime.unpair();
+    },
+    [Channel.PrintersList]: () => runtime.printers.list(),
+    [Channel.PrintersAdd]: ({ draft }: { draft: unknown }) => runtime.printers.add(draft),
+    [Channel.PrintersUpdate]: ({ printerId, draft }: { printerId: string; draft: unknown }) =>
+      runtime.printers.update(printerId, draft),
+    [Channel.PrintersRemove]: ({ printerId }: { printerId: string }) =>
+      runtime.printers.remove(printerId),
+    [Channel.PrintersTest]: ({ printerId }: { printerId: string }) =>
+      runtime.printers.testPrint(printerId),
+    [Channel.JobsList]: () => runtime.jobs.list(),
+    [Channel.JobsRetry]: ({ jobId }: { jobId: string }) => runtime.jobs.retry(jobId),
+    [Channel.JobsReprint]: ({ jobId }: { jobId: string }) => runtime.jobs.reprint(jobId),
+    [Channel.DiagnosticsReport]: () => runtime.diagnostics.report(),
+    [Channel.DiagnosticsChecks]: () => runtime.diagnostics.checks(),
+    [Channel.LogsRecent]: () => getRecentLogLines(),
+  };
+
   const router = createIpcRouter({
     guard,
     schemas: RequestSchemas,
-    handlers: {
-      [Channel.GetAgentInfo]: () => ({
-        name: 'print-agent',
-        version: app.getVersion(),
-        connectionState: 'unpaired' as const,
-      }),
-      [Channel.GetSettings]: () => settings.get(),
-      [Channel.SetLaunchAtLogin]: async ({ enabled }: { enabled: boolean }) => {
-        const next = await settings.set({ launchAtLogin: enabled });
-        applyLaunchAtLogin(app, enabled);
-        tray.refresh();
-        log.info('launch-at-login changed', { enabled });
-        return next;
-      },
-      [Channel.HideWindow]: () => {
-        window.hide();
-      },
-      [Channel.QuitApp]: () => {
-        log.info('quit requested from renderer');
-        app.quit();
-      },
-    },
+    handlers,
     log: (message) => {
       log.warn(message);
     },
@@ -130,6 +188,15 @@ async function start(): Promise<void> {
 
   app.on('before-quit', () => {
     quitting = true;
+    // Runtime owns no db handle; main closes the store after the final ack flush.
+    void runtime
+      .stop()
+      .then(() => {
+        closeDatabase(db);
+      })
+      .catch((error: unknown) => {
+        log.error('shutdown failed', error);
+      });
   });
 
   // Tray application: closing the window keeps the core process alive.
