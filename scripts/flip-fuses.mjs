@@ -17,6 +17,8 @@ await flipFuses(electronExe, {
   // Requires asar + embedded integrity headers. Packaged builds set this via
   // `electronFuses` in electron-builder.yml (keep the two sets in sync).
   [FuseV1Options.EnableEmbeddedAsarIntegrityValidation]: false,
+  // onlyLoadAppFromAsar is packaging-only too (electron-builder.yml): it
+  // requires asar and would break asar-less dev loading if set here.
   [FuseV1Options.GrantFileProtocolExtraPrivileges]: false,
 });
 console.log('fuses flipped on', electronExe);

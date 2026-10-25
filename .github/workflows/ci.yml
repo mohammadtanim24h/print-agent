@@ -27,7 +27,7 @@ jobs:
       - name: Dependency admission (CLAUDE.md rule 10)
         run: node scripts/check-deps.mjs
       - name: SBOM (CycloneDX, uploaded per run)
-        uses: anchore/sbom-action@v0
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0 (supply-chain: SHA-pinned)
         with:
           format: cyclonedx-json
       - run: pnpm lint

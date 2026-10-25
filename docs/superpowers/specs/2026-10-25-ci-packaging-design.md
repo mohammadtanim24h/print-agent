@@ -40,8 +40,10 @@ All jobs run on `windows-latest`; Node 24 + pnpm via the `packageManager` field
 **Job `gate`:**
 
 1. `pnpm install --frozen-lockfile` — pnpm 10 only runs postinstall scripts for
-   `pnpm.onlyBuiltDependencies` (better-sqlite3, electron, esbuild); any other
-   package attempting build scripts is blocked.
+   `pnpm.onlyBuiltDependencies` (electron, esbuild); any other package attempting
+   build scripts is blocked. (As amended 2026-10-25: better-sqlite3 was removed —
+   its tarball ships prebuilds and its binding.gyp triggered a pointless, Visual
+   Studio–dependent node-gyp build on CI.)
 2. `node scripts/check-deps.mjs` — dependency admission (§2).
 3. `anchore/sbom-action` → CycloneDX JSON, uploaded as a workflow artifact
    (per-commit SBOM record).
@@ -71,7 +73,9 @@ out in tests). Violations exit non-zero with an offender → reason table.
    `MIT | Apache-2.0 | BSD-2-Clause | BSD-3-Clause | ISC` fails, including
    missing/unknown license strings.
 3. **Build-script allowlist:** asserts `pnpm.onlyBuiltDependencies` deep-equals
-   `["better-sqlite3", "electron", "esbuild"]`.
+   `["electron", "esbuild"]`. (As amended 2026-10-25: better-sqlite3 ships its
+   N-API prebuilds in the tarball — no build script is needed, so allowing one
+   would be pure risk.)
 4. **New-dependency discipline:** electron-builder enters devDependencies in this
    phase, exact-pinned at current 26.x — MIT, maintained, vetted
    (`.research/dependency-research.md` row 2). The script enforces admission
