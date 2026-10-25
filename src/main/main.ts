@@ -83,12 +83,9 @@ async function start(): Promise<void> {
 
   const window = createMainWindow(log, devServerUrl !== undefined ? { devServerUrl } : {}, {
     shouldCloseToTray: () => !quitting,
+    // Dev workflow always shows the window; production honors the setting.
+    startMinimized: settings.get().startMinimized && devServerUrl === undefined,
   });
-  // Tray-resident start; the ready-to-show show() in window.ts fires first —
-  // hiding after is acceptable for this phase.
-  if (settings.get().startMinimized && devServerUrl === undefined) {
-    window.hide();
-  }
 
   const tray: TrayController = createTray({
     app,
@@ -188,14 +185,19 @@ async function start(): Promise<void> {
 
   app.on('before-quit', () => {
     quitting = true;
-    // Runtime owns no db handle; main closes the store after the final ack flush.
+    // Runtime owns no db handle; main closes the store after the final ack
+    // flush. finally() guarantees the close even if stop() rejects.
     void runtime
       .stop()
-      .then(() => {
-        closeDatabase(db);
-      })
       .catch((error: unknown) => {
         log.error('shutdown failed', error);
+      })
+      .finally(() => {
+        try {
+          closeDatabase(db);
+        } catch (error: unknown) {
+          log.error('db close failed', error);
+        }
       });
   });
 
