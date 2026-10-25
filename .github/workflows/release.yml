@@ -38,7 +38,9 @@ jobs:
       - run: pnpm test
       - run: pnpm build
       - name: Package (NSIS, unsigned, production fuses)
-        run: pnpm exec electron-builder --win nsis --x64
+        # --publish never: electron-builder's implicit tag publishing (which
+        # requires GH_TOKEN) is unwanted — this workflow owns publishing via gh.
+        run: pnpm exec electron-builder --win nsis --x64 --publish never
       - name: no-listen smoke against the packaged exe (AC-4)
         run: node scripts/no-listen-smoke.mjs "dist-release/win-unpacked/Print Agent.exe"
       - name: SHA-256 checksums
