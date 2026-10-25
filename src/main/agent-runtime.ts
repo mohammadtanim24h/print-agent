@@ -292,7 +292,10 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
     }
   }
 
-  function toAgentIdentity(id: { deviceId: string; restaurantId: string }, pairedAt: string) {
+  function toAgentIdentity(
+    id: { deviceId: string; restaurantId: string },
+    pairedAt: string | null,
+  ) {
     return {
       deviceId: id.deviceId,
       agentName: deviceName,
@@ -340,7 +343,9 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
       identity:
         identity === null
           ? null
-          : toAgentIdentity(identity, deps.settings.get().pairedAt ?? new Date(now()).toISOString()),
+          : // pairedAt may legitimately be null (settings reset while the
+            // identity survived) — report what is known, never fabricate.
+            toAgentIdentity(identity, deps.settings.get().pairedAt),
       pendingJobs: engine.pendingCount(),
       ambiguousJobs: jobStore.countByStatus('ambiguous'),
       lastActivityAt,
