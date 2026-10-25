@@ -21,7 +21,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "fuse:dev": "node scripts/flip-fuses.mjs",
-    "no-listen": "node scripts/no-listen-smoke.mjs"
+    "no-listen": "node scripts/no-listen-smoke.mjs",
+    "release": "node scripts/release.mjs"
   },
   "dependencies": {
     "@napi-rs/canvas": "1.0.13",
