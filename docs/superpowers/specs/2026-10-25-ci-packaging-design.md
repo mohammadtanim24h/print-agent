@@ -96,7 +96,8 @@ win:
   target:
     - target: nsis
       arch: [x64]
-  signAndEditExecutable: false   # unsigned by decision
+  signExecutable: false          # skip code signing only (unsigned by decision,
+                                 # ADR-14) — keep exe metadata editing
 nsis:
   oneClick: false                 # assisted wizard
   perMachine: false               # per-user, no admin (operations.md §1)
@@ -109,16 +110,23 @@ electronFuses:                    # native electron-builder 26 support
   enableNodeOptionsEnvironmentVariable: false
   enableNodeCliInspectArguments: false
   enableEmbeddedAsarIntegrityValidation: true   # now safe: asar is on
+  onlyLoadAppFromAsar: true       # required with integrity validation: without it
+                                  # a planted app/ dir next to the asar bypasses
+                                  # validation (per-user install dir is writable)
   grantFileProtocolExtraPrivileges: false
-  grantNetworkProtocolExtraPrivileges: false
-npmRebuild: true                  # rebuild better-sqlite3 against Electron ABI
+npmRebuild: false                 # better-sqlite3 13 ships N-API prebuilds
+                                  # (prebuilds/win32-x64.node) — ABI-stable across
+                                  # Node/Electron; no Electron-ABI rebuild needed
 ```
+
+`grantNetworkProtocolExtraPrivileges` is not listed: the fuse does not exist in
+@electron/fuses 2.1.3 / Electron 45 — omitting.
 
 Notes:
 
-- `enableEmbeddedAsarIntegrityValidation: true` becomes possible at packaging; the
-  comment in `scripts/flip-fuses.mjs` anticipated exactly this — update that comment;
-  dev fuses stay as-is.
+- `enableEmbeddedAsarIntegrityValidation: true` is packaging-only; the dev binary
+  keeps integrity validation off (`scripts/flip-fuses.mjs` is dev-binary-only —
+  running it against dist-release binaries would disable asar integrity).
 - Renderer is packaged-files-only by construction (electron-vite bundles it; no
   dev-server origin exists in the packaged app; no debug ports introduced).
 - The release workflow runs the **no-listen smoke against the packaged exe**

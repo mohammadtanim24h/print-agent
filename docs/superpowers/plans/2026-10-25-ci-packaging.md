@@ -411,6 +411,8 @@ git commit -m "feat(ci): no-listen smoke accepts a packaged exe target"
 
 ### Task 3: electron-builder packaging config
 
+As implemented — amended 2026-10-25 after packaging verification (see design spec §3).
+
 **Files:**
 - Modify: `package.json` (new devDependency only — via pnpm, not by hand)
 - Create: `electron-builder.yml`
@@ -445,7 +447,8 @@ win:
     - target: nsis
       arch:
         - x64
-  signAndEditExecutable: false # unsigned by decision (ADR-14)
+  # skip code signing only (unsigned by decision, ADR-14) — keep exe metadata editing
+  signExecutable: false
 nsis:
   oneClick: false              # assisted wizard (operations.md §1)
   perMachine: false            # per-user install, no admin
@@ -460,9 +463,13 @@ electronFuses:
   enableNodeOptionsEnvironmentVariable: false
   enableNodeCliInspectArguments: false
   enableEmbeddedAsarIntegrityValidation: true
+  # required with integrity validation: without it a planted app/ dir next to
+  # the asar bypasses validation (per-user install dir is writable)
+  onlyLoadAppFromAsar: true
   grantFileProtocolExtraPrivileges: false
-  grantNetworkProtocolExtraPrivileges: false
-npmRebuild: true # rebuild better-sqlite3 against the Electron ABI
+  # grantNetworkProtocolExtraPrivileges does not exist in @electron/fuses 2.1.3 /
+  # Electron 45 — omitting.
+npmRebuild: false # better-sqlite3 13 ships N-API prebuilds (prebuilds/win32-x64.node) — ABI-stable across Node/Electron; no Electron-ABI rebuild needed
 ```
 
 - [ ] **Step 3: Update the stale comment in `scripts/flip-fuses.mjs`**
