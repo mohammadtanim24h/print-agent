@@ -75,4 +75,17 @@ describe('view-model mappers', () => {
     expect(mapPairFailure(new CloudError('request_rejected', 'status 422')))
       .toMatchObject({ ok: false, reason: 'invalid_code' });
   });
+
+  it('keeps secure_storage_unavailable in the network reason but tells the truth about the cause', () => {
+    // No new wire reason this phase — 'network' is the least-wrong bucket —
+    // but "check the connection" would send the operator debugging the wrong
+    // machine component.
+    const result = mapPairFailure(new CloudError('secure_storage_unavailable'));
+    expect(result).toEqual({
+      ok: false,
+      reason: 'network',
+      message:
+        'This PC cannot securely store credentials (OS key storage unavailable). Pairing was cancelled — nothing was saved.',
+    });
+  });
 });

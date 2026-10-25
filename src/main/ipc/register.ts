@@ -43,7 +43,39 @@ export function createIpcRouter(options: {
       }
       options.guard.assertTrusted(sender);
       const parsed = schema.parse(payload);
-      return await handler(parsed as never);
+      try {
+        return await handler(parsed as never);
+      } catch (err) {
+        // Architecture §5: handlers throw typed errors; the router serializes
+        // `{ code, message }` over the bridge — Electron would otherwise wrap
+        // the raw rejection ("Error invoking remote method …"), burying the
+        // machine code and shipping a stack across the boundary. Stacks stay
+        // in main (log sink); the renderer gets `code: message` only.
+        throw new Error(serializeIpcError(err));
+      }
     },
   };
+}
+
+const MAX_IPC_ERROR_MESSAGE = 300;
+
+/**
+ * `code: message` — the stable machine code survives the bridge. The code is
+ * sanitized to lowercase `[a-z0-9_.-]` (machine codes are lowercase snake; a
+ * non-conforming value falls back to `internal_error`) and the message is
+ * capped since it crosses to the renderer.
+ */
+function serializeIpcError(err: unknown): string {
+  const rawCode = (err as { code?: unknown } | null)?.code;
+  let code = 'internal_error';
+  if (typeof rawCode === 'string') {
+    const clean = rawCode.toLowerCase().replace(/[^a-z0-9_.-]/g, '');
+    if (clean !== '') code = clean;
+  }
+  const rawMessage = err instanceof Error ? err.message : String(err);
+  const message =
+    rawMessage.length > MAX_IPC_ERROR_MESSAGE
+      ? rawMessage.slice(0, MAX_IPC_ERROR_MESSAGE)
+      : rawMessage;
+  return `${code}: ${message}`;
 }

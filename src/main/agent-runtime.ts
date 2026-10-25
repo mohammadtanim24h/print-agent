@@ -246,7 +246,17 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
     if (started) return;
     started = true;
     engine.recover(); // crash recovery BEFORE the first poll (architecture §5)
-    client.start(); // no-op while unpaired
+    // Pre-flight the identity read: the poller's start() calls secrets.load()
+    // too, and CloudError('secure_storage_unavailable') (e.g. a DPAPI decrypt
+    // failure after a Windows credential reset) would escape as an unhandled
+    // rejection at every launch. readIdentity() owns the policy — present as
+    // unpaired, never wipe — so the client only starts when the identity is
+    // readable; any residual failure still degrades to unpaired, never crashes.
+    try {
+      if (readIdentity() !== null) client.start(); // no-op while unpaired
+    } catch (err) {
+      log.error('runtime: cloud client start failed — presenting as unpaired', err);
+    }
   }
 
   async function stop(): Promise<void> {

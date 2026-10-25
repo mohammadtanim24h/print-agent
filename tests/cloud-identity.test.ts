@@ -149,6 +149,32 @@ describe('pairing flow', () => {
     expect(transport.callsOf('pair')).toHaveLength(1);
   });
 
+  it('preserves the server machine code through the request_rejected rethrow', async () => {
+    // mapPairFailure keys the `expired` reason off serverCode — dropping it
+    // here would report every expired code as invalid_code.
+    const transport = new FakeTransport({
+      pair: new CloudError(
+        'request_rejected',
+        'status 410: pairing_code_expired',
+        undefined,
+        'pairing_code_expired',
+      ),
+    });
+    await expect(
+      pairDevice(
+        {
+          transport,
+          secrets: createSafeStorageSecretStore(new MemoryKv(), new FakeSafeStorage()),
+          agentVersion: '0.1.0',
+        },
+        { pairingCode: 'EXPIRED1', deviceName: 'PC' },
+      ),
+    ).rejects.toMatchObject({
+      code: 'request_rejected',
+      serverCode: 'pairing_code_expired',
+    });
+  });
+
   it('persists nothing (fail closed) when secure storage is unavailable', async () => {
     const kv = new MemoryKv();
     const storage = new FakeSafeStorage();

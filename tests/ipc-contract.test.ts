@@ -6,6 +6,7 @@ import {
   RequestSchemas,
 } from '../src/shared/ipc-contract';
 import { createIpcRouter, IpcUnknownChannelError } from '../src/main/ipc/register';
+import { JobEngineError } from '../src/main/jobs/errors';
 
 describe('ipc contract', () => {
   it('has a strict schema for every channel', () => {
@@ -106,6 +107,82 @@ describe('ipc router', () => {
     await expect(
       incomplete.dispatch('settings:set-launch-at-login', { enabled: true }, trustedFrame),
     ).rejects.toThrow(IpcUnknownChannelError);
+  });
+});
+
+describe('ipc router error serialization', () => {
+  const trustedFrame = { senderFrame: { url: 'file:///app/out/renderer/index.html' } };
+  const router = createIpcRouter({
+    guard: { assertTrusted: () => undefined },
+    schemas: { 'settings:set-launch-at-login': RequestSchemas[Channel.SetLaunchAtLogin] },
+    handlers: {
+      'settings:set-launch-at-login': (payload: unknown) => {
+        if ((payload as { enabled: boolean }).enabled) {
+          throw new JobEngineError('illegal_transition', 'only failed jobs can retry');
+        }
+        // enabled === false: raw error with no machine code
+        throw new Error('unexpected renderer state');
+      },
+    },
+  });
+
+  it('handles non-Error throws as internal_error', async () => {
+    const literal = createIpcRouter({
+      guard: { assertTrusted: () => undefined },
+      schemas: { 'settings:set-launch-at-login': RequestSchemas[Channel.SetLaunchAtLogin] },
+      handlers: {
+        'settings:set-launch-at-login': () => {
+          throw 'not even an Error'; // eslint-disable-line @typescript-eslint/only-throw-error
+        },
+      },
+    });
+    await expect(
+      literal.dispatch('settings:set-launch-at-login', { enabled: true }, trustedFrame),
+    ).rejects.toThrow(/^internal_error: not even an Error$/);
+  });
+
+  it('serializes typed errors as `code: message` (no stacks over the bridge)', async () => {
+    await expect(
+      router.dispatch('settings:set-launch-at-login', { enabled: true }, trustedFrame),
+    ).rejects.toThrow(/^illegal_transition: only failed jobs can retry$/);
+  });
+
+  it('falls back to internal_error for errors without a machine code', async () => {
+    await expect(
+      router.dispatch('settings:set-launch-at-login', { enabled: false }, trustedFrame),
+    ).rejects.toThrow(/^internal_error: unexpected renderer state$/);
+  });
+
+  it('sanitizes non-conforming machine codes', async () => {
+    const weird = createIpcRouter({
+      guard: { assertTrusted: () => undefined },
+      schemas: { 'settings:set-launch-at-login': RequestSchemas[Channel.SetLaunchAtLogin] },
+      handlers: {
+        'settings:set-launch-at-login': () => {
+          const err = new Error('boom');
+          (err as { code?: string }).code = 'BAD CODE\nwith newlines!!';
+          throw err;
+        },
+      },
+    });
+    await expect(
+      weird.dispatch('settings:set-launch-at-login', { enabled: true }, trustedFrame),
+    ).rejects.toThrow(/^badcodewithnewlines: boom$/);
+  });
+
+  it('caps the message length that crosses to the renderer', async () => {
+    const capped = createIpcRouter({
+      guard: { assertTrusted: () => undefined },
+      schemas: { 'settings:set-launch-at-login': RequestSchemas[Channel.SetLaunchAtLogin] },
+      handlers: {
+        'settings:set-launch-at-login': () => {
+          throw new Error('x'.repeat(1000));
+        },
+      },
+    });
+    await expect(
+      capped.dispatch('settings:set-launch-at-login', { enabled: true }, trustedFrame),
+    ).rejects.toThrow(/^internal_error: x{300}$/);
   });
 });
 

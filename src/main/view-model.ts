@@ -42,11 +42,16 @@ export function mapPairFailure(err: CloudError): PairResult {
         ? 'expired'
         : 'invalid_code'
       : 'network';
+  // 'network' is the least-wrong bucket for secure_storage_unavailable (the
+  // wire reason union has no local-hardware entry), but the message must not
+  // tell the operator to check a connection that is not the problem.
   const message =
-    reason === 'expired'
-      ? 'That pairing code expired. Generate a new one in the dashboard.'
-      : reason === 'invalid_code'
-        ? 'The pairing code was rejected. Check it and try a fresh code.'
-        : 'Could not reach the server. Check the connection and try again.';
+    err.code === 'secure_storage_unavailable'
+      ? 'This PC cannot securely store credentials (OS key storage unavailable). Pairing was cancelled — nothing was saved.'
+      : reason === 'expired'
+        ? 'That pairing code expired. Generate a new one in the dashboard.'
+        : reason === 'invalid_code'
+          ? 'The pairing code was rejected. Check it and try a fresh code.'
+          : 'Could not reach the server. Check the connection and try again.';
   return { ok: false, reason, message };
 }

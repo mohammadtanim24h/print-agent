@@ -248,6 +248,9 @@ async function makeRuntime(
     transports?: TransportRegistry;
     schedule?: (fn: () => void, delayMs: number) => () => void;
     fetchOverride?: typeof fetch;
+    kv?: SecretKv;
+    safeStorage?: SafeStorageLike;
+    log?: Logger;
   } = {},
 ): Promise<RuntimeHarness> {
   const db = openDatabase({ file: null });
@@ -259,7 +262,7 @@ async function makeRuntime(
     adapter: memoryAdapter(),
     report: () => {},
   });
-  const log: Logger = {
+  const log: Logger = overrides.log ?? {
     debug: vi.fn(),
     info: vi.fn(),
     warn: vi.fn(),
@@ -277,7 +280,7 @@ async function makeRuntime(
     });
   const env: NonNullable<RuntimeDeps['env']> = {
     transportOverride: transport,
-    kvOverride: fakeKv(),
+    kvOverride: overrides.kv ?? fakeKv(),
     transportsOverride: overrides.transports ?? stubTransports(),
     adapterOverride: memoryAdapter(),
     schedule,
@@ -291,7 +294,7 @@ async function makeRuntime(
     log,
     agentVersion: '0.1.0-test',
     deviceName: 'TEST-PC',
-    safeStorage: fakeSafeStorage(),
+    safeStorage: overrides.safeStorage ?? fakeSafeStorage(),
     paths: {
       printersFile: ':memory-printers',
       dbFile: null,
@@ -417,6 +420,38 @@ describe('AgentRuntime lifecycle', () => {
     await runtime.unpair();
     await runtime.unpair();
     expect((await runtime.snapshot()).connection).toBe('unpaired');
+  });
+
+  it('presents as unpaired instead of crashing when the stored identity cannot be decrypted', async () => {
+    // DPAPI decrypt failure after a Windows credential reset: secrets.load()
+    // throws CloudError('secure_storage_unavailable') — start() must not
+    // reject, and the snapshot must present the operator with a pairable,
+    // unpaired state (never a wipe, never an unhandled rejection).
+    const kv = fakeKv();
+    kv.set('cloud.identity', Buffer.from('undecryptable-blob', 'utf8').toString('base64'));
+    const storage: SafeStorageLike = {
+      isEncryptionAvailable: () => true,
+      encryptString: (plain) => Buffer.from(plain, 'utf8'),
+      decryptString: () => {
+        throw new Error('simulated DPAPI failure');
+      },
+    };
+    const warnLog = vi.fn();
+    const { runtime } = await makeRuntime({
+      kv,
+      safeStorage: storage,
+      log: { debug: vi.fn(), info: vi.fn(), warn: warnLog, error: vi.fn() },
+    });
+    expect(() => {
+      runtime.start();
+    }).not.toThrow();
+    const snap = await runtime.snapshot();
+    expect(snap.connection).toBe('unpaired');
+    expect(snap.identity).toBeNull();
+    // readIdentity's policy fired: unreadable storage is surfaced, never wiped.
+    expect(warnLog).toHaveBeenCalledWith(
+      expect.stringContaining('stored identity unreadable, presenting as unpaired'),
+    );
   });
 });
 
