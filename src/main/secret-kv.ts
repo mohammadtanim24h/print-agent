@@ -24,8 +24,8 @@ import type { SecretKv } from './cloud-client/secret-store';
 /** Injectable sync seams over the filesystem (test double entry points).
  *  Defaults do direct `node:fs` I/O. */
 export interface JsonFileKvSeams {
-  readSync?(filePath: string): string | null;
-  writeSync?(filePath: string, contents: string): void;
+  readSync?: (filePath: string) => string | null;
+  writeSync?: (filePath: string, contents: string) => void;
 }
 
 function defaultReadSync(filePath: string): string | null {
@@ -39,7 +39,7 @@ function defaultReadSync(filePath: string): string | null {
 
 function defaultWriteSync(filePath: string, contents: string): void {
   // Temp file in the SAME directory: rename is atomic within one volume.
-  const tmpPath = join(dirname(filePath), `.${basename(filePath)}.${process.pid}.tmp`);
+  const tmpPath = join(dirname(filePath), `.${basename(filePath)}.${String(process.pid)}.tmp`);
   try {
     writeFileSync(tmpPath, contents);
     renameSync(tmpPath, filePath);
@@ -85,9 +85,10 @@ export function createJsonFileKv(filePath: string, seams: JsonFileKvSeams = {}):
     },
     delete(key) {
       if (!(key in cache)) return;
-      // Rest-destructure instead of `delete` (no dynamic delete, still one rewrite).
-      const { [key]: _removed, ...rest } = cache;
-      void _removed;
+      // Rebuild without the key (no dynamic `delete`, still one whole-file rewrite).
+      const rest = Object.fromEntries(
+        Object.entries(cache).filter(([k]) => k !== key),
+      );
       writeSync(filePath, JSON.stringify(rest));
       cache = rest;
     },

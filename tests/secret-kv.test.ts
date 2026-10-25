@@ -65,7 +65,7 @@ describe('createJsonFileKv', () => {
     // The parent directory does not exist → the tmp-file write fails.
     const file = join(tempFile('unused'), 'missing-dir', 'identity.json');
     const kv = createJsonFileKv(file);
-    expect(() => kv.set('cloud.identity', 'blob-3')).toThrow();
+    expect(() => { kv.set('cloud.identity', 'blob-3'); }).toThrow();
     expect(kv.get('cloud.identity')).toBeNull();
   });
 
@@ -74,11 +74,11 @@ describe('createJsonFileKv', () => {
     const kv = createJsonFileKv(file);
     kv.set('cloud.identity', 'blob-4');
     const failing = createJsonFileKv(file, {
-      writeSync: (_path, _contents) => {
+      writeSync: () => {
         throw new Error('disk full');
       },
     });
-    expect(() => failing.delete('cloud.identity')).toThrow('disk full');
+    expect(() => { failing.delete('cloud.identity'); }).toThrow('disk full');
     // The real store on disk still holds the value; a fresh reopen sees it.
     const reopened = createJsonFileKv(file);
     expect(reopened.get('cloud.identity')).toBe('blob-4');
