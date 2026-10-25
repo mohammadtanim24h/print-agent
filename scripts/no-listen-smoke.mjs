@@ -17,7 +17,12 @@ const imageName = basename(electronExe);
 
 const SETTLE_MS = 7000;
 
-function fail(message) {
+function fail(message, childPid) {
+  if (childPid !== undefined) {
+    // /T kills the whole process tree (gpu/renderer helpers included).
+    // Needed because process.exit below skips the try/finally taskkill.
+    spawn('taskkill', ['/PID', String(childPid), '/T', '/F'], { stdio: 'ignore' });
+  }
   console.error(`FAIL: ${message}`);
   process.exit(1);
 }
@@ -57,7 +62,7 @@ await new Promise((resolve) => setTimeout(resolve, SETTLE_MS));
 
 try {
   const pids = appPids();
-  if (pids.size === 0) fail(`no ${imageName} processes found — app did not start`);
+  if (pids.size === 0) fail(`no ${imageName} processes found — app did not start`, child.pid);
 
   const offenders = listeningLines().filter((line) => {
     const pid = line.trim().split(/\s+/).at(-1);
@@ -65,7 +70,7 @@ try {
   });
 
   if (offenders.length > 0) {
-    fail(`LISTEN sockets found:\n${offenders.join('\n')}`);
+    fail(`LISTEN sockets found:\n${offenders.join('\n')}`, child.pid);
   }
   console.log(`OK: ${pids.size} ${imageName} process(es), zero LISTEN sockets (AC-4).`);
 } finally {
