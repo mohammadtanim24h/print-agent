@@ -35,7 +35,7 @@ export type Channel = (typeof Channel)[keyof typeof Channel];
 
 const noPayload = z.undefined();
 
-const printerIdPayload = z.strictObject({ printerId: z.string().uuid() });
+const printerIdPayload = z.strictObject({ printerId: z.uuid() });
 
 export const RequestSchemas = {
   [Channel.GetAgentInfo]: noPayload,
@@ -49,12 +49,12 @@ export const RequestSchemas = {
   [Channel.PrintersList]: noPayload,
   // draft validated by PrinterDraftSchema in the printer store
   [Channel.PrintersAdd]: z.strictObject({ draft: z.unknown() }),
-  [Channel.PrintersUpdate]: z.strictObject({ printerId: z.string().uuid(), draft: z.unknown() }),
+  [Channel.PrintersUpdate]: z.strictObject({ printerId: z.uuid(), draft: z.unknown() }),
   [Channel.PrintersRemove]: printerIdPayload,
   [Channel.PrintersTest]: printerIdPayload,
   [Channel.JobsList]: noPayload,
-  [Channel.JobsRetry]: z.strictObject({ jobId: z.string().uuid() }),
-  [Channel.JobsReprint]: z.strictObject({ jobId: z.string().uuid() }),
+  [Channel.JobsRetry]: z.strictObject({ jobId: z.uuid() }),
+  [Channel.JobsReprint]: z.strictObject({ jobId: z.uuid() }),
   [Channel.DiagnosticsReport]: noPayload,
   [Channel.DiagnosticsChecks]: noPayload,
   [Channel.LogsRecent]: noPayload,
