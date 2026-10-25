@@ -190,7 +190,7 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
       );
     }
     if (job.expiresAt !== null && job.expiresAt <= now()) {
-      return rejectAck(job, 'job_expired', 'job expired before intake');
+      return rejectAck(job, 'expired_job', 'job expired before intake');
     }
     // Agent-enforced envelope caps (api-contract §2): the WSS boundary schema
     // also bounds these, but the engine is the last line of defense and must

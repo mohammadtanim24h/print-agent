@@ -39,7 +39,7 @@ describe('engine intake', () => {
     try {
       const ack = h.engine.submit(makeJob(h.printerId, { expiresAt: HARNESS_T0 - 1 }));
       expect(ack.status).toBe('rejected');
-      expect(ack.error?.code).toBe('job_expired');
+      expect(ack.error?.code).toBe('expired_job');
       expect(h.engine.getJob('job-1')).toBeNull();
     } finally {
       h.dispose();

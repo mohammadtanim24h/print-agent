@@ -41,12 +41,40 @@ describe('OverviewScreen', () => {
     expect(onNavigate).toHaveBeenCalledWith('setup');
   });
 
+  it('shows the revoked banner over the unpaired empty state and routes to setup', async () => {
+    const user = userEvent.setup();
+    const onNavigate = vi.fn();
+    // A revoked device reports identity null (the wipe cleared it), so the
+    // unpaired empty state renders underneath the banner.
+    const service = makeService({
+      getSnapshot: () =>
+        Promise.resolve({
+          version: '0.1.0',
+          connection: 'revoked' as const,
+          connectionDetail:
+            'This device was revoked. Local data was wiped — pair again with a new code.',
+          identity: null,
+          pendingJobs: 0,
+          ambiguousJobs: 0,
+          lastActivityAt: null,
+        }),
+    });
+    renderWithService(<OverviewScreen onNavigate={onNavigate} />, service);
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain('revoked by the restaurant');
+    expect(alert.textContent).toContain('wiped');
+    expect(screen.getByText(/not paired yet/i)).toBeInTheDocument();
+    await user.click(screen.getAllByRole('button', { name: /open setup/i })[0] as HTMLElement);
+    expect(onNavigate).toHaveBeenCalledWith('setup');
+  });
+
   it('renders connection, identity, printer health and recent jobs when paired', async () => {
     renderWithService(<OverviewScreen onNavigate={() => undefined} />, makeService());
     expect(await screen.findByText('Trattoria Bella (demo)')).toBeInTheDocument();
-    // Connection pill + demo badge (honesty: mock data is labelled).
+    // Connection pill (online) + printer health wording, not just color.
+    // (The old "demo data" badge assertion served the deleted demo mock.)
+    expect(screen.getByText('Connected')).toBeInTheDocument();
     expect(screen.getByText('Offline')).toBeInTheDocument();
-    expect(screen.getByText(/demo data/i)).toBeInTheDocument();
     // Printer health uses wording, not just color.
     expect(screen.getByText('Paper low')).toBeInTheDocument();
     expect(screen.getByText('Offline')).toBeInTheDocument();

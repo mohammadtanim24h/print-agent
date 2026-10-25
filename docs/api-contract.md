@@ -9,6 +9,7 @@ rejected, not ignored, within `data` payloads (envelope may gain additive fields
 
 - Base URL: `https://<saas-host>/api/agent/v1` (versioned path; v1 frozen once shipped).
 - WSS endpoint: `wss://<saas-host>/agent/v1/ws` — agent-initiated, persistent, outbound.
+  **Not implemented in v1** (§7: REST-only polling; heartbeats via `POST /heartbeat`).
 - Auth: `Authorization: Bearer <device_token>` (pairing-issued, rotated; short TTL
   access token + rotating refresh token). WSS passes the token in the `Authorization`
   header on the upgrade request.
@@ -29,7 +30,7 @@ rejected, not ignored, within `data` payloads (envelope may gain additive fields
     "idempotency_key": "ord_8842-receipt-1",
     "tenant_id": "018f...",
     "restaurant_id": "018f...",
-    "printer_id": "018f...", // must be bound to this agent
+    "printer_id": "018f...", // restaurant-scoped — NOT per-agent (§7 note 5)
     "priority": 5, // 1 (highest) .. 9; kitchen tickets typically 1-2
     "copies": 1, // 1..4
     "doc_type": "customer_receipt", // | "kitchen_ticket" | "bar_ticket" | "station_ticket"
@@ -133,6 +134,8 @@ overloading `completed`.
 ```
 
 Missed heartbeats (≥ 3) mark the agent `offline` server-side.
+**§7 note 7 supersedes the miss counter:** offline = no heartbeat for > 90 s
+(`last_seen_at` staleness).
 
 ### 3.3 REST endpoints (fallback + control plane)
 
@@ -144,7 +147,7 @@ Missed heartbeats (≥ 3) mark the agent `offline` server-side.
 | `POST` | `/acks`                          | Batch acks (idempotent, keyed by `job_id`+`attempt`)                 |
 | `POST` | `/heartbeat`                     | Polling-mode heartbeat (additive — see below)                        |
 | `GET`  | `/config`                        | Printer/station config snapshot + `config_version`                   |
-| `POST` | `/diagnostics`                   | Upload redacted log bundle (support-initiated, agent-user-confirmed) |
+| `POST` | `/diagnostics`                   | Upload redacted log bundle (support-initiated, agent-user-confirmed). **Deferred — not implemented in v1** (§7 note 4) |
 | `GET`  | `/server-keys`                   | Current server signing public key(s), pinned at pairing              |
 
 **Additive v1 clarifications (documented + tested with the agent's cloud-client,
@@ -161,7 +164,9 @@ Missed heartbeats (≥ 3) mark the agent `offline` server-side.
   polling-only agents receive control messages without WSS. Server marks the
   batch delivered; agent acks (idempotent by `job_id`+`attempt`) drive final states.
 - `POST /acks` request body: the §3.1 ack batch envelope
-  (`{ envelope_version, type: "ack", acks: [...] }`, ≤ 100 acks). Response: `204`.
+  (`{ envelope_version, type: "ack", acks: [...] }`, ≤ 100 acks). Response:
+  **200 with a per-ack results array** (§7.1 deviation — not the bare `204`):
+  `{ "results": [{ "job_id", "result": "applied|duplicate|stale|not_found|rejected" }] }`.
 - `POST /heartbeat` — **additive endpoint for polling-mode agents** (no WSS
   connection to carry §3.2 heartbeats): request body is the §3.2 heartbeat with
   `"connection": "poll"`. Response: `204`. Not sent by WSS-connected agents;
@@ -182,7 +187,7 @@ Agent:    POST /pair { pairing_code, device_pubkey(ed25519), device_name, agent_
 Server:   verifies code unused+unexpired → creates agent row (tenant, restaurant)
           → returns { device_id, device_token, refresh_token, server_signing_pubkey,
                       restaurant_id, tenant_id, token_ttl_s }
-Agent:    stores identity (DPAPI-protected), opens WSS, first heartbeat confirms pairing
+Agent:    stores identity (DPAPI-protected), starts polling (§7: REST-only), first heartbeat confirms pairing
 ```
 
 Pairing codes are single-use and short-lived; three failed attempts rate-limits the
@@ -191,7 +196,9 @@ endpoint per IP (T3).
 ### 3.5 Revocation
 
 Server pushes `{ "type": "revoke", "reason": "manager_initiated" }` on the WSS and
-refuses token refresh. Agent behavior: stop accepting jobs → send final heartbeat →
+refuses token refresh. **§7 supersedes the WSS transport:** v1 delivers the revoke
+envelope inside `GET /jobs` batches (and refuses refresh with
+`{error:{code:"device_revoked"}}`). Agent behavior: stop accepting jobs → send final heartbeat →
 wipe `identity` + `jobs` + cached `printers` → exit to a "Device revoked, contact
 support" screen. If the agent never reconnects, token TTL expiry (≤ 24 h) neutralizes
 stolen tokens; revocation is also enforced server-side on every REST call.
@@ -237,3 +244,112 @@ Agent applies atomically on `config_version` increase; acks `config.applied` or
 - Ack: all statuses / batch idempotency (same ack twice = same result server-side).
 - Pairing: expired code / reused code / rate limit.
 - Config: version regression ignored / invalid transport address rejected.
+
+## 7. Server implementation notes & deviations (servepro-api, 2026-10-24)
+
+Implemented surface: §3.3 REST only (polling-mode agents). WSS push is NOT
+implemented in v1 — §3.2 heartbeats arrive via `POST /heartbeat` with
+`connection: "poll"`. Everything below is covered by
+`tests/Feature/Agent` + `tests/Feature/Printing` (executable contract examples:
+`ContractExamplesTest`).
+
+1. **Restaurant identity** — deployments are single-restaurant. A stable
+   `restaurant_uid` (UUIDv7, server-minted on the singleton `restaurant_settings`
+   row) is the `restaurant_id` in every envelope; `tenant_id` is set to the same
+   value. All scoping is enforced server-side from the device row — request
+   fields can never widen it (proven by `AgentTenantIsolationTest`).
+2. **Server job status vocabulary**: `pending, claimed, sent_to_printer,
+   completed, failed, outcome_unknown`. Ack mapping: `accepted`/`rendered` →
+   stays `claimed`; `sent_to_printer` → `sent_to_printer`; `completed` →
+   `completed` (driver hand-off); `failed`/`rejected` → `failed`; `ambiguous`
+   → `outcome_unknown`. There is NO `printed` state or column; `printed:true`
+   in an ack is rejected 422. Jobs are `pending` when the create-API responds —
+   acceptance is never delivery, and nothing is terminal without an agent ack
+   (exception: dashboard retry/operator override).
+3. **Error envelope** — agent surface (`/api/agent/v1/*`) uses this contract's
+   `{ "error": { "code", "message" } }`; POS endpoints (`/api/print-jobs`,
+   `/api/printers`, `/api/agent-devices`, `/api/agent-pairing-codes`) keep the
+   platform envelope `{ status, success, message, data }`. Both are normative.
+4. **`/diagnostics` deferred** — no support tooling exists yet; the endpoint is
+   not implemented in v1 (additive later).
+5. **Printers are restaurant-scoped, not per-agent** — any active agent of a
+   restaurant may claim all of its jobs; the printers schema keeps a nullable
+   `agent_device_id` for future binding.
+6. **Claim semantics (§3.3 GET /jobs)** — the pull IS the claim: atomic
+   transition `pending → claimed` with a lease (`lease_ttl` 300 s), attempt
+   counter, and per-batch locking; expired leases are re-claimable; attempts
+   ≥ 3 auto-fail with `max_attempts_exceeded`; a job whose printer was disabled
+   fails at claim time with `printer_disabled` instead of being delivered.
+7. **Offline detection** — `last_seen_at` staleness (> 90 s) replaces the
+   3-missed-heartbeat counter (no WSS). Surface: `GET /api/agent-devices`
+   `online: bool`.
+8. **Refresh rotation hardening** — replaying an already-rotated refresh token
+   REVOKES the device (stolen-token containment; the previous rotation's hash
+   is retained solely for detection). Revoked devices get
+   `{error:{code:"device_revoked"}}` on refresh and 401 on every call.
+
+### 7.1 Credential & endpoint summary (agent implementers)
+
+- Pairing codes: issued by a dashboard admin (`POST /api/agent-pairing-codes`),
+  8 chars, TTL 10 min, single use; server stores only the SHA-256 hash.
+- Device tokens: 64-char random hex; server stores SHA-256 hashes only. Access
+  TTL 3600 s; refresh TTL 14 d, single-use rotated pair (§7 note 8).
+- Required headers on authenticated calls: `Authorization: Bearer`,
+  `X-Device-Id` (must match the token's device), `X-Agent-Version`,
+  `X-Protocol-Version: 1`.
+- Rate limits: `POST /pair` and `POST /token/refresh` — 3 attempts / 15 min per
+  IP (429 otherwise); agent surface — 120 req/min per device.
+- `POST /acks` responses 200 with per-ack results
+  (`applied | duplicate | stale | not_found | rejected`), not the §3.3 bare
+  `204` — the results array lets the agent distinguish poisoning from replays
+  without re-fetching (documented deviation).
+- Retention: terminal jobs + events pruned after 30 days
+  (`php artisan printing:prune`).
+
+### 7.2 Wire examples
+
+`GET /api/agent/v1/jobs` → 200:
+
+```jsonc
+{
+  "jobs": [{
+    "envelope_version": 1,
+    "type": "print_job",
+    "job": {
+      "job_id": "019a1c...",            // uuidv7
+      "idempotency_key": "order_58_customer_receipt",
+      "tenant_id": "0198fe...",         // == restaurant_id (§7 note 1)
+      "restaurant_id": "0198fe...",
+      "printer_id": "01990a...",
+      "priority": 5, "copies": 1,
+      "doc_type": "customer_receipt", "doc_version": 1,
+      "issued_at": "2026-10-24T10:00:00+00:00",
+      "expires_at": "2026-10-24T10:10:00+00:00",
+      "payload": { /* §2 document model v1 — server-built snapshot */ }
+    },
+    "sig": "base64(ed25519 detached signature over canonical_json(job))"
+  }],
+  "next_cursor": "2026-10-24T10:00:00.000000+00:00"
+}
+```
+
+`POST /api/agent/v1/acks` → 200:
+
+```jsonc
+// request: §3.1 batch envelope (printed:true → 422)
+{ "results": [
+  { "job_id": "019a1c...", "result": "applied" }   // applied|duplicate|stale|not_found|rejected
+] }
+```
+
+`POST /api/agent/v1/heartbeat` → 204 (empty body).
+`GET /api/agent/v1/config` → 200 `{ envelope_version, type: "config_update",
+config_version, printers: [...] }` (§4 printer shape).
+`GET /api/agent/v1/server-keys` → 200 `{ keys: [{ kid, public_key, active }] }`.
+
+Error example (agent surface):
+
+```jsonc
+// 401 from any authenticated agent endpoint
+{ "error": { "code": "invalid_token", "message": "Invalid or expired device token" } }
+```

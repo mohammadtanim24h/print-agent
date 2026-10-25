@@ -38,8 +38,9 @@ them is wrong, not the docs.
     distribution). Vet maintenance status and postinstall scripts before adding; prefer
     N-API prebuilds; `ignore-scripts` in CI; lockfile is exact-pinned. See
     `.research/dependency-research.md` for prior vetting.
-11. **Updates**: only through the signed electron-updater feed. Never disable signature
-    checks. Never allow version downgrades in shipped code.
+11. **Updates**: no auto-updater. New versions are distributed as manually installed
+    packages. Never add an update channel that is not signature-verified end to end —
+    an unsigned auto-updater is forbidden.
 
 ## Coding conventions
 

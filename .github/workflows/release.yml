@@ -1,0 +1,70 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false # never cancel a publish mid-flight
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Tag must match package.json version
+        shell: bash
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p "require('./package.json').version")"
+          if [ "$tag" != "$pkg" ]; then
+            echo "REFUSED: tag v$tag does not match package.json version $pkg" >&2
+            exit 1
+          fi
+      - run: pnpm install --frozen-lockfile
+      - name: Dependency admission (CLAUDE.md rule 10)
+        run: node scripts/check-deps.mjs
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      - name: Package (NSIS, unsigned, production fuses)
+        run: pnpm exec electron-builder --win nsis --x64
+      - name: no-listen smoke against the packaged exe (AC-4)
+        run: node scripts/no-listen-smoke.mjs "dist-release/win-unpacked/Print Agent.exe"
+      - name: SHA-256 checksums
+        shell: bash
+        run: |
+          cd dist-release
+          for f in PrintAgent-Setup-*.exe; do
+            sha256sum "$f" > "$f.sha256"
+          done
+      - name: Publish GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > release-notes.md <<'EOF'
+          Unsigned manual-distribution build (ADR-14). Restaurants install or
+          upgrade by running this installer.
+
+          Release-engineer checklist before distributing (operations.md §6):
+          - Verify the SHA-256 checksum of the installer.
+          - Confirm the production API base URL is compiled in (no placeholder).
+          - Confirm the pairing-code alphabet ^[A-Z0-9]{8}$ with the Laravel team.
+          - Upload the installer to the SaaS download page.
+          EOF
+          gh release create "$GITHUB_REF_NAME" \
+            dist-release/PrintAgent-Setup-*.exe \
+            dist-release/PrintAgent-Setup-*.sha256 \
+            --title "Print Agent $GITHUB_REF_NAME" \
+            --notes-file release-notes.md

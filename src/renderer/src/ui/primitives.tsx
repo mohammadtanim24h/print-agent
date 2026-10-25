@@ -71,18 +71,6 @@ export function ErrorBanner(props: {
   );
 }
 
-/** Shown while any screen is backed by demo data — keeps mock output honest. */
-export function DemoBadge(): React.JSX.Element {
-  return (
-    <span
-      className="pill pill-demo"
-      title="This screen shows demonstration data. Cloud and printer services are not connected yet."
-    >
-      Demo data
-    </span>
-  );
-}
-
 export function Field(props: {
   readonly label: string;
   readonly hint?: string;

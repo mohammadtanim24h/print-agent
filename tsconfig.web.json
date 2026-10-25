@@ -21,5 +21,10 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src/renderer/src/**/*.ts", "src/renderer/src/**/*.tsx", "src/shared/**/*.ts"]
+  "include": [
+    "src/renderer/src/**/*.ts",
+    "src/renderer/src/**/*.tsx",
+    "src/shared/**/*.ts",
+    "src/main/printers/profile.ts"
+  ]
 }

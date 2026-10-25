@@ -44,6 +44,8 @@ export interface PollingClientDeps {
   readonly pollIntervalMs?: number;
   /** Minimum spacing between token refresh attempts (loop prevention). */
   readonly refreshCooldownMs?: number;
+  /** Injected randomness for cadence/backoff jitter; defaults to Math.random. */
+  readonly random?: () => number;
   /** Queue/printer facts for the in-cycle heartbeat; cycle heartbeat is sent only when provided. */
   readonly heartbeatSample?: () => HeartbeatSample;
   /** Wired in composition: wipes jobs + cached printers on revocation (§3.5). */
@@ -53,6 +55,29 @@ export interface PollingClientDeps {
 const DEFAULT_POLL_INTERVAL_MS = 30_000;
 const DEFAULT_REFRESH_COOLDOWN_MS = 30_000;
 const MAX_BACKOFF_MS = 10 * 60_000;
+
+/** Identifies a v1 print_job envelope that failed schema validation but is
+ *  still nameable (type/version recognizable, `job.job_id` a string). Returns
+ *  the rejection code to ack: `bad_signature` when the `sig` field is
+ *  null/missing/not base64url(64 bytes), `invalid_envelope` otherwise. Only
+ *  unnameable garbage stays `malformed`. */
+function unsignableOrInvalidAck(raw: unknown): {
+  readonly jobId: string;
+  readonly code: 'bad_signature' | 'invalid_envelope';
+} | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const record = raw as Record<string, unknown>;
+  if (record['type'] !== 'print_job' || record['envelope_version'] !== ENVELOPE_VERSION) {
+    return null;
+  }
+  const job = record['job'];
+  if (typeof job !== 'object' || job === null) return null;
+  const jobId = (job as Record<string, unknown>)['job_id'];
+  if (typeof jobId !== 'string' || jobId === '') return null;
+  const sig = record['sig'];
+  const sigShaped = typeof sig === 'string' && /^[A-Za-z0-9_-]{86}$/.test(sig);
+  return { jobId, code: sigShaped ? 'invalid_envelope' : 'bad_signature' };
+}
 
 type Listeners = {
   job: Set<CloudListener<PrintJobEnvelope>>;
@@ -74,6 +99,7 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
     });
   const pollIntervalMs = deps.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
   const refreshCooldownMs = deps.refreshCooldownMs ?? DEFAULT_REFRESH_COOLDOWN_MS;
+  const random = deps.random ?? Math.random;
   const log = deps.log ?? ((): void => {});
   const sampleProvider = deps.heartbeatSample;
   // Indirection through functions defeats TS control-flow narrowing of the
@@ -99,6 +125,13 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
   let appliedConfigVersion = -1;
   let lastRefreshAt = -Infinity;
   let refreshInFlight: Promise<void> | null = null;
+  /**
+   * Set when a rotation could not be durably persisted after the server
+   * already rotated (§7 note 8): the on-disk refresh token is now superseded
+   * and replaying it REVOKES the device. Refresh is poisoned for the rest of
+   * the session — the loop stops and no retry may ever send the dead token.
+   */
+  let refreshPersistBroken = false;
 
   function setState(next: ConnectionState): void {
     if (state === next) return;
@@ -106,9 +139,16 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
     for (const listener of listeners.state) listener(next);
   }
 
+  /** Healthy cadence: pollIntervalMs ± 10 % jitter (§7: heartbeats "every
+   *  ~30 s ± jitter"; the 90 s offline window must never be raced by a
+   *  synchronized fleet). */
+  function healthyDelayMs(): number {
+    return Math.floor(pollIntervalMs * (0.9 + 0.2 * random()));
+  }
+
   function backoffDelayMs(): number {
     const delay = Math.min(pollIntervalMs * 2 ** Math.max(0, backoffAttempt - 1), MAX_BACKOFF_MS);
-    return Math.floor(delay / 2 + Math.random() * (delay / 2)); // half-jitter, never zero-cadence
+    return Math.floor(delay / 2 + random() * (delay / 2)); // half-jitter, never zero-cadence
   }
 
   function scheduleCycle(delayMs: number): void {
@@ -164,7 +204,9 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
       }
     } finally {
       cycling = false;
-      if (!isStopped()) scheduleCycle(backoffAttempt === 0 ? pollIntervalMs : backoffDelayMs());
+      if (!isStopped()) {
+        scheduleCycle(backoffAttempt === 0 ? healthyDelayMs() : backoffDelayMs());
+      }
     }
   }
 
@@ -197,6 +239,11 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
   /** One token refresh per cooldown window; refusal is terminal (§3.5). */
   function refreshTokens(): Promise<void> {
     if (refreshInFlight !== null) return refreshInFlight;
+    if (refreshPersistBroken) {
+      return Promise.reject(
+        new CloudError('unauthorized', 'rotation could not be persisted; refresh is poisoned'),
+      );
+    }
     if (now() - lastRefreshAt < refreshCooldownMs) {
       return Promise.reject(new CloudError('unauthorized', 'refresh cooldown active'));
     }
@@ -212,15 +259,30 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
           err instanceof CloudError &&
           (err.code === 'unauthorized' || err.code === 'forbidden')
         ) {
-          handleRevocation('token_refresh_refused');
+          handleRevocation(
+            isDeviceRevoked(err) ? 'device_revoked' : 'token_refresh_refused',
+          );
         }
         throw err;
       }
       // Re-read: a concurrent revocation may have cleared the identity while awaiting.
       const after = currentIdentity();
       if (after === null) throw new CloudError('revoked', 'identity cleared during refresh');
-      identity = { ...after, deviceToken: res.device_token, refreshToken: res.refresh_token };
-      deps.secrets.save(identity);
+      const next = { ...after, deviceToken: res.device_token, refreshToken: res.refresh_token };
+      // Persist-then-swap (§7 note 8): the NEW pair must be durable before it
+      // becomes live in memory or before any subsequent refresh. If this save
+      // fails, the on-disk refresh token is already superseded — poison
+      // refresh and stop, never replay the dead token.
+      try {
+        deps.secrets.save(next);
+      } catch (err) {
+        refreshPersistBroken = true;
+        stop();
+        setState('offline');
+        log('cloud: token rotation could not be persisted — refresh disabled until restart');
+        throw err;
+      }
+      identity = next;
     })();
     refreshInFlight = attempt.finally(() => {
       refreshInFlight = null;
@@ -231,12 +293,14 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
   async function withAuth<T>(
     fn: (auth: { deviceId: string; deviceToken: string }) => Promise<T>,
   ): Promise<T> {
-    const id = identity;
-    if (id === null) throw new CloudError('not_paired');
-    const auth = (): { deviceId: string; deviceToken: string } => ({
-      deviceId: id.deviceId,
-      deviceToken: id.deviceToken,
-    });
+    if (identity === null) throw new CloudError('not_paired');
+    // Read the CURRENT identity at call time: the retry after a refresh must
+    // carry the rotated token, never the one that just 401'd.
+    const auth = (): { deviceId: string; deviceToken: string } => {
+      const current = currentIdentity();
+      if (current === null) throw new CloudError('not_paired');
+      return { deviceId: current.deviceId, deviceToken: current.deviceToken };
+    };
     try {
       return await fn(auth());
     } catch (err) {
@@ -245,6 +309,13 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
         (err.code !== 'unauthorized' && err.code !== 'forbidden')
       ) {
         throw err;
+      }
+      // §7 note 8: the server answers 401 {error:{code:"device_revoked"}} on
+      // EVERY call for a revoked device. Revocation is already terminal — do
+      // not attempt a refresh, go straight to wipe + pairing screen.
+      if (isDeviceRevoked(err)) {
+        handleRevocation('device_revoked');
+        throw new CloudError('revoked', 'server reported device_revoked');
       }
       await refreshTokens(); // throws 'revoked' downstream when refused
       return await fn(auth()); // single retry with the rotated token
@@ -268,9 +339,32 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
           `cloud: refused envelope with unsupported envelope_version ${String(msg.envelopeVersion)}`,
         );
         return;
-      case 'malformed':
+      case 'malformed': {
+        // A print_job whose `sig` is null/missing/malformed fails the envelope
+        // schema before signature verification. The pull IS the claim (§7
+        // note 6), so dropping it silently would strand the server-side lease
+        // until it auto-fails — ack it rejected instead when we can name the job.
+        const stranded = unsignableOrInvalidAck(raw);
+        if (stranded !== null) {
+          log(`cloud: rejected unparseable print_job (${stranded.code})`);
+          void doSubmitAcks({
+            envelope_version: ENVELOPE_VERSION,
+            type: 'ack',
+            acks: [
+              rejectionAck(
+                stranded.jobId,
+                stranded.code,
+                stranded.code === 'bad_signature'
+                  ? 'envelope signature missing or malformed'
+                  : 'envelope failed schema validation',
+              ),
+            ],
+          }).catch(() => undefined);
+          return;
+        }
         log('cloud: dropped malformed server message');
         return;
+      }
       case 'ping':
         return;
     }
@@ -308,7 +402,7 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
       void doSubmitAcks({
         envelope_version: ENVELOPE_VERSION,
         type: 'ack',
-        acks: [rejectionAck(job.job_id, 'bad_sig', 'envelope signature verification failed')],
+        acks: [rejectionAck(job.job_id, 'bad_signature', 'envelope signature verification failed')],
       }).catch(() => undefined);
       return;
     }
@@ -337,7 +431,24 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
   }
 
   function doSubmitAcks(batch: AckBatch): Promise<void> {
-    return withAuth((auth) => transport.sendAcks(auth, batch));
+    return withAuth(async (auth) => {
+      const res = await transport.sendAcks(auth, batch);
+      for (const r of res.results) {
+        // duplicate/stale are success-no-ops (§7.1): never retry, never re-print.
+        if (r.result === 'applied' || r.result === 'duplicate' || r.result === 'stale') continue;
+        if (r.result === 'not_found') {
+          // A job we actually hold being unknown to the server means tenant
+          // trouble or retention pruning — surface it, never re-print.
+          log(`cloud: ack anomaly — server has no record of job ${r.job_id} (not_found)`);
+        } else {
+          log(`cloud: ack rejected by server for job ${r.job_id}`);
+        }
+      }
+    });
+  }
+
+  function isDeviceRevoked(err: unknown): boolean {
+    return err instanceof CloudError && err.serverCode === 'device_revoked';
   }
 
   function handleRevocation(reason: string): void {
@@ -359,6 +470,10 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
     state: () => state,
     async pair(request) {
       stop();
+      // §3.5 recovery UX: after a revocation wiped the identity, pairing with
+      // a fresh code is the way back — clear the terminal state so start()
+      // below can run.
+      if (state === 'revoked') setState('unpaired');
       const paired = await pairDevice(
         { transport, secrets: deps.secrets, agentVersion: deps.agentVersion },
         request,

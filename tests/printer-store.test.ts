@@ -118,6 +118,18 @@ describe('printer store', () => {
     expect(store.list()).toEqual([]);
   });
 
+  it('clear removes all printers and persists the empty list', async () => {
+    const adapter = memoryAdapter(null);
+    const store = await createStore(adapter);
+    await store.add(makeDraft());
+    await store.clear();
+    expect(store.list()).toEqual([]);
+    expect(adapter.written.at(-1)).toBe('[]');
+    // A fresh store over the same file sees the wipe.
+    const reopened = await createStore(adapter);
+    expect(reopened.list()).toEqual([]);
+  });
+
   it('rejects a colliding generated id instead of shadowing', async () => {
     const store = await createStore(memoryAdapter(null));
     const saved = await store.add(makeDraft());

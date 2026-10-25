@@ -18,20 +18,27 @@ function memoryAdapter(initial: string | null = null): SettingsFileAdapter & { w
 }
 
 describe('settings store', () => {
+  const defaults = {
+    launchAtLogin: false,
+    startMinimized: true,
+    logLevel: 'info',
+    pairedAt: null,
+  };
+
   it('loads defaults when no file exists', async () => {
     const store = await createSettingsStore({
       filePath: 'settings.json',
       adapter: memoryAdapter(null),
     });
-    expect(store.get()).toEqual({ launchAtLogin: false });
+    expect(store.get()).toEqual(defaults);
   });
 
-  it('loads a valid saved file', async () => {
+  it('loads a valid saved file (missing fields get schema defaults)', async () => {
     const store = await createSettingsStore({
       filePath: 'settings.json',
       adapter: memoryAdapter(JSON.stringify({ launchAtLogin: true })),
     });
-    expect(store.get()).toEqual({ launchAtLogin: true });
+    expect(store.get()).toEqual({ ...defaults, launchAtLogin: true });
   });
 
   it('falls back to defaults on corrupt JSON and reports it', async () => {
@@ -41,7 +48,7 @@ describe('settings store', () => {
       adapter: memoryAdapter('{not json'),
       report: (m) => reported.push(m),
     });
-    expect(store.get()).toEqual({ launchAtLogin: false });
+    expect(store.get()).toEqual(defaults);
     expect(reported).toHaveLength(1);
   });
 
@@ -50,15 +57,16 @@ describe('settings store', () => {
       filePath: 'settings.json',
       adapter: memoryAdapter(JSON.stringify({ launchAtLogin: true, admin: true })),
     });
-    expect(store.get()).toEqual({ launchAtLogin: false });
+    expect(store.get()).toEqual(defaults);
   });
 
   it('set() persists atomically and updates the cache', async () => {
     const adapter = memoryAdapter(null);
     const store = await createSettingsStore({ filePath: 'settings.json', adapter });
     await store.set({ launchAtLogin: true });
-    expect(store.get()).toEqual({ launchAtLogin: true });
-    expect(adapter.written).toEqual([JSON.stringify({ launchAtLogin: true })]);
+    const expected = { ...defaults, launchAtLogin: true };
+    expect(store.get()).toEqual(expected);
+    expect(adapter.written).toEqual([JSON.stringify(expected)]);
   });
 
   it('set() rejects unknown keys (strict)', async () => {

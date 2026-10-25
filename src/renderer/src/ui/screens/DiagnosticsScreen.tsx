@@ -6,7 +6,7 @@ import type {
   DiagnosticsReport,
   LogLine,
 } from '../../services/types';
-import { Card, DemoBadge, EmptyState, ErrorBanner, KeyVal, LoadingBlock } from '../primitives';
+import { Card, EmptyState, ErrorBanner, KeyVal, LoadingBlock } from '../primitives';
 import { StatusPill } from '../status';
 import type { StatusMeta } from '../status';
 import {
@@ -134,7 +134,6 @@ export function DiagnosticsScreen(): React.JSX.Element {
     <div className="screen">
       <header className="screen-head">
         <h1>Diagnostics</h1>
-        {service.demo && <DemoBadge />}
       </header>
 
       <Card title="Application">

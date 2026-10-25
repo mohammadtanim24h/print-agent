@@ -96,6 +96,9 @@ and drives 80mm ESC/POS thermal printers directly.
   queue depth) over the same socket.
 - FR-19: Structured local logs with rotation; support can request a redacted log bundle.
 - FR-20: Signed auto-updates (electron-updater against a pinned, HTTPS-served manifest).
+  *(Superseded by ADR-14, 2026-10-25 — unsigned manual distribution: no auto-updater;
+  installers are published as GitHub Release artifacts and restaurants reinstall to
+  update.)*
 
 ## 6. Acceptance criteria (phase-level, verifiable without hardware)
 
@@ -119,6 +122,8 @@ and drives 80mm ESC/POS thermal printers directly.
   TCP 9100 to printers) only.
 - Distribution: commercially distributable installer under permissive licenses only.
   Code-signing certificate is an operational cost, not a runtime license — acceptable.
+  *(Later accepted per ADR-14, 2026-10-25: no certificate was purchased — unsigned
+  manual distribution was adopted instead.)*
 - Dependencies must be verified for license + maintenance at adoption time; see
   `docs/printer-compatibility.md` §5 and `.research/dependency-research.md`.
 

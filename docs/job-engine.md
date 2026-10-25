@@ -132,7 +132,8 @@ state itself is unaffected.
   an exact-pinned devDependency.
 - Migrations are versioned and append-only (`schema_migrations`); the applied set must
   be an exact contiguous prefix of this build's list, and a database from a newer
-  build is refused (`db_version_newer`) — never downgraded (CLAUDE.md rule 11).
+  build is refused (`db_version_newer`) — never downgraded: migrations are
+  forward-only by design, so a schema downgrade is unsupported and refused.
 - Job rows contain doc payload + metadata only. No credentials, tokens, or PII in job
   rows or logs (threat model T7; identity/DPAPI is a separate store, later phase).
 - The engine depends on the injected `JobStore` interface, never on better-sqlite3

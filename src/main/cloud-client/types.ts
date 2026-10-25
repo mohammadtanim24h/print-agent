@@ -8,6 +8,7 @@ import type {
   RefreshResponse,
   ServerKeysResponse,
   AckBatchSchema,
+  AckResultsResponse,
 } from './schemas';
 import type { z } from 'zod';
 
@@ -78,7 +79,8 @@ export interface AgentTransport {
   /** Rotate tokens. Never auto-retried (rotation makes replay dangerous). */
   refresh(refreshToken: string): Promise<RefreshResponse>;
   pollJobs(auth: TransportAuth, since: string): Promise<PollResponse>;
-  sendAcks(auth: TransportAuth, batch: AckBatch): Promise<void>;
+  /** §7.1: the server answers 200 with a per-ack results array, not 204. */
+  sendAcks(auth: TransportAuth, batch: AckBatch): Promise<AckResultsResponse>;
   getConfig(auth: TransportAuth): Promise<ConfigUpdate>;
   /** Implementations add the `type: 'heartbeat'` discriminator and validate. */
   heartbeat(auth: TransportAuth, sample: HeartbeatSample): Promise<void>;

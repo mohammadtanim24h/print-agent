@@ -4,8 +4,13 @@
  * printer/driver succeeded" — the UI must never say or imply "printed".
  */
 
-/** `disabled` = cloud link not configured yet (current phase). */
-export type ConnectionState = 'disabled' | 'connecting' | 'online' | 'offline' | 'error';
+import type {
+  PrinterDraft as RealPrinterDraft,
+  PrinterProfile as RealPrinterProfile,
+} from '../../../main/printers/profile';
+
+/** Mirrors CONNECTION_STATES in shared/ipc-contract.ts and the cloud client. */
+export type ConnectionState = 'unpaired' | 'connecting' | 'online' | 'offline' | 'revoked';
 
 export interface AgentIdentity {
   readonly deviceId: string;
@@ -19,39 +24,17 @@ export interface AgentIdentity {
 /** Best-effort transport-level health (api-contract §3.1 `printer_status`). */
 export type PrinterHealth = 'ok' | 'unknown' | 'offline' | 'paper_out' | 'paper_low' | 'cover_open';
 
-export type TransportConfig =
-  | { readonly kind: 'tcp_raw'; readonly host: string; readonly port: number }
-  | { readonly kind: 'spooler_raw'; readonly windowsPrinterName: string };
-
-export type DuplicatePolicy = 'ask_operator' | 'auto_reprint' | 'never';
-export type CutMode = 'full' | 'partial' | 'none';
-
-export interface PrinterConfig {
-  readonly printerId: string;
-  readonly name: string;
-  readonly station: string;
-  readonly transport: TransportConfig;
-  readonly copiesDefault: number;
-  readonly codepage: string;
-  readonly cutDefault: CutMode;
-  readonly duplicatePolicy: DuplicatePolicy;
-}
+/**
+ * The real printer schema types, shared with the main process. Type-only:
+ * the zod schemas stay in main and nothing is bundled into the renderer.
+ */
+export type PrinterProfile = RealPrinterProfile;
+export type PrinterDraft = RealPrinterDraft;
 
 export interface PrinterInfo {
-  readonly config: PrinterConfig;
+  readonly config: PrinterProfile;
   readonly health: PrinterHealth;
   readonly lastPrintAt: string | null;
-}
-
-/** Editable subset of a printer, used by the add/edit form. */
-export interface PrinterDraft {
-  readonly name: string;
-  readonly station: string;
-  readonly transport: TransportConfig;
-  readonly copiesDefault: number;
-  readonly codepage: string;
-  readonly cutDefault: CutMode;
-  readonly duplicatePolicy: DuplicatePolicy;
 }
 
 /** Job state machine states (architecture.md §5 — authoritative). */

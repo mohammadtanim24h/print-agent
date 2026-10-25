@@ -261,11 +261,32 @@ export const AckItemSchema = z.strictObject({
     .optional(),
 });
 
+/** Wire cap on acks per batch (§7.1); the ack buffer drains in chunks of at
+ *  most this size so a backlog never produces an unparsable batch. */
+export const MAX_ACKS_PER_BATCH = 100;
+
 export const AckBatchSchema = z.strictObject({
   envelope_version: z.literal(ENVELOPE_VERSION),
   type: z.literal('ack'),
-  acks: z.array(AckItemSchema).max(100),
+  acks: z.array(AckItemSchema).max(MAX_ACKS_PER_BATCH),
 });
+
+// ---------------------------------------------------------------------------
+// POST /acks response (§7.1 deviation: 200 + per-ack results, not a bare 204)
+// ---------------------------------------------------------------------------
+
+export const ACK_RESULTS = ['applied', 'duplicate', 'stale', 'not_found', 'rejected'] as const;
+
+export const AckResultItemSchema = z.strictObject({
+  job_id: z.uuid(),
+  result: z.enum(ACK_RESULTS),
+});
+
+export const AckResultsResponseSchema = z.strictObject({
+  results: z.array(AckResultItemSchema).max(100),
+});
+
+export type AckResultsResponse = z.output<typeof AckResultsResponseSchema>;
 
 export const HeartbeatSchema = z.strictObject({
   type: z.literal('heartbeat'),

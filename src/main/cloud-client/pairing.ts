@@ -33,7 +33,14 @@ export async function pairDevice(
     if (err instanceof CloudError && err.code === 'request_rejected') {
       // Single-use code: expired / already used / unknown. Re-pairing requires
       // a fresh code from the dashboard; the agent must not retry blindly.
-      throw new CloudError('request_rejected', 'pairing code rejected — generate a new code');
+      // serverCode (e.g. pairing_code_expired) MUST survive the rethrow —
+      // mapPairFailure keys the `expired` reason off it.
+      throw new CloudError(
+        'request_rejected',
+        'pairing code rejected — generate a new code',
+        undefined,
+        err.serverCode,
+      );
     }
     throw err;
   }

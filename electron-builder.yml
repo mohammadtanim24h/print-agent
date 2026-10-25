@@ -1,0 +1,38 @@
+# Unsigned manual-distribution packaging (ADR-14). Published via the Release
+# workflow; see docs/operations.md §6 for the human checklist.
+appId: com.saas.print-agent
+productName: Print Agent
+directories:
+  output: dist-release
+files:
+  - out/**        # electron-vite build output only — never src/, tests/, docs/
+  - package.json
+asar: true
+asarUnpack:
+  - '**/node_modules/better-sqlite3/**/*.node' # native module must live on disk
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  # skip code signing only (unsigned by decision, ADR-14) — keep exe metadata editing
+  signExecutable: false
+nsis:
+  oneClick: false              # assisted wizard (operations.md §1)
+  perMachine: false            # per-user install, no admin
+  allowToChangeInstallationDirectory: true
+  artifactName: PrintAgent-Setup-${version}.${ext}
+  deleteAppDataOnUninstall: false # local wipe is a support decision, not a side effect
+# Production fuse set — must stay in sync with scripts/flip-fuses.mjs (dev).
+# enableEmbeddedAsarIntegrityValidation is only safe here (asar is on).
+electronFuses:
+  runAsNode: false
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: false
+  enableEmbeddedAsarIntegrityValidation: true
+  # required with integrity validation: without it a planted app/ dir next to
+  # the asar bypasses validation (per-user install dir is writable)
+  onlyLoadAppFromAsar: true
+  grantFileProtocolExtraPrivileges: false
+npmRebuild: false # better-sqlite3 13 ships N-API prebuilds (prebuilds/win32-x64.node) — ABI-stable across Node/Electron; no Electron-ABI rebuild needed

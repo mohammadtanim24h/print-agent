@@ -11,7 +11,8 @@ export interface SettingsFileAdapter {
   writeAtomic(path: string, contents: string): Promise<void>;
 }
 
-export const DEFAULT_SETTINGS: AppSettings = { launchAtLogin: false };
+/** Derived from the schema so defaults stay in sync with the contract. */
+export const DEFAULT_SETTINGS: AppSettings = AppSettingsSchema.parse({ launchAtLogin: false });
 
 export interface SettingsStore {
   get(): AppSettings;

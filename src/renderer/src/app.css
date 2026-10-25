@@ -188,19 +188,6 @@ body {
   font-size: 11px;
 }
 
-.demo-tag {
-  align-self: flex-start;
-  margin-top: 6px;
-  padding: 1px 7px;
-  border-radius: 99px;
-  border: 1px solid rgba(242, 163, 60, 0.4);
-  color: var(--accent-strong);
-  font-size: 10px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-
 .content {
   flex: 1;
   min-width: 0;
@@ -401,15 +388,6 @@ body {
   color: var(--muted);
   background: rgba(151, 163, 180, 0.08);
   border-color: rgba(151, 163, 180, 0.32);
-}
-
-.pill-demo {
-  color: var(--accent-strong);
-  background: rgba(242, 163, 60, 0.1);
-  border-color: rgba(242, 163, 60, 0.4);
-  text-transform: uppercase;
-  font-size: 10px;
-  letter-spacing: 0.08em;
 }
 
 .tag {
@@ -721,6 +699,27 @@ body {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 12px;
+}
+
+/* inline checkbox group (printer capabilities) */
+.check-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  padding-top: 2px;
+}
+
+.check-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.check-item input {
+  accent-color: var(--accent-strong);
 }
 
 /* ---------- settings switches ---------- */

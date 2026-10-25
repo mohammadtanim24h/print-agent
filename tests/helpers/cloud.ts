@@ -7,6 +7,7 @@ import type {
   RefreshResponse,
   ServerKeysResponse,
   Heartbeat,
+  AckResultsResponse,
 } from '../../src/main/cloud-client/schemas';
 import type {
   IdentitySecrets,
@@ -201,7 +202,9 @@ export type TransportScript = {
   pair?: PairResponse | Error;
   refresh?: RefreshResponse | Error | ((refreshToken: string) => RefreshResponse | Error);
   poll?: PollResponse | Error | ((since: string) => PollResponse | Error);
-  acks?: Error;
+  /** Per-call ack outcomes: an array is consumed one entry per sendAcks call
+   *  (the last entry repeats). A single value applies to every call. */
+  acks?: Error | AckResultsResponse | AckResultsResponse[];
   config?: ConfigUpdate | Error | (() => ConfigUpdate | Error);
   heartbeat?: Error;
   serverKeys?: ServerKeysResponse | Error;
@@ -221,7 +224,7 @@ export class FakeTransport implements AgentTransport {
   readonly baseUrl = 'https://cloud.test';
   readonly calls: TransportCall[] = [];
 
-  constructor(private readonly script: TransportScript) {}
+  constructor(readonly script: TransportScript) {}
 
   private static resolve<T>(value: T | Error | ((arg: string) => T | Error), arg: string): T {
     const resolved = typeof value === 'function' ? (value as (a: string) => T | Error)(arg) : value;
@@ -247,10 +250,17 @@ export class FakeTransport implements AgentTransport {
       FakeTransport.resolve(this.script.poll ?? makePollResponse(), since),
     );
   }
-  sendAcks(auth: TransportAuth, batch: AckBatch): Promise<void> {
+  sendAcks(auth: TransportAuth, batch: AckBatch): Promise<AckResultsResponse> {
     this.calls.push({ op: 'acks', batch, auth });
     return Promise.resolve().then(() => {
-      if (this.script.acks !== undefined) throw this.script.acks;
+      const script = this.script.acks;
+      if (script instanceof Error) throw script;
+      if (Array.isArray(script)) {
+        if (script.length === 0) return { results: [] };
+        const idx = Math.min(this.callsOf('acks').length - 1, script.length - 1);
+        return script[idx] as AckResultsResponse;
+      }
+      return script ?? { results: [] };
     });
   }
   getConfig(auth: TransportAuth): Promise<ConfigUpdate> {

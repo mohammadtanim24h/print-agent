@@ -18,7 +18,7 @@ export class IpcAccessError extends Error implements TypedError {
 }
 
 export function createSenderGuard(options: {
-  /** URL prefixes the bundled renderer may be served from (prod: file:// app path; dev: vite origin). */
+  /** URL prefixes the bundled renderer may be served from (prod: app:// bundled renderer; dev: vite origin). */
   readonly allowedUrlPrefixes: readonly string[];
   /** Denial sink (redacted logger). Never logs payloads. */
   readonly log?: (message: string) => void;

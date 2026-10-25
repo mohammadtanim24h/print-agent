@@ -2,7 +2,6 @@ import { useService, useAsync } from '../../services/service-context';
 import type { AgentSnapshot, JobRecord, PrinterInfo } from '../../services/types';
 import {
   Card,
-  DemoBadge,
   EmptyState,
   ErrorBanner,
   KeyVal,
@@ -55,10 +54,27 @@ export function OverviewScreen(props: {
       <header className="screen-head">
         <h1>Overview</h1>
         <div className="screen-head-side">
-          {service.demo && <DemoBadge />}
           <ConnectionPill state={snapshot.connection} />
         </div>
       </header>
+
+      {snapshot.connection === 'revoked' && (
+        <div className="banner banner-error" role="alert">
+          <span className="banner-text">
+            This device was revoked by the restaurant. Cached credentials, jobs and printers were
+            wiped from this PC. Pair again with a new code to resume.
+          </span>
+          <button
+            type="button"
+            className="btn btn-sm"
+            onClick={() => {
+              props.onNavigate('setup');
+            }}
+          >
+            Open setup
+          </button>
+        </div>
+      )}
 
       {snapshot.identity === null ? (
         <Card>
@@ -161,7 +177,7 @@ export function OverviewScreen(props: {
                 {printers.map((printer) => (
                   <li key={printer.config.printerId} className="row">
                     <span className="row-title">{printer.config.name}</span>
-                    <span className="row-sub">{printer.config.station}</span>
+                    <span className="row-sub">{printer.config.role}</span>
                     <PrinterHealthPill health={printer.health} />
                     <span className="row-meta">
                       last print <Timestamp iso={printer.lastPrintAt} />

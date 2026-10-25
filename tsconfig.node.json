@@ -8,6 +8,7 @@
     "lib": ["ES2023", "DOM", "DOM.Iterable"],
     "types": ["node"],
     "esModuleInterop": true,
+    "allowJs": true,
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
@@ -29,6 +30,7 @@
     "src/renderer/src/**/*.tsx",
     "tests/**/*.ts",
     "tests/ui/**/*.tsx",
+    "scripts/**/*.mjs",
     "electron.vite.config.ts",
     "vitest.config.ts"
   ]

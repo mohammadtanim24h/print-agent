@@ -11,6 +11,11 @@ import {
   makeSecrets,
 } from './helpers/cloud';
 
+/** Overwrites the stored identity record with an encryptable-but-invalid plaintext. */
+function storageSetCorrupted(kv: MemoryKv, storage: FakeSafeStorage, plain: string): void {
+  kv.set('cloud.identity', storage.encryptString(plain).toString('base64'));
+}
+
 describe('safeStorage-backed secret store', () => {
   it('round-trips the identity through encryption', () => {
     const kv = new MemoryKv();
@@ -50,11 +55,23 @@ describe('safeStorage-backed secret store', () => {
     expect(() => store.load()).toThrow(/secure_storage_unavailable/);
   });
 
-  it('treats any missing field as unpaired (atomic write set)', () => {
+  it('persists the identity as a single atomic record (§7 note 8: no partial token pair)', () => {
     const kv = new MemoryKv();
     const store = createSafeStorageSecretStore(kv, new FakeSafeStorage());
     store.save(makeSecrets());
-    kv.delete('cloud.refreshToken');
+    // One key ⇒ one all-or-nothing kv write; a crash can never leave a mixed
+    // old/new token pair on disk.
+    expect([...kv.map.keys()]).toEqual(['cloud.identity']);
+    store.save(makeSecrets({ deviceToken: 'token-v2', refreshToken: 'refresh-v2' }));
+    expect([...kv.map.keys()]).toEqual(['cloud.identity']);
+    expect(store.load()?.refreshToken).toBe('refresh-v2');
+  });
+
+  it('treats a missing record as unpaired', () => {
+    const kv = new MemoryKv();
+    const store = createSafeStorageSecretStore(kv, new FakeSafeStorage());
+    store.save(makeSecrets());
+    kv.delete('cloud.identity');
     expect(store.load()).toBeNull();
   });
 
@@ -68,7 +85,17 @@ describe('safeStorage-backed secret store', () => {
     expect(kv.map.size).toBe(0);
     // …so simulate on-disk corruption instead:
     store.save(makeSecrets());
-    kv.set('cloud.deviceId', 'not-a-uuid');
+    const corrupted = JSON.stringify({ ...makeSecrets(), deviceId: 'not-a-uuid' });
+    storageSetCorrupted(kv, new FakeSafeStorage(), corrupted);
+    expect(() => store.load()).toThrow(/secure_storage_unavailable/);
+  });
+
+  it('rejects a stored record that is not valid JSON', () => {
+    const kv = new MemoryKv();
+    const storage = new FakeSafeStorage();
+    const store = createSafeStorageSecretStore(kv, storage);
+    store.save(makeSecrets());
+    storageSetCorrupted(kv, storage, 'not json at all');
     expect(() => store.load()).toThrow(/secure_storage_unavailable/);
   });
 
@@ -120,6 +147,32 @@ describe('pairing flow', () => {
       ),
     ).rejects.toThrow(/generate a new code/);
     expect(transport.callsOf('pair')).toHaveLength(1);
+  });
+
+  it('preserves the server machine code through the request_rejected rethrow', async () => {
+    // mapPairFailure keys the `expired` reason off serverCode — dropping it
+    // here would report every expired code as invalid_code.
+    const transport = new FakeTransport({
+      pair: new CloudError(
+        'request_rejected',
+        'status 410: pairing_code_expired',
+        undefined,
+        'pairing_code_expired',
+      ),
+    });
+    await expect(
+      pairDevice(
+        {
+          transport,
+          secrets: createSafeStorageSecretStore(new MemoryKv(), new FakeSafeStorage()),
+          agentVersion: '0.1.0',
+        },
+        { pairingCode: 'EXPIRED1', deviceName: 'PC' },
+      ),
+    ).rejects.toMatchObject({
+      code: 'request_rejected',
+      serverCode: 'pairing_code_expired',
+    });
   });
 
   it('persists nothing (fail closed) when secure storage is unavailable', async () => {

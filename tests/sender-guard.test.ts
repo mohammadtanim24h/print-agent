@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createSenderGuard, IpcAccessError } from '../src/main/security/sender-guard';
 
 const guard = createSenderGuard({
-  allowedUrlPrefixes: ['file:///C:/app/out/renderer/', 'http://localhost:5173/'],
+  allowedUrlPrefixes: ['app://bundle/', 'http://localhost:5173/'],
 });
 
 function frameEvent(url: string | undefined) {
@@ -12,7 +12,7 @@ function frameEvent(url: string | undefined) {
 describe('sender guard', () => {
   it('allows frames whose URL is under an allowlisted prefix', () => {
     expect(() => {
-      guard.assertTrusted(frameEvent('file:///C:/app/out/renderer/index.html'));
+      guard.assertTrusted(frameEvent('app://bundle/index.html'));
     }).not.toThrow();
     expect(() => {
       guard.assertTrusted(frameEvent('http://localhost:5173/src/main.tsx'));
@@ -28,15 +28,27 @@ describe('sender guard', () => {
     }).toThrow(IpcAccessError);
   });
 
-  it('rejects file URLs outside the bundled renderer', () => {
+  it('rejects app-scheme lookalikes and file URLs', () => {
+    expect(() => {
+      guard.assertTrusted(frameEvent('app://other/index.html'));
+    }).toThrow(IpcAccessError);
+    expect(() => {
+      guard.assertTrusted(frameEvent('app://bundle@evil/index.html'));
+    }).toThrow(IpcAccessError);
+    expect(() => {
+      guard.assertTrusted(frameEvent('https://bundle/index.html'));
+    }).toThrow(IpcAccessError);
     expect(() => {
       guard.assertTrusted(frameEvent('file:///C:/Windows/notepad.exe'));
     }).toThrow(IpcAccessError);
   });
 
-  it('is case-insensitive on Windows file paths', () => {
+  it('is case-insensitive on scheme and host', () => {
     expect(() => {
-      guard.assertTrusted(frameEvent('file:///c:/APP/out/RENDERER/index.html'));
+      guard.assertTrusted(frameEvent('APP://BUNDLE/index.html'));
+    }).not.toThrow();
+    expect(() => {
+      guard.assertTrusted(frameEvent('http://LOCALHOST:5173/src/main.tsx'));
     }).not.toThrow();
   });
 
@@ -58,7 +70,7 @@ describe('sender guard', () => {
   it('reports denials via the injected sink', () => {
     const denied: string[] = [];
     const logging = createSenderGuard({
-      allowedUrlPrefixes: ['file:///C:/app/out/renderer/'],
+      allowedUrlPrefixes: ['app://bundle/'],
       log: (m) => denied.push(m),
     });
     try {

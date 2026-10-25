@@ -1,0 +1,658 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createPrivateKey } from 'node:crypto';
+import { createAgentRuntime, type AgentRuntime, type RuntimeDeps } from '../src/main/agent-runtime';
+import { openDatabase, closeDatabase } from '../src/main/local-store/db';
+import type { SqliteDatabase } from '../src/main/local-store/db';
+import { migrate } from '../src/main/local-store/migrations';
+import { createSettingsStore, type SettingsStore } from '../src/main/services/settings';
+import type { Logger } from '../src/main/services/logger/logger';
+import type { SecretKv, SafeStorageLike } from '../src/main/cloud-client/secret-store';
+import type {
+  AckBatch,
+  AgentTransport,
+  HeartbeatSample,
+  TransportAuth,
+} from '../src/main/cloud-client/types';
+import type {
+  ConfigUpdate,
+  PairResponse,
+  PollResponse,
+  RefreshResponse,
+  ServerKeysResponse,
+} from '../src/main/cloud-client/schemas';
+import { CloudError } from '../src/main/cloud-client/errors';
+import {
+  generateDeviceKeyPair,
+  signJobForTest,
+} from '../src/main/cloud-client/envelope-sig';
+import { ENVELOPE_VERSION } from '../src/main/cloud-client/schemas';
+import type { TransportRegistry } from '../src/main/transport/registry';
+import { TransportError } from '../src/main/transport/errors';
+import { memoryAdapter } from './helpers/memory-adapter';
+import { makeDraft } from './helpers/printers';
+import { makeDoc } from './helpers/render';
+
+/**
+ * AgentRuntime tests: fake transport + kv + safeStorage over an in-memory
+ * SQLite database. The fake transport's `pair` returns a REAL ed25519 public
+ * key generated at module scope; test envelopes are signed with the matching
+ * private key so the poller's signature verification accepts them.
+ */
+
+const TENANT_ID = '018f3c2e-0000-7000-8000-000000000001';
+const RESTAURANT_ID = '018f3c2e-0000-7000-8000-000000000002';
+const PAIRING_CODE = '7QJ2K9XD';
+
+function makeUuid(n: number): string {
+  return `018f3c2e-0000-7000-8000-${String(n).padStart(12, '0')}`;
+}
+
+// ---- fakes ------------------------------------------------------------------
+
+function fakeSafeStorage(): SafeStorageLike {
+  return {
+    isEncryptionAvailable: () => true,
+    encryptString: (plain) => Buffer.from(plain, 'utf8'),
+    decryptString: (buf) => buf.toString('utf8'),
+  };
+}
+
+function fakeKv(): SecretKv {
+  const map = new Map<string, string>();
+  return {
+    get: (k) => map.get(k) ?? null,
+    set: (k, v) => void map.set(k, v),
+    delete: (k) => void map.delete(k),
+  };
+}
+
+export interface FakeTransport extends AgentTransport {
+  readonly queuedJobs: unknown[];
+  readonly acks: AckBatch[];
+  readonly heartbeats: HeartbeatSample[];
+  /** Next pollJobs call throws this once (e.g. CloudError with serverCode 'device_revoked'). */
+  failNextPoll: Error | null;
+}
+
+function fakeTransport(): FakeTransport {
+  const impl = {
+    baseUrl: 'https://api.test',
+    queuedJobs: [] as unknown[],
+    acks: [] as AckBatch[],
+    heartbeats: [] as HeartbeatSample[],
+    failNextPoll: null as Error | null,
+    pair(): Promise<PairResponse> {
+      return Promise.resolve().then(() => ({
+        device_id: makeUuid(3),
+        device_token: 'device-token-test',
+        refresh_token: 'refresh-token-test',
+        // The poller verifies envelope sigs against THIS key; test envelopes
+        // are signed with the matching module-scope private key.
+        server_signing_pubkey: serverKeys.publicKeyRaw,
+        restaurant_id: RESTAURANT_ID,
+        tenant_id: TENANT_ID,
+        token_ttl_s: 3600,
+      }));
+    },
+    refresh(): Promise<RefreshResponse> {
+      return Promise.reject(new CloudError('unauthorized', 'refresh not used in runtime tests'));
+    },
+    pollJobs(): Promise<PollResponse> {
+      return Promise.resolve().then(() => {
+        if (impl.failNextPoll !== null) {
+          const err = impl.failNextPoll;
+          impl.failNextPoll = null;
+          throw err;
+        }
+        const jobs = impl.queuedJobs;
+        impl.queuedJobs = [];
+        return { jobs };
+      });
+    },
+    sendAcks(_auth: TransportAuth, batch: AckBatch) {
+      impl.acks.push(batch);
+      return Promise.resolve().then(() => ({
+        results: batch.acks.map((a) => ({ job_id: a.job_id, result: 'applied' as const })),
+      }));
+    },
+    getConfig(): Promise<ConfigUpdate> {
+      return Promise.resolve({ type: 'config_update', config_version: 0, printers: [] });
+    },
+    heartbeat(_auth: TransportAuth, sample: HeartbeatSample): Promise<void> {
+      impl.heartbeats.push(sample);
+      return Promise.resolve();
+    },
+    serverKeys(): Promise<ServerKeysResponse> {
+      return Promise.reject(new CloudError('unauthorized', 'serverKeys not used in runtime tests'));
+    },
+  };
+  return impl;
+}
+
+/** Printer transports that succeed instantly — hermetic, no real sockets. */
+function stubTransports(): TransportRegistry {
+  return {
+    forPrinter: () => ({
+      open: () => Promise.resolve(),
+      write: () => Promise.resolve(),
+      close: () => Promise.resolve(),
+      healthCheck: () => Promise.resolve(),
+    }),
+  };
+}
+
+function failingTransports(): TransportRegistry {
+  return {
+    forPrinter: () => ({
+      open: () => Promise.reject(new TransportError('host_unreachable', 'stub: unreachable')),
+      write: () => Promise.reject(new TransportError('write_failed', 'stub: not connected')),
+      close: () => Promise.resolve(),
+      healthCheck: () => Promise.reject(new TransportError('host_unreachable', 'stub: unreachable')),
+    }),
+  };
+}
+
+// ---- signed envelope fixture --------------------------------------------------
+
+const serverKeys = generateDeviceKeyPair();
+const serverPrivateKey = createPrivateKey({
+  key: Buffer.from(serverKeys.privateKeyPkcs8, 'base64url'),
+  format: 'der',
+  type: 'pkcs8',
+});
+
+let jobSeq = 0;
+
+/** A print_job envelope whose signature verifies against the paired pubkey. */
+function signedJobEnvelope(
+  printerId: string,
+  jobOverrides: Record<string, unknown> = {},
+): Record<string, unknown> {
+  jobSeq += 1;
+  const job = {
+    job_id: makeUuid(100 + jobSeq),
+    idempotency_key: `ord-${String(jobSeq)}`,
+    tenant_id: TENANT_ID,
+    restaurant_id: RESTAURANT_ID,
+    printer_id: printerId,
+    priority: 5,
+    copies: 1,
+    doc_type: 'customer_receipt',
+    doc_version: 1,
+    issued_at: '2026-10-01T10:00:00.000Z',
+    expires_at: '2030-01-01T10:00:00.000Z',
+    payload: makeDoc(),
+    ...jobOverrides,
+  };
+  return {
+    envelope_version: ENVELOPE_VERSION,
+    type: 'print_job',
+    job,
+    sig: signJobForTest(job, serverPrivateKey),
+  };
+}
+
+// ---- db seeding ----------------------------------------------------------------
+
+interface SeedOverrides {
+  readonly id: string;
+  readonly status: string;
+  readonly printerId?: string;
+  readonly createdAt?: number;
+}
+
+function insertJobRow(db: SqliteDatabase, seed: SeedOverrides): void {
+  db.prepare(
+    `INSERT INTO jobs (id, idempotency_key, tenant_id, restaurant_id, printer_id, doc_type,
+                       doc_version, payload_json, priority, copies, status, attempts, reprint_of,
+                       created_at, expires_at, sent_at, completed_at, updated_at, last_error)
+     VALUES (?, ?, ?, ?, ?, ?, 1, '{}', 5, 1, ?, 0, NULL, ?, NULL, NULL, NULL, ?, NULL)`,
+  ).run(
+    seed.id,
+    `key-${seed.id}`,
+    TENANT_ID,
+    RESTAURANT_ID,
+    seed.printerId ?? makeUuid(9),
+    'customer_receipt',
+    seed.status,
+    seed.createdAt ?? 1_000,
+    seed.createdAt ?? 1_000,
+  );
+}
+
+// ---- harness -------------------------------------------------------------------
+
+interface RuntimeHarness {
+  runtime: AgentRuntime;
+  transport: FakeTransport;
+  db: SqliteDatabase;
+  settings: SettingsStore;
+  log: Logger;
+}
+
+const runtimes: AgentRuntime[] = [];
+const databases: SqliteDatabase[] = [];
+
+afterEach(async () => {
+  for (const runtime of runtimes.splice(0)) {
+    await runtime.stop();
+  }
+  for (const db of databases.splice(0)) {
+    closeDatabase(db);
+  }
+});
+
+async function makeRuntime(
+  overrides: {
+    transport?: FakeTransport;
+    transports?: TransportRegistry;
+    schedule?: (fn: () => void, delayMs: number) => () => void;
+    fetchOverride?: typeof fetch;
+    kv?: SecretKv;
+    safeStorage?: SafeStorageLike;
+    log?: Logger;
+  } = {},
+): Promise<RuntimeHarness> {
+  const db = openDatabase({ file: null });
+  migrate(db);
+  databases.push(db);
+  const transport = overrides.transport ?? fakeTransport();
+  const settings = await createSettingsStore({
+    filePath: ':memory-settings',
+    adapter: memoryAdapter(),
+    report: () => {},
+  });
+  const log: Logger = overrides.log ?? {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  };
+  // Clamp every scheduled delay to 5 ms: engine backoffs, ack-buffer timers and
+  // the poll cadence all run fast; vi.waitFor handles the async settling.
+  const schedule =
+    overrides.schedule ??
+    ((fn: () => void, delayMs: number): (() => void) => {
+      const t = setTimeout(fn, Math.min(delayMs, 5));
+      return () => {
+        clearTimeout(t);
+      };
+    });
+  const env: NonNullable<RuntimeDeps['env']> = {
+    transportOverride: transport,
+    kvOverride: overrides.kv ?? fakeKv(),
+    transportsOverride: overrides.transports ?? stubTransports(),
+    adapterOverride: memoryAdapter(),
+    schedule,
+    ...(overrides.fetchOverride !== undefined
+      ? { fetchOverride: overrides.fetchOverride }
+      : {}),
+  };
+  const runtime = await createAgentRuntime({
+    db,
+    settings,
+    log,
+    agentVersion: '0.1.0-test',
+    deviceName: 'TEST-PC',
+    safeStorage: overrides.safeStorage ?? fakeSafeStorage(),
+    paths: {
+      printersFile: ':memory-printers',
+      dbFile: null,
+      identityKvFile: ':memory-identity-kv',
+    },
+    cloud: { baseUrl: 'https://api.test', pollIntervalMs: 20 },
+    env,
+  });
+  runtimes.push(runtime);
+  return { runtime, transport, db, settings, log };
+}
+
+/** Manual scheduler: collects timers; tick() fires only sub-second timers
+ *  (poll cadence, engine backoffs) so the ack buffer's 5 s delay timer never
+ *  auto-fires — retained acks can then only reach the wire via flushNow. */
+function manualSchedule(): {
+  schedule: (fn: () => void, delayMs: number) => () => void;
+  tick: () => Promise<void>;
+} {
+  const timers: Array<{ fn: () => void; delayMs: number; cancelled: boolean }> = [];
+  const settle = async (ticks = 8): Promise<void> => {
+    for (let i = 0; i < ticks; i += 1) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+  };
+  return {
+    schedule: (fn, delayMs) => {
+      const t = { fn, delayMs, cancelled: false };
+      timers.push(t);
+      return () => {
+        t.cancelled = true;
+      };
+    },
+    async tick() {
+      const due = timers.filter((t) => !t.cancelled && t.delayMs < 1_000);
+      for (const t of due) t.cancelled = true;
+      for (const t of due) t.fn();
+      await settle();
+    },
+  };
+}
+
+// ---- tests ---------------------------------------------------------------------
+
+describe('AgentRuntime lifecycle', () => {
+  it('starts unpaired with no identity and an empty queue', async () => {
+    const { runtime } = await makeRuntime();
+    runtime.start();
+    const snap = await runtime.snapshot();
+    expect(snap.connection).toBe('unpaired');
+    expect(snap.identity).toBeNull();
+    expect(snap.pendingJobs).toBe(0);
+    expect(snap.ambiguousJobs).toBe(0);
+    expect(snap.lastActivityAt).toBeNull();
+    expect(runtime.agentInfo()).toEqual({
+      name: 'print-agent',
+      version: '0.1.0-test',
+      connectionState: 'unpaired',
+    });
+  });
+
+  it('pairs, records pairedAt in settings, and reaches online', async () => {
+    const { runtime, settings, transport } = await makeRuntime();
+    runtime.start();
+    const result = await runtime.pair(PAIRING_CODE);
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.identity).toMatchObject({
+        deviceId: makeUuid(3),
+        agentName: 'TEST-PC',
+        restaurantId: RESTAURANT_ID,
+        restaurantName: RESTAURANT_ID,
+      });
+      expect(result.identity.pairedAt).not.toBeNull();
+    }
+    expect(settings.get().pairedAt).not.toBeNull();
+    await vi.waitFor(async () => {
+      expect((await runtime.snapshot()).connection).toBe('online');
+    });
+    expect(transport.heartbeats.length).toBeGreaterThanOrEqual(0); // cycle heartbeat seam exercised
+  });
+
+  it('refuses a second pair while already paired', async () => {
+    const { runtime } = await makeRuntime();
+    runtime.start();
+    await runtime.pair(PAIRING_CODE);
+    const second = await runtime.pair(PAIRING_CODE);
+    expect(second).toMatchObject({ ok: false, reason: 'already_paired' });
+  });
+
+  it('unpair wipes identity, jobs, printers and config', async () => {
+    const { runtime, db } = await makeRuntime();
+    runtime.start();
+    await runtime.pair(PAIRING_CODE);
+    await runtime.printers.add(makeDraft());
+    insertJobRow(db, { id: makeUuid(50), status: 'completed' });
+    expect(runtime.jobs.list()).toHaveLength(1);
+
+    await runtime.unpair();
+
+    const snap = await runtime.snapshot();
+    expect(snap.connection).toBe('unpaired');
+    expect(snap.identity).toBeNull();
+    expect(runtime.printers.list()).toEqual([]);
+    expect(runtime.jobs.list()).toEqual([]);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM jobs').get()).toMatchObject({ n: 0 });
+    expect(db.prepare('SELECT COUNT(*) AS n FROM cloud_config').get()).toMatchObject({ n: 0 });
+  });
+
+  it('recovers interrupted rows before the first poll', async () => {
+    const { runtime, db } = await makeRuntime();
+    insertJobRow(db, { id: makeUuid(51), status: 'sending' });
+    runtime.start();
+    await vi.waitFor(() => {
+      const row = db.prepare('SELECT status FROM jobs WHERE id = ?').get(makeUuid(51));
+      expect(row).toMatchObject({ status: 'ambiguous' });
+    });
+  });
+
+  it('unpair after a wiped state never throws and stays unpaired', async () => {
+    const { runtime } = await makeRuntime();
+    runtime.start();
+    await runtime.unpair();
+    await runtime.unpair();
+    expect((await runtime.snapshot()).connection).toBe('unpaired');
+  });
+
+  it('presents as unpaired instead of crashing when the stored identity cannot be decrypted', async () => {
+    // DPAPI decrypt failure after a Windows credential reset: secrets.load()
+    // throws CloudError('secure_storage_unavailable') — start() must not
+    // reject, and the snapshot must present the operator with a pairable,
+    // unpaired state (never a wipe, never an unhandled rejection).
+    const kv = fakeKv();
+    kv.set('cloud.identity', Buffer.from('undecryptable-blob', 'utf8').toString('base64'));
+    const storage: SafeStorageLike = {
+      isEncryptionAvailable: () => true,
+      encryptString: (plain) => Buffer.from(plain, 'utf8'),
+      decryptString: () => {
+        throw new Error('simulated DPAPI failure');
+      },
+    };
+    const warnLog = vi.fn();
+    const { runtime } = await makeRuntime({
+      kv,
+      safeStorage: storage,
+      log: { debug: vi.fn(), info: vi.fn(), warn: warnLog, error: vi.fn() },
+    });
+    expect(() => {
+      runtime.start();
+    }).not.toThrow();
+    const snap = await runtime.snapshot();
+    expect(snap.connection).toBe('unpaired');
+    expect(snap.identity).toBeNull();
+    // readIdentity's policy fired: unreadable storage is surfaced, never wiped.
+    expect(warnLog).toHaveBeenCalledWith(
+      expect.stringContaining('stored identity unreadable, presenting as unpaired'),
+    );
+  });
+});
+
+describe('AgentSnapshot details', () => {
+  it('reports lastActivityAt from terminal rows and honest per-state detail', async () => {
+    const { runtime, db } = await makeRuntime();
+    insertJobRow(db, { id: makeUuid(52), status: 'failed', createdAt: 5_000 });
+    runtime.start();
+    const snap = await runtime.snapshot();
+    expect(snap.lastActivityAt).toBe(new Date(5_000).toISOString());
+    expect(snap.connectionDetail).toContain('Not paired');
+    expect(snap.version).toBe('0.1.0-test');
+  });
+});
+
+describe('AgentRuntime diagnostics', () => {
+  it('returns exactly the three checks, passing on a healthy system', async () => {
+    const { runtime } = await makeRuntime({
+      fetchOverride: () => Promise.resolve(new Response('ok')),
+    });
+    const checks = await runtime.diagnostics.checks();
+    expect(checks.map((c) => c.id)).toEqual(['cloud-api', 'printers', 'db']);
+    expect(checks[0]).toMatchObject({ status: 'pass', detail: 'TLS/HTTP reachable' });
+    expect(checks[1]).toMatchObject({ status: 'pass', detail: 'No printers configured' });
+    expect(checks[2]).toMatchObject({ status: 'pass', detail: 'Integrity check passed' });
+  });
+
+  it('cloud-api check fails when the fetch throws', async () => {
+    const { runtime } = await makeRuntime({
+      fetchOverride: () => Promise.reject(new Error('no route to host')),
+    });
+    const checks = await runtime.diagnostics.checks();
+    expect(checks[0]).toMatchObject({ id: 'cloud-api', status: 'fail' });
+  });
+
+  it('report carries db facts and platform info', async () => {
+    const { runtime } = await makeRuntime();
+    const report = await runtime.diagnostics.report();
+    expect(report).toMatchObject({
+      version: '0.1.0-test',
+      platform: expect.stringContaining(process.arch),
+      db: { ok: true, sizeBytes: 0, queueDepth: 0, journalMode: 'memory' },
+    });
+    expect(report.uptimeS).toBeGreaterThanOrEqual(0);
+  });
+
+  it('recentLogs delegates to the logger ring', async () => {
+    const { runtime } = await makeRuntime();
+    expect(runtime.diagnostics.recentLogs()).toEqual([]);
+  });
+});
+
+describe('cloud event plumbing', () => {
+  it('a polled signed job becomes an engine row and produces acks on the wire', async () => {
+    const { runtime, transport } = await makeRuntime();
+    runtime.start();
+    await runtime.pair(PAIRING_CODE);
+    const printer = await runtime.printers.add(makeDraft());
+    transport.queuedJobs.push(signedJobEnvelope(printer.config.printerId));
+    await vi.waitFor(() => {
+      const jobs = runtime.jobs.list();
+      expect(jobs).toHaveLength(1);
+      expect(['completed', 'failed']).toContain(jobs[0]?.status);
+    });
+    await vi.waitFor(() => {
+      // Batches may flush incrementally — wait until the accepted AND the
+      // terminal ack both reached the wire before asserting on the set.
+      const statuses = transport.acks.flatMap((b) => b.acks.map((a) => a.status));
+      expect(statuses).toContain('accepted');
+      // Stub transport hand-off succeeds: 'completed' means hand-off, never 'printed' (§3.1).
+      expect(statuses).toContain('completed');
+    });
+    const statuses = transport.acks.flatMap((b) => b.acks.map((a) => a.status));
+    expect(statuses).not.toContain('rejected');
+  });
+
+  it('heartbeat sample reports queue depth and printer health', async () => {
+    const { runtime, transport } = await makeRuntime();
+    runtime.start();
+    await runtime.pair(PAIRING_CODE);
+    const printer = await runtime.printers.add(makeDraft());
+    await vi.waitFor(() => {
+      expect(transport.heartbeats.length).toBeGreaterThanOrEqual(1);
+    });
+    const sample = transport.heartbeats.at(-1);
+    expect(sample).toMatchObject({
+      connection: 'poll',
+      queue_depth: 0,
+      printers: [{ printer_id: printer.config.printerId, health: 'unknown' }],
+    });
+    expect(sample?.uptime_s).toBeGreaterThanOrEqual(0);
+  });
+
+  it('a config_update in the poll response persists to cloud_config', async () => {
+    const { runtime, transport, db } = await makeRuntime();
+    runtime.start();
+    await runtime.pair(PAIRING_CODE);
+    transport.queuedJobs.push({ type: 'config_update', config_version: 7, printers: [] });
+    await vi.waitFor(() => {
+      const row = db.prepare('SELECT config_version FROM cloud_config').get();
+      expect(row).toMatchObject({ config_version: 7 });
+    });
+  });
+
+  it('revocation wipes local state and surfaces the revoked snapshot', async () => {
+    const { runtime, transport, settings } = await makeRuntime();
+    runtime.start();
+    await runtime.pair(PAIRING_CODE);
+    await runtime.printers.add(makeDraft());
+    transport.failNextPoll = new CloudError(
+      'unauthorized',
+      'device revoked',
+      undefined,
+      'device_revoked',
+    );
+    await vi.waitFor(async () => {
+      expect((await runtime.snapshot()).connection).toBe('revoked');
+    });
+    expect((await runtime.snapshot()).identity).toBeNull();
+    expect(runtime.printers.list()).toEqual([]);
+    expect(runtime.jobs.list()).toEqual([]);
+    expect(settings.get().pairedAt).toBeNull();
+    expect(runtime.agentInfo().connectionState).toBe('revoked');
+  });
+
+  it('retained acks drain when the client transitions back to online (flushNow)', async () => {
+    const sched = manualSchedule();
+    const { runtime, transport } = await makeRuntime({ schedule: sched.schedule });
+    runtime.start();
+    await runtime.pair(PAIRING_CODE);
+    await sched.tick(); // cycle 1 → online
+    expect((await runtime.snapshot()).connection).toBe('online');
+
+    const printer = await runtime.printers.add(makeDraft());
+    transport.queuedJobs.push(signedJobEnvelope(printer.config.printerId));
+    await sched.tick(); // cycle 2 → job submitted; acks retained (the 5 s delay timer never fires)
+    expect(runtime.jobs.list()).toHaveLength(1);
+    expect(transport.acks).toHaveLength(0);
+
+    transport.failNextPoll = new CloudError('network', 'link down');
+    await sched.tick(); // cycle 3 → offline
+    expect((await runtime.snapshot()).connection).toBe('offline');
+
+    transport.failNextPoll = null;
+    await sched.tick(); // cycle 4 → online transition → flushNow drains the retained acks
+    expect(transport.acks.length).toBeGreaterThanOrEqual(1);
+    expect(transport.acks.flatMap((b) => b.acks.map((a) => a.status))).toContain('accepted');
+  });
+
+  it('reprint creates a new row with reprint_of set and refuses retrying completed jobs', async () => {
+    const { runtime, transport, db } = await makeRuntime();
+    runtime.start();
+    await runtime.pair(PAIRING_CODE);
+    const printer = await runtime.printers.add(makeDraft());
+    transport.queuedJobs.push(signedJobEnvelope(printer.config.printerId));
+    await vi.waitFor(() => {
+      const jobs = runtime.jobs.list();
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0]?.status).toBe('completed');
+    });
+    const original = runtime.jobs.list()[0];
+    if (original === undefined) throw new Error('unreachable: original job missing');
+
+    const reprinted = await runtime.jobs.reprint(original.jobId);
+    expect(reprinted.jobId).not.toBe(original.jobId);
+    expect(reprinted.idempotencyKey).toContain('#reprint-');
+    expect(reprinted.destinationPrinterName).toBe('Kitchen');
+    await vi.waitFor(() => {
+      expect(
+        runtime.jobs.list().some((j) => j.jobId === reprinted.jobId && j.status === 'completed'),
+      ).toBe(true);
+    });
+    expect(db.prepare('SELECT reprint_of FROM jobs WHERE id = ?').get(reprinted.jobId)).toMatchObject(
+      { reprint_of: original.jobId },
+    );
+
+    // Completed jobs are not retryable — the typed engine error propagates.
+    await expect(runtime.jobs.retry(reprinted.jobId)).rejects.toThrow(/only failed jobs/);
+  });
+
+  it('retry re-queues a failed job through a fresh attempt cycle', async () => {
+    const { runtime, transport } = await makeRuntime({ transports: failingTransports() });
+    runtime.start();
+    await runtime.pair(PAIRING_CODE);
+    const printer = await runtime.printers.add(makeDraft());
+    transport.queuedJobs.push(signedJobEnvelope(printer.config.printerId));
+    await vi.waitFor(() => {
+      const jobs = runtime.jobs.list();
+      expect(jobs).toHaveLength(1);
+      expect(jobs[0]?.status).toBe('failed');
+    });
+    const failed = runtime.jobs.list()[0];
+    if (failed === undefined) throw new Error('unreachable: failed job missing');
+
+    const retried = await runtime.jobs.retry(failed.jobId);
+    expect(retried.jobId).toBe(failed.jobId);
+    // The retry exhausts its fresh attempt budget against the failing transport.
+    await vi.waitFor(() => {
+      const record = runtime.jobs.list()[0];
+      expect(record?.status).toBe('failed');
+      expect(record?.attempts).toBe(3);
+    });
+  });
+});

@@ -1,6 +1,7 @@
 import type { AgentTransport, TransportAuth, AckBatch } from './types';
 import {
   AckBatchSchema,
+  AckResultsResponseSchema,
   ApiErrorSchema,
   ConfigUpdateSchema,
   HeartbeatSchema,
@@ -10,6 +11,7 @@ import {
   RefreshResponseSchema,
   ServerKeysResponseSchema,
   PROTOCOL_VERSION,
+  type AckResultsResponse,
   type PairRequest,
   type PairResponse,
   type RefreshResponse,
@@ -35,6 +37,8 @@ import { z } from 'zod';
  *   `refresh` are never retried here: the pairing code is single-use and
  *   token refresh rotates state, so an ambiguous result must surface to the
  *   caller instead of being replayed.
+ * - `POST /acks` returns 200 with a per-ack results array (§7.1), not the
+ *   draft's bare 204.
  */
 
 const MAX_JSON_BODY_BYTES = 4 * 1024 * 1024; // 100 jobs × 32 KiB payload + envelope overhead
@@ -91,8 +95,17 @@ async function parseJsonResponse(res: Response): Promise<unknown> {
 }
 
 function statusToError(res: Response, body: unknown): CloudError {
-  if (res.status === 401) return new CloudError('unauthorized');
-  if (res.status === 403) return new CloudError('forbidden');
+  // The server's machine `error.code` (§7.1) is captured on every 4xx so the
+  // client can react to semantics like `device_revoked` / `invalid_token`
+  // instead of just the HTTP status.
+  const parsed = ApiErrorSchema.safeParse(body);
+  const rawCode = parsed.success ? parsed.data.error.code : undefined;
+  const safeCode =
+    typeof rawCode === 'string' && /^[a-z0-9_.-]{1,64}$/i.test(rawCode) ? rawCode : undefined;
+  const withCode = (err: CloudError): CloudError =>
+    safeCode === undefined ? err : new CloudError(err.code, err.detail, err.retryAfterMs, safeCode);
+  if (res.status === 401) return withCode(new CloudError('unauthorized'));
+  if (res.status === 403) return withCode(new CloudError('forbidden'));
   if (res.status === 429) {
     const retryAfter = res.headers.get('retry-after');
     let retryAfterMs: number | undefined;
@@ -102,20 +115,17 @@ function statusToError(res: Response, body: unknown): CloudError {
         ? Math.max(0, seconds) * 1000
         : Math.max(0, Date.parse(retryAfter) - Date.now());
     }
-    return new CloudError('rate_limited', undefined, retryAfterMs);
+    return withCode(new CloudError('rate_limited', undefined, retryAfterMs));
   }
   if (res.status >= 500) return new CloudError('server_error', `status ${String(res.status)}`);
-  // 4xx: surface the server's machine code for pairing/validation UX, but keep
-  // the detail constrained to a code-shaped token (never echo raw server text).
-  const parsed = ApiErrorSchema.safeParse(body);
-  const serverCode = parsed.success ? parsed.data.error.code : undefined;
-  const safeCode =
-    typeof serverCode === 'string' && /^[a-z0-9_.-]{1,64}$/i.test(serverCode)
-      ? serverCode
-      : undefined;
+  // Other 4xx: surface the server's machine code for pairing/validation UX,
+  // but keep the detail constrained to a code-shaped token (never echo raw
+  // server text).
   return new CloudError(
     'request_rejected',
     `status ${String(res.status)}${safeCode === undefined ? '' : `: ${safeCode}`}`,
+    undefined,
+    safeCode,
   );
 }
 
@@ -223,9 +233,13 @@ export function createHttpTransport(options: HttpTransportOptions): AgentTranspo
       const query = since === '' ? '' : `?since=${encodeURIComponent(since)}`;
       return requestWithRetry('GET', `/jobs${query}`, PollResponseSchema, authed(auth));
     },
-    async sendAcks(auth: TransportAuth, batch: AckBatch): Promise<void> {
+    async sendAcks(auth: TransportAuth, batch: AckBatch): Promise<AckResultsResponse> {
       const body = AckBatchSchema.parse(batch);
-      await requestWithRetry('POST', '/acks', EmptyResponseSchema, { ...authed(auth), body });
+      // §7.1 deviation: the server answers 200 with { results: [...] }, not 204.
+      return requestWithRetry('POST', '/acks', AckResultsResponseSchema, {
+        ...authed(auth),
+        body,
+      });
     },
     getConfig(auth) {
       return requestWithRetry('GET', '/config', ConfigUpdateSchema, authed(auth));

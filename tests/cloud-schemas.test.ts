@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  AckResultsResponseSchema,
   ApiErrorSchema,
   ConfigUpdateSchema,
   PairResponseSchema,
@@ -165,5 +166,36 @@ describe('ApiErrorSchema', () => {
   it('parses the RFC 7807-style error body', () => {
     const parsed = ApiErrorSchema.parse({ error: { code: 'pairing_code_used', message: 'x' } });
     expect(parsed.error.code).toBe('pairing_code_used');
+  });
+});
+
+describe('AckResultsResponseSchema (§7.1: 200 + per-ack results, not 204)', () => {
+  it('accepts the documented results array', () => {
+    const parsed = AckResultsResponseSchema.parse({
+      results: [
+        { job_id: '018f3c2e-0000-7000-8000-000000000005', result: 'applied' },
+        { job_id: '018f3c2e-0000-7000-8000-000000000009', result: 'stale' },
+      ],
+    });
+    expect(parsed.results).toHaveLength(2);
+  });
+
+  it('accepts every documented result value', () => {
+    for (const result of ['applied', 'duplicate', 'stale', 'not_found', 'rejected'] as const) {
+      expect(
+        AckResultsResponseSchema.safeParse({
+          results: [{ job_id: '018f3c2e-0000-7000-8000-000000000005', result }],
+        }).success,
+      ).toBe(true);
+    }
+  });
+
+  it('rejects unknown result values and unknown fields', () => {
+    expect(
+      AckResultsResponseSchema.safeParse({
+        results: [{ job_id: '018f3c2e-0000-7000-8000-000000000005', result: 'printed' }],
+      }).success,
+    ).toBe(false);
+    expect(AckResultsResponseSchema.safeParse({ results: [], extra: 1 }).success).toBe(false);
   });
 });

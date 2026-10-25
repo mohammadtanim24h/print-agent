@@ -51,6 +51,18 @@ describe('SettingsScreen', () => {
     });
   });
 
+  it('persists the start-minimized toggle through the service', async () => {
+    const user = userEvent.setup();
+    const service = makeService();
+    renderWithService(<SettingsScreen onNavigate={() => undefined} />, service);
+    await screen.findByText('Startup');
+    const switches = screen.getAllByRole('checkbox');
+    await user.click(switches[1] as HTMLElement);
+    await waitFor(async () => {
+      await expect(service.getSettings()).resolves.toMatchObject({ startMinimized: false });
+    });
+  });
+
   it('shows an error banner when saving fails', async () => {
     const user = userEvent.setup();
     renderWithService(

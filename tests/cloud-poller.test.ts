@@ -4,6 +4,7 @@ import { CloudError } from '../src/main/cloud-client/errors';
 import type { PrintJobEnvelope } from '../src/main/cloud-client/schemas';
 import type { ConnectionState } from '../src/main/cloud-client/types';
 import { createSafeStorageSecretStore } from '../src/main/cloud-client/secret-store';
+import type { SecretStore } from '../src/main/cloud-client/secret-store';
 import {
   FakeSafeStorage,
   FakeTransport,
@@ -14,8 +15,10 @@ import {
   makeRefreshResponse,
   makeSecrets,
   makeSignedEnvelope,
+  makePairResponse,
   OTHER_TENANT_ID,
   settle,
+  DEVICE_ID,
 } from './helpers/cloud';
 
 /** Polling-client behavior with a scripted transport and manual clock. */
@@ -30,6 +33,7 @@ interface Harness {
   states: ConnectionState[];
   revoked: Array<{ reason: string }>;
   revokedWipes: string[];
+  logs: string[];
 }
 
 function makeHarness(script: ConstructorParameters<typeof FakeTransport>[0] = {}): Harness {
@@ -42,6 +46,7 @@ function makeHarness(script: ConstructorParameters<typeof FakeTransport>[0] = {}
   const states: ConnectionState[] = [];
   const revoked: Array<{ reason: string }> = [];
   const revokedWipes: string[] = [];
+  const logs: string[] = [];
   const client = createPollingCloudClient({
     transport,
     secrets,
@@ -50,13 +55,15 @@ function makeHarness(script: ConstructorParameters<typeof FakeTransport>[0] = {}
     now: () => scheduler.nowMs,
     pollIntervalMs: 30_000,
     refreshCooldownMs: 30_000,
+    random: () => 0.5, // deterministic jitter: healthy cadence stays exactly 30 s
     onRevoked: (reason) => revokedWipes.push(reason),
+    log: (message) => logs.push(message),
   });
   client.on('job', (envelope) => jobs.push(envelope));
   client.on('config', (config) => configs.push(config));
   client.on('state', (s) => states.push(s));
   client.on('revoked', (r) => revoked.push(r));
-  return { client, transport, scheduler, secrets, jobs, configs, states, revoked, revokedWipes };
+  return { client, transport, scheduler, secrets, jobs, configs, states, revoked, revokedWipes, logs };
 }
 
 class MemoryKvAdapter {
@@ -142,7 +149,7 @@ describe('job admission (untrusted server)', () => {
     });
   });
 
-  it('drops jobs whose signature does not verify and acks bad_sig', async () => {
+  it('drops jobs whose signature does not verify and acks rejected{bad_signature}', async () => {
     const { envelope } = makeSignedEnvelope(); // signed by a different key than the pinned one
     const h = makeHarness({ poll: makePollResponse([envelope]) });
     h.secrets.save(makeSecrets({ serverSigningPubkey: makeB64Url32() }));
@@ -153,7 +160,48 @@ describe('job admission (untrusted server)', () => {
     expect(ackCall?.batch?.acks[0]).toMatchObject({
       job_id: (envelope.job as { job_id: string }).job_id,
       status: 'rejected',
+      error: { code: 'bad_signature' },
     });
+  });
+
+  it('acks a print_job with a null sig as rejected{bad_signature} (never strands the claim)', async () => {
+    const { envelope } = makeSignedEnvelope();
+    const nullSig = { ...envelope, sig: null };
+    const h = makeHarness({ poll: makePollResponse([nullSig]) });
+    h.secrets.save(makeSecrets({ serverSigningPubkey: makeB64Url32() }));
+    await startAndSettle(h);
+    expect(h.jobs).toHaveLength(0);
+    expect(h.client.state()).toBe('online');
+    await settle();
+    const ackCall = h.transport.callsOf('acks')[0];
+    expect(ackCall?.batch?.acks[0]).toMatchObject({
+      job_id: (envelope.job as { job_id: string }).job_id,
+      status: 'rejected',
+      error: { code: 'bad_signature' },
+    });
+  });
+
+  it('acks a schema-invalid v1 print_job as rejected{invalid_envelope}', async () => {
+    const { envelope } = makeSignedEnvelope({ job: { copies: 9 } }); // out of range → schema fails
+    const h = makeHarness({ poll: makePollResponse([envelope]) });
+    h.secrets.save(makeSecrets({ serverSigningPubkey: makeB64Url32() }));
+    await startAndSettle(h);
+    expect(h.jobs).toHaveLength(0);
+    await settle();
+    const ackCall = h.transport.callsOf('acks')[0];
+    expect(ackCall?.batch?.acks[0]).toMatchObject({
+      job_id: (envelope.job as { job_id: string }).job_id,
+      status: 'rejected',
+      error: { code: 'invalid_envelope' },
+    });
+  });
+
+  it('drops unnameable garbage as malformed without acking', async () => {
+    const h = makeHarness({ poll: makePollResponse([{ type: 'print_job', job: { job_id: 'x' } }]) });
+    await startAndSettle(h);
+    await settle();
+    expect(h.transport.callsOf('acks')).toHaveLength(0);
+    expect(h.client.state()).toBe('online');
   });
 
   it('drops malformed messages without crashing the loop', async () => {
@@ -202,6 +250,88 @@ describe('token refresh (no infinite retry loop)', () => {
     expect(h.scheduler.pendingCount).toBe(0);
     await h.scheduler.runNext().catch(() => undefined);
     expect(h.transport.callsOf('poll').length).toBe(pollsAfter);
+  });
+
+  it('persists the rotated pair BEFORE any subsequent request uses it (persist-then-swap)', async () => {
+    const events: string[] = [];
+    const scheduler = new ManualScheduler();
+    const transport = new FakeTransport({
+      poll: () => {
+        events.push(`poll:${transport.calls.at(-1)?.auth?.deviceToken ?? '?'}`);
+        if (transport.callsOf('poll').length === 1) throw new CloudError('unauthorized');
+        return makePollResponse([]);
+      },
+      refresh: makeRefreshResponse({ device_token: 'token-v2', refresh_token: 'refresh-v2' }),
+    });
+    const inner = createSafeStorageSecretStore(new MemoryKvAdapter(), new FakeSafeStorage());
+    inner.save(makeSecrets());
+    const recording: SecretStore & { history: string[] } = {
+      history: [],
+      load: () => inner.load(),
+      save: (s) => {
+        recording.history.push(`save:${s.deviceToken}/${s.refreshToken}`);
+        inner.save(s);
+      },
+      clear: () => { inner.clear(); },
+    };
+    const client = createPollingCloudClient({
+      transport,
+      secrets: recording,
+      agentVersion: '0.1.0',
+      schedule: scheduler.schedule,
+      now: () => scheduler.nowMs,
+      pollIntervalMs: 30_000,
+      refreshCooldownMs: 30_000,
+    });
+    client.start();
+    await scheduler.runNext();
+    await settle();
+    expect(client.state()).toBe('online');
+    // The durable save of the v2 pair is recorded before the request that used it.
+    const saveIdx = events.findIndex((e) => e.startsWith('poll:token-v2'));
+    expect(recording.history).toEqual(['save:token-v2/refresh-v2']);
+    expect(saveIdx).toBeGreaterThan(-1);
+  });
+
+  it('a failed durable persist after rotation poisons refresh: loop stops, superseded token is never replayed', async () => {
+    const scheduler = new ManualScheduler();
+    const transport = new FakeTransport({
+      poll: new CloudError('unauthorized'), // always 401
+      refresh: makeRefreshResponse({ device_token: 'token-v2', refresh_token: 'refresh-v2' }),
+    });
+    const inner = createSafeStorageSecretStore(new MemoryKvAdapter(), new FakeSafeStorage());
+    inner.save(makeSecrets());
+    const logs: string[] = [];
+    const failing: SecretStore = {
+      load: () => inner.load(),
+      save: () => {
+        throw new CloudError('secure_storage_unavailable', 'injected persist failure');
+      },
+      clear: () => { inner.clear(); },
+    };
+    const client = createPollingCloudClient({
+      transport,
+      secrets: failing,
+      agentVersion: '0.1.0',
+      schedule: scheduler.schedule,
+      now: () => scheduler.nowMs,
+      pollIntervalMs: 30_000,
+      refreshCooldownMs: 30_000,
+      log: (m) => logs.push(m),
+    });
+    client.start();
+    await scheduler.runNext(); // 401 → refresh OK → persist fails → poisoned, loop stopped
+    expect(client.state()).toBe('offline');
+    expect(transport.callsOf('refresh')).toHaveLength(1);
+    expect(logs.some((l) => l.includes('could not be persisted'))).toBe(true);
+    // The superseded pair was never swapped in: durable identity is still pre-rotation.
+    expect(inner.load()?.refreshToken).toBe('refresh-token-abc');
+    // The loop is stopped — no further cycle can replay the dead refresh token.
+    expect(scheduler.pendingCount).toBe(0);
+    client.pollNow();
+    await settle();
+    expect(transport.callsOf('refresh')).toHaveLength(1);
+    expect(transport.callsOf('poll')).toHaveLength(1);
   });
 
   it('at most one refresh attempt per cooldown window across repeated 401 cycles', async () => {
@@ -334,6 +464,74 @@ describe('revocation envelope', () => {
 });
 
 describe('acks and heartbeat', () => {
+  /** A minimal valid ack item for submitAcks tests. */
+  function makeAckItem(): {
+    job_id: string;
+    status: 'completed';
+    printer_status: 'unknown';
+    printed: false;
+    attempt: number;
+    at: string;
+  } {
+    return {
+      job_id: '018f3c2e-0000-7000-8000-000000000005',
+      status: 'completed',
+      printer_status: 'unknown',
+      printed: false,
+      attempt: 1,
+      at: '2026-10-24T10:00:02.000Z',
+    };
+  }
+
+  it.each(['applied', 'duplicate', 'stale'] as const)(
+    'ack result %s is a success-no-op: stays online, no retry',
+    async (result) => {
+      const h = makeHarness({
+        acks: { results: [{ job_id: '018f3c2e-0000-7000-8000-000000000005', result }] },
+      });
+      await startAndSettle(h);
+      await h.client.submitAcks({ envelope_version: 1, type: 'ack', acks: [makeAckItem()] });
+      expect(h.client.state()).toBe('online');
+      expect(h.transport.callsOf('acks')).toHaveLength(1); // never retried
+      if (result !== 'applied') {
+        expect(h.logs.some((l) => l.includes(result))).toBe(false);
+      }
+    },
+  );
+
+  it('ack result not_found is surfaced as an anomaly and not retried', async () => {
+    const h = makeHarness({
+      acks: { results: [{ job_id: '018f3c2e-0000-7000-8000-000000000005', result: 'not_found' }] },
+    });
+    await startAndSettle(h);
+    await h.client.submitAcks({ envelope_version: 1, type: 'ack', acks: [makeAckItem()] });
+    expect(h.transport.callsOf('acks')).toHaveLength(1);
+    expect(h.logs.some((l) => l.includes('not_found'))).toBe(true);
+  });
+
+  it('ack result rejected is logged for diagnostics and not retried', async () => {
+    const h = makeHarness({
+      acks: { results: [{ job_id: '018f3c2e-0000-7000-8000-000000000005', result: 'rejected' }] },
+    });
+    await startAndSettle(h);
+    await h.client.submitAcks({ envelope_version: 1, type: 'ack', acks: [makeAckItem()] });
+    expect(h.transport.callsOf('acks')).toHaveLength(1);
+    expect(h.logs.some((l) => l.includes('rejected by server'))).toBe(true);
+  });
+
+  it('per-call ack result scripts are consumed in order', async () => {
+    const h = makeHarness({
+      acks: [
+        { results: [{ job_id: '018f3c2e-0000-7000-8000-000000000005', result: 'applied' }] },
+        { results: [{ job_id: '018f3c2e-0000-7000-8000-000000000005', result: 'not_found' }] },
+      ],
+    });
+    await startAndSettle(h);
+    await h.client.submitAcks({ envelope_version: 1, type: 'ack', acks: [makeAckItem()] });
+    await h.client.submitAcks({ envelope_version: 1, type: 'ack', acks: [makeAckItem()] });
+    expect(h.logs.filter((l) => l.includes('not_found'))).toHaveLength(1);
+  });
+
   it('submitAcks sends the batch authenticated', async () => {
     const h = makeHarness({});
     await startAndSettle(h);
@@ -386,5 +584,80 @@ describe('acks and heartbeat', () => {
     await startAndSettle(h);
     expect(h.client.state()).toBe('online');
     expect(h.transport.callsOf('refresh')).toHaveLength(1);
+  });
+
+  it('healthy cadence jitters ±10% around pollIntervalMs', async () => {
+    for (const [randomValue, expected] of [
+      [0, 27_000],
+      [0.5, 30_000],
+      [1, 33_000],
+    ] as const) {
+      const scheduler = new ManualScheduler();
+      const secrets = createSafeStorageSecretStore(new MemoryKvAdapter(), new FakeSafeStorage());
+      secrets.save(makeSecrets());
+      const client = createPollingCloudClient({
+        transport: new FakeTransport({}),
+        secrets,
+        agentVersion: '0.1.0',
+        schedule: scheduler.schedule,
+        pollIntervalMs: 30_000,
+        random: () => randomValue,
+      });
+      client.start();
+      await scheduler.runNext();
+      await settle();
+      expect(scheduler.nextDelay()).toBe(expected);
+      client.stop();
+    }
+  });
+});
+
+describe('device_revoked error.code (§7 note 8)', () => {
+  function revokedError(): CloudError {
+    return new CloudError('unauthorized', 'status 401: device_revoked', undefined, 'device_revoked');
+  }
+
+  it('device_revoked on a data call revokes immediately without attempting refresh', async () => {
+    const h = makeHarness({ poll: revokedError() });
+    await startAndSettle(h);
+    expect(h.client.state()).toBe('revoked');
+    expect(h.transport.callsOf('refresh')).toHaveLength(0);
+    expect(h.secrets.load()).toBeNull();
+    expect(h.revoked).toEqual([{ reason: 'device_revoked' }]);
+    expect(h.revokedWipes).toEqual(['device_revoked']);
+  });
+
+  it('device_revoked on refresh revokes with the device_revoked reason', async () => {
+    const h = makeHarness({
+      poll: new CloudError('unauthorized'),
+      refresh: revokedError(),
+    });
+    await startAndSettle(h);
+    expect(h.client.state()).toBe('revoked');
+    expect(h.revoked).toEqual([{ reason: 'device_revoked' }]);
+    expect(h.secrets.load()).toBeNull();
+  });
+
+  it('after revocation, pairing with a fresh code recovers to online (§3.5 UX)', async () => {
+    let pollCount = 0;
+    const h = makeHarness({
+      poll: () => {
+        pollCount += 1;
+        if (pollCount === 1) throw revokedError();
+        return makePollResponse([]);
+      },
+    });
+    await startAndSettle(h);
+    expect(h.client.state()).toBe('revoked');
+    // Fresh pairing code → new identity → loop starts again.
+    h.transport.script.pair = makePairResponse({ device_token: 'token-new' });
+    const identity = await h.client.pair({ pairingCode: 'FRESH123', deviceName: 'PC' });
+    if (h.scheduler.pendingCount > 0) await h.scheduler.runNext();
+    await settle();
+    expect(identity.deviceId).toBe(DEVICE_ID);
+    expect(h.client.state()).toBe('online');
+    expect(h.secrets.load()?.deviceToken).toBe('token-new'); // the fresh pair, not the revoked one
+    // The loop is polling again.
+    expect(h.scheduler.pendingCount).toBeGreaterThan(0);
   });
 });

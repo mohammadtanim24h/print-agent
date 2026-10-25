@@ -47,13 +47,13 @@ port on the cashier PC — not even on localhost — so nothing on the LAN can c
 
 | Concern                  | Choice                                                                                                                                                          | Alternative rejected / deferred                                                                                                              |
 | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| Shell                    | Electron 45 (MIT) — Node 24 runtime, mature auto-update, USB/serial access                                                                                      | Tauri (WebView2 variance, weaker native-module story for usb/serial); plain Node service (no local UI)                                       |
+| Shell                    | Electron 45 (MIT) — Node 24 runtime, USB/serial access; chosen for Node APIs + local UI (ADR-14 dropped auto-update: cert cost + feed infra not justified, an unsigned updater is forbidden) | Tauri (WebView2 variance, weaker native-module story for usb/serial); plain Node service (no local UI)                                       |
 | ESC/POS generation       | `node-thermal-printer` 4.x (MIT, active Aug 2026) for byte generation                                                                                           | `escpos`* packages (abandoned ~2020, alphas only)                                                                                            |
 | Transports               | Own thin adapters: Node `net` (TCP 9100), custom Win32 spooler-RAW N-API shim (~100 lines, `OpenPrinter→StartDocPrinter("RAW")→WritePrinter`), `usb` 3.x (v1.1) | No maintained npm package wraps Win32 RAW spooler (verified); `pdf-to-printer` bundles GPLv3 SumatraPDF → **license-incompatible, rejected** |
 | Local store              | `better-sqlite3` 13.x (MIT, N-API prebuilds — no electron-rebuild)                                                                                              | `sql.js` (WASM, slower, no true durability guarantees)                                                                                       |
 | Schema validation        | `zod` 4.x at every trust boundary (WS messages, IPC, config files)                                                                                              | Hand-rolled validators (error-prone)                                                                                                         |
 | Socket                   | `ws` 8.x (MIT) client in main process                                                                                                                           | Browser WebSocket in renderer (breaks isolation)                                                                                             |
-| Packaging/update         | `electron-builder` 26.x + `electron-updater` (signed)                                                                                                           | `@electron/forge` (equivalent viable; builder chosen for auto-update maturity)                                                               |
+| Packaging/update         | `electron-builder` 26.x only — unsigned NSIS, manual distribution, no updater (ADR-14)                                                                          | `@electron/forge` (equivalent viable); `electron-updater` (ADR-12 — superseded: an unsigned updater is forbidden)                            |
 | Images (logo/QR preview) | `@napi-rs/canvas` + `qrcode`                                                                                                                                    | `sharp` (heavier native deps), `node-canvas` (build friction)                                                                                |
 | Virtual printer          | `escpos-emulator` (MIT, 2026): TCP :9100 + REST for assertions                                                                                                  | USB device emulation (not CI-feasible; optional Pi-Zero gadget for manual smoke tests)                                                       |
 | Logging                  | `electron-log` (MIT) structured + rotation                                                                                                                      | —                                                                                                                                            |
@@ -133,6 +133,37 @@ encodability policy, raster fallback design, diagnostic summary contract).
 
 - Local-only UI: tray icon, agent status, pairing wizard, printer test-print buttons,
   ambiguous-job resolution prompt. Reads state via IPC events.
+
+### 3.10 Composition root
+
+`AgentRuntime` (`src/main/agent-runtime.ts`) is the **only** place modules are
+instantiated: it wires the stores, engine, transports and cloud client with injected
+dependencies and owns the app lifecycle (pairing, wipe-on-revoke/unpair, snapshot
+assembly, cloud-event plumbing). `main.ts` opens + migrates the SQLite database and
+closes it on quit; the runtime never touches the db handle's lifetime.
+
+Event flow:
+
+- **Jobs:** poller (`cloud-client`) validates + scope-checks envelopes →
+  `job-engine.submit()` → acks flow engine → `ack-buffer` → poller
+  (`submitAcks` batched; the buffer reaches the client through a forward
+  reference created before the client exists — the first submit only happens
+  after `start()`/`pair()`).
+- **Connection state:** on `state → 'online'` the runtime drains retained acks
+  immediately (`flushNow()`) — offline-held acks never wait out the buffer's
+  delay timer after a reconnect.
+- **Config:** `config` events are persisted to the `cloud_config` table only;
+  application is a later phase (FR-16).
+
+Recovery ordering: `runtime.start()` runs `engine.recover()` **before**
+`client.start()` — crash-recovered jobs (incl. `sending` → `ambiguous`) must be
+settled before the first poll can deliver new work (§5).
+
+Wipe path (revocation from the server or operator unpair, §7): the runtime stops
+the client and clears secrets, jobs, printers, cached cloud config and
+`pairedAt`. The wipe is best-effort — a failed step is logged, never thrown, so
+a wipe failure cannot wedge the caller; the UI's revoked-state wording claims
+only that the wipe was *triggered*.
 
 ## 4. Job flow (happy path)
 
