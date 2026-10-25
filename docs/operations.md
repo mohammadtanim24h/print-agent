@@ -141,14 +141,27 @@ as the belt-and-braces step.
 
 ## 6. Build & release checklist
 
-1. CI: `npm ci` (ignore-scripts), unit + contract tests (virtual printer), fuzz corpus
-   for renderer, `npm audit` + SBOM license gate, packaging, installer signing.
-2. Upgrade smoke on: Win10 19045, Win11 23H2, clean profile + upgrade path.
-3. **Confirm the production API base URL**: `src/main/main.ts` still ships the
-   `print-api.example-saas.test` placeholder — it MUST be replaced with the Laravel
-   team's real URL before any release build (see §8).
-4. Sign installer → upload feed → stage 5%.
-5. Verify update telemetry (version adoption, crash-free rate) before advancing.
+1. CI green on `main` (gate + smoke — §9).
+2. `pnpm release patch|minor|major` from a clean, up-to-date `main` — bumps the
+   version, tags, and pushes; the Release workflow builds, packages, smokes the
+   packaged exe, and publishes the GitHub Release with
+   `PrintAgent-Setup-x.y.z.exe` + `.sha256`.
+3. Download the installer and verify the SHA-256 checksum against the Release.
+4. **Confirm the production API base URL is compiled in** — `src/main/main.ts`
+   still defaults to the placeholder `print-api.example-saas.test`; a release
+   build must carry the real Laravel URL (`PRINT_AGENT_API_URL` is a dev-only
+   override, §8).
+5. **Confirm the pairing-code alphabet** `^[A-Z0-9]{8}$` with the Laravel team
+   (the agent pins this regex).
+6. Upload the installer to the SaaS download page. SmartScreen warnings at
+   restaurants are expected (§1, ADR-14).
+7. Before any Electron major bump enters a release: upgrade smoke on
+   Win10 19045 and Win11 23H2, clean profile + upgrade path.
+
+If the version-bump commit + tag landed locally but `git push` failed, do not
+re-run `pnpm release` (it would skip a version): push manually with
+`git push origin main vX.Y.Z`, or undo locally (`git tag -d vX.Y.Z` +
+`git reset --hard HEAD~1`) and retry.
 
 ## 7. Support data retention
 
