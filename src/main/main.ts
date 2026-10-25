@@ -3,7 +3,12 @@ import electronLog from 'electron-log/main';
 import net from 'node:net';
 import { hostname } from 'node:os';
 import { join } from 'node:path';
-import { Channel, RequestSchemas } from '../shared/ipc-contract';
+import {
+  Channel,
+  RequestSchemas,
+  type AppSettings,
+  type SettingsUpdatePayload,
+} from '../shared/ipc-contract';
 import { createAgentRuntime } from './agent-runtime';
 import { closeDatabase, openDatabase } from './local-store/db';
 import { migrate } from './local-store/migrations';
@@ -133,14 +138,16 @@ async function start(): Promise<void> {
       log.info('launch-at-login changed', { enabled });
       return next;
     },
-    [Channel.SettingsUpdate]: async (patch: {
-      startMinimized?: boolean;
-      logLevel?: 'debug' | 'info' | 'warn' | 'error';
-    }) => {
+    [Channel.SettingsUpdate]: async (patch: SettingsUpdatePayload) => {
+      // zod's optional() output allows explicit undefined, which
+      // exactOptionalPropertyTypes forbids on Partial<AppSettings> — strip it.
+      const clean: Partial<AppSettings> = {};
+      if (patch.startMinimized !== undefined) clean.startMinimized = patch.startMinimized;
+      if (patch.logLevel !== undefined) clean.logLevel = patch.logLevel;
       // Empty patches (e.g. launchAtLogin-only updates from the renderer)
       // return current settings without a redundant disk write.
-      const next = Object.keys(patch).length === 0 ? settings.get() : await settings.set(patch);
-      if (patch.logLevel !== undefined) {
+      const next = Object.keys(clean).length === 0 ? settings.get() : await settings.set(clean);
+      if (clean.logLevel !== undefined) {
         electronLog.transports.file.level = next.logLevel;
         log.info('log level changed', { level: next.logLevel });
       }

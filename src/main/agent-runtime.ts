@@ -117,7 +117,7 @@ const CONNECTION_DETAILS: Readonly<Record<ConnectionState, string>> = {
   online: 'Connected to the cloud. Jobs are delivered by outbound polling.',
   offline:
     'No connection to the cloud. Jobs sent while offline queue on the server and replay on reconnect.',
-  revoked: 'This device was revoked. Local data was wiped — pair again with a new code.',
+  revoked: 'This device was revoked. The local data wipe was triggered — pair again with a new code.',
 };
 
 const CLOUD_CHECK_TIMEOUT_MS = 5_000;

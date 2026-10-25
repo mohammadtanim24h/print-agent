@@ -71,6 +71,9 @@ export const RequestSchemas = {
 
 export type RequestOf<C extends Channel> = z.output<(typeof RequestSchemas)[C]>;
 
+/** Derived from the schema — main.ts and preload must not re-declare it. */
+export type SettingsUpdatePayload = RequestOf<(typeof Channel)['SettingsUpdate']>;
+
 export const CONNECTION_STATES = ['unpaired', 'connecting', 'online', 'offline', 'revoked'] as const;
 
 export const AgentInfoSchema = z.strictObject({

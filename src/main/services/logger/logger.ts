@@ -23,6 +23,8 @@ export interface LogLine {
 
 const FIVE_MIB = 5 * 1024 * 1024;
 
+// Ambient by design: a process-wide in-memory diagnostics seam (not a hidden
+// singleton dependency — code that needs recent logs takes the accessor).
 const RING_CAP = 500;
 const ring: LogLine[] = [];
 

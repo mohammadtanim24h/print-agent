@@ -12,7 +12,10 @@ import type { SecretKv } from './cloud-client/secret-store';
  * in the persistence window would replay a rotated refresh token and get the
  * device revoked. One key = one whole-file rewrite: the all-or-nothing
  * single-record requirement holds across a crash mid-write (rename is
- * atomic on Windows and POSIX).
+ * atomic on Windows and POSIX). Durability bound: writeFileSync+renameSync
+ * survive a process crash but not a power loss (the page cache may not have
+ * flushed) — accepted here because the payload is a DPAPI-encrypted blob
+ * whose worst case is re-pairing.
  *
  * Reads are served from an in-memory cache loaded once at creation; writes
  * hit disk FIRST and only then update the cache, so the cache never claims a

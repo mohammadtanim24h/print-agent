@@ -9,8 +9,8 @@ const root = document.getElementById('root');
 if (root === null) {
   throw new Error('missing #root element');
 }
-// Demo-backed until the cloud/printer/job services land; launch-at-login is
-// already real via the validated IPC bridge (see production-service.ts).
+// Everything is real: every screen runs through the validated IPC bridge to
+// the main-process runtime (see production-service.ts).
 createRoot(root).render(
   <StrictMode>
     <ServiceProvider service={createProductionService()}>

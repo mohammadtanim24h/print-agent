@@ -54,8 +54,11 @@ const CAPABILITIES: ReadonlyArray<{ readonly key: keyof Capabilities; readonly l
   { key: 'cashDrawer', label: 'Cash drawer' },
 ];
 
-/** Keeps the previous value when a number input is momentarily empty/invalid. */
+/** Keeps the previous value when a number input is momentarily empty/invalid.
+ *  The empty check comes first: Number('') === 0 would otherwise pass the
+ *  integer check and clobber the stored value with 0. */
 function parseIntOr(raw: string, fallback: number): number {
+  if (raw === '') return fallback;
   const parsed = Number(raw);
   return Number.isInteger(parsed) ? parsed : fallback;
 }
