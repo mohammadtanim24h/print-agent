@@ -336,11 +336,9 @@ describe('ws-channel heartbeat + watchdog', () => {
     await h.scheduler.runNext();
     expect(h.sockets[0]?.pingCount).toBe(2);
     // tick 3 at 90 s: silence window reached → terminate (fires close 1006)
-    const before = h.sockets.length;
     await h.scheduler.runNext();
     expect(h.sockets[0]?.pingCount).toBe(2); // no ping on the terminating tick
-    expect(h.sockets.length).toBeGreaterThanOrEqual(before); // redial scheduled
-    expect(h.scheduler.pendingCount).toBe(1);
+    expect(h.scheduler.pendingCount).toBe(1); // the backoff redial
   });
 
   it('a pong or inbound frame refreshes the silence window', async () => {
@@ -366,7 +364,7 @@ describe('ws-channel auth failures', () => {
     h.sockets[0]?.serverOpen();
     h.sockets[0]?.serverClose(WS_AUTH_CLOSE_CODE);
     expect(h.authFailures).toBe(1);
-    expect(h.scheduler.pendingCount).toBe(1); // consumer refreshes → notifyAuthChanged
+    expect(h.scheduler.pendingCount).toBe(1); // the channel's own backoff dial (consumer refresh is the robustness test's path)
   });
 
   it('emits auth-failed on an HTTP 401 upgrade rejection (no close frame)', () => {
