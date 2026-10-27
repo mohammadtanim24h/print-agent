@@ -10,6 +10,7 @@ import type {
   ConnectionState,
   HeartbeatSample,
   AckBatch,
+  WssChannelLike,
 } from './types';
 import type { IdentitySecrets, SecretStore } from './secret-store';
 
@@ -42,6 +43,10 @@ export interface PollingClientDeps {
   /** Replaceable timer; returns a cancel function. */
   readonly schedule?: (fn: () => void, delayMs: number) => () => void;
   readonly pollIntervalMs?: number;
+  /** Live WSS push channel (contract §1); envelopes share the poll pipeline. */
+  readonly channel?: WssChannelLike;
+  /** Healthy-cadence poll interval while the channel is connected. */
+  readonly safetyPollIntervalMs?: number;
   /** Minimum spacing between token refresh attempts (loop prevention). */
   readonly refreshCooldownMs?: number;
   /** Injected randomness for cadence/backoff jitter; defaults to Math.random. */
@@ -53,6 +58,7 @@ export interface PollingClientDeps {
 }
 
 const DEFAULT_POLL_INTERVAL_MS = 30_000;
+const DEFAULT_SAFETY_POLL_INTERVAL_MS = 5 * 60_000;
 const DEFAULT_REFRESH_COOLDOWN_MS = 30_000;
 const MAX_BACKOFF_MS = 10 * 60_000;
 
@@ -98,6 +104,8 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
       };
     });
   const pollIntervalMs = deps.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS;
+  const channel = deps.channel;
+  const safetyPollIntervalMs = deps.safetyPollIntervalMs ?? DEFAULT_SAFETY_POLL_INTERVAL_MS;
   const refreshCooldownMs = deps.refreshCooldownMs ?? DEFAULT_REFRESH_COOLDOWN_MS;
   const random = deps.random ?? Math.random;
   const log = deps.log ?? ((): void => {});
@@ -113,6 +121,33 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
     state: new Set(),
     revoked: new Set(),
   };
+
+  // WSS push frames share the poll pipeline: scope check → sig verify →
+  // revoke → config → events (same `handleServerMessage` funnel).
+  channel?.on('message', (raw) => {
+    try {
+      handleServerMessage(raw);
+    } catch {
+      // A listener further down (engine intake) must never turn a bad frame
+      // into an unhandled rejection on the socket thread.
+      log('cloud: dropped malformed WSS frame');
+    }
+  });
+  channel?.on('state', (next) => {
+    if (isStopped() || state === 'revoked') return;
+    if (next === 'connected') {
+      backoffAttempt = 0;
+      setState('online');
+      return;
+    }
+    if (next === 'disconnected') {
+      scheduleCycle(0); // fast lane back to REST polling
+    }
+  });
+  channel?.on('auth-failed', () => {
+    if (isStopped()) return;
+    void runCycle(); // 401 path performs the single-flight refresh → redial below
+  });
 
   let state: ConnectionState = 'unpaired';
   /** Full secret record in memory while paired; token rotations mutate a copy. */
@@ -141,9 +176,12 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
 
   /** Healthy cadence: pollIntervalMs ± 10 % jitter (§7: heartbeats "every
    *  ~30 s ± jitter"; the 90 s offline window must never be raced by a
-   *  synchronized fleet). */
+   *  synchronized fleet). While the WSS channel is connected, REST polls drop
+   *  to the safety cadence — the socket is the delivery path, polls only
+   *  paper over a silently dead connection. */
   function healthyDelayMs(): number {
-    return Math.floor(pollIntervalMs * (0.9 + 0.2 * random()));
+    const interval = channel?.isConnected() === true ? safetyPollIntervalMs : pollIntervalMs;
+    return Math.floor(interval * (0.9 + 0.2 * random()));
   }
 
   function backoffDelayMs(): number {
@@ -172,12 +210,14 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
     backoffAttempt = 0;
     setState('connecting');
     scheduleCycle(0); // immediate first poll: recover pending work
+    channel?.start();
   }
 
   function stop(): void {
     stopped = true;
     cancelTimer?.();
     cancelTimer = null;
+    channel?.stop();
   }
 
   async function runCycle(): Promise<void> {
@@ -189,7 +229,7 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
         return;
       }
       try {
-        if (sampleProvider !== undefined) {
+        if (sampleProvider !== undefined && channel?.isConnected() !== true) {
           await withAuth((auth) => transport.heartbeat(auth, sampleProvider()));
         }
         const res = await withAuth((auth) => transport.pollJobs(auth, cursor));
@@ -228,7 +268,9 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
       return;
     }
     backoffAttempt += 1;
-    setState('offline');
+    // The socket path is still up — a failed REST poll does not make the agent
+    // offline; pushes keep flowing over the channel.
+    setState(channel?.isConnected() === true ? 'online' : 'offline');
     if (err instanceof CloudError) {
       log(`cloud: cycle failed (${err.code})`); // code + static detail only
     } else {
@@ -259,9 +301,7 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
           err instanceof CloudError &&
           (err.code === 'unauthorized' || err.code === 'forbidden')
         ) {
-          handleRevocation(
-            isDeviceRevoked(err) ? 'device_revoked' : 'token_refresh_refused',
-          );
+          handleRevocation(isDeviceRevoked(err) ? 'device_revoked' : 'token_refresh_refused');
         }
         throw err;
       }
@@ -283,6 +323,7 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
         throw err;
       }
       identity = next;
+      channel?.notifyAuthChanged(); // redial with the rotated token
     })();
     refreshInFlight = attempt.finally(() => {
       refreshInFlight = null;
@@ -456,6 +497,7 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
     stopped = true;
     cancelTimer?.();
     cancelTimer = null;
+    channel?.stop(); // never redial with wiped credentials
     deps.secrets.clear(); // wipe identity (§3.5); jobs/printers wipe via onRevoked
     identity = null;
     for (const listener of listeners.revoked) listener({ reason });
