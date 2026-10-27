@@ -2,10 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { createPollingCloudClient } from '../src/main/cloud-client/poller';
 import { CloudError } from '../src/main/cloud-client/errors';
 import type { PrintJobEnvelope } from '../src/main/cloud-client/schemas';
-import type { ConnectionState } from '../src/main/cloud-client/types';
+import type { ConnectionState, HeartbeatSample } from '../src/main/cloud-client/types';
 import { createSafeStorageSecretStore } from '../src/main/cloud-client/secret-store';
 import type { SecretStore } from '../src/main/cloud-client/secret-store';
 import {
+  FakeChannel,
   FakeSafeStorage,
   FakeTransport,
   ManualScheduler,
@@ -28,6 +29,7 @@ interface Harness {
   transport: FakeTransport;
   scheduler: ManualScheduler;
   secrets: ReturnType<typeof createSafeStorageSecretStore>;
+  channel: FakeChannel;
   jobs: PrintJobEnvelope[];
   configs: Array<{ config_version: number }>;
   states: ConnectionState[];
@@ -36,11 +38,19 @@ interface Harness {
   logs: string[];
 }
 
-function makeHarness(script: ConstructorParameters<typeof FakeTransport>[0] = {}): Harness {
+function makeHarness(
+  script: ConstructorParameters<typeof FakeTransport>[0] = {},
+  options: {
+    channel?: FakeChannel;
+    safetyPollIntervalMs?: number;
+    heartbeatSample?: () => HeartbeatSample;
+  } = {},
+): Harness {
   const scheduler = new ManualScheduler();
   const transport = new FakeTransport(script);
   const secrets = createSafeStorageSecretStore(new MemoryKvAdapter(), new FakeSafeStorage());
   secrets.save(makeSecrets());
+  const channel = options.channel ?? new FakeChannel();
   const jobs: PrintJobEnvelope[] = [];
   const configs: Array<{ config_version: number }> = [];
   const states: ConnectionState[] = [];
@@ -58,12 +68,29 @@ function makeHarness(script: ConstructorParameters<typeof FakeTransport>[0] = {}
     random: () => 0.5, // deterministic jitter: healthy cadence stays exactly 30 s
     onRevoked: (reason) => revokedWipes.push(reason),
     log: (message) => logs.push(message),
+    channel,
+    ...(options.safetyPollIntervalMs !== undefined
+      ? { safetyPollIntervalMs: options.safetyPollIntervalMs }
+      : {}),
+    ...(options.heartbeatSample !== undefined ? { heartbeatSample: options.heartbeatSample } : {}),
   });
   client.on('job', (envelope) => jobs.push(envelope));
   client.on('config', (config) => configs.push(config));
   client.on('state', (s) => states.push(s));
   client.on('revoked', (r) => revoked.push(r));
-  return { client, transport, scheduler, secrets, jobs, configs, states, revoked, revokedWipes, logs };
+  return {
+    client,
+    transport,
+    scheduler,
+    secrets,
+    channel,
+    jobs,
+    configs,
+    states,
+    revoked,
+    revokedWipes,
+    logs,
+  };
 }
 
 class MemoryKvAdapter {
@@ -197,7 +224,9 @@ describe('job admission (untrusted server)', () => {
   });
 
   it('drops unnameable garbage as malformed without acking', async () => {
-    const h = makeHarness({ poll: makePollResponse([{ type: 'print_job', job: { job_id: 'x' } }]) });
+    const h = makeHarness({
+      poll: makePollResponse([{ type: 'print_job', job: { job_id: 'x' } }]),
+    });
     await startAndSettle(h);
     await settle();
     expect(h.transport.callsOf('acks')).toHaveLength(0);
@@ -272,7 +301,9 @@ describe('token refresh (no infinite retry loop)', () => {
         recording.history.push(`save:${s.deviceToken}/${s.refreshToken}`);
         inner.save(s);
       },
-      clear: () => { inner.clear(); },
+      clear: () => {
+        inner.clear();
+      },
     };
     const client = createPollingCloudClient({
       transport,
@@ -307,7 +338,9 @@ describe('token refresh (no infinite retry loop)', () => {
       save: () => {
         throw new CloudError('secure_storage_unavailable', 'injected persist failure');
       },
-      clear: () => { inner.clear(); },
+      clear: () => {
+        inner.clear();
+      },
     };
     const client = createPollingCloudClient({
       transport,
@@ -614,7 +647,12 @@ describe('acks and heartbeat', () => {
 
 describe('device_revoked error.code (§7 note 8)', () => {
   function revokedError(): CloudError {
-    return new CloudError('unauthorized', 'status 401: device_revoked', undefined, 'device_revoked');
+    return new CloudError(
+      'unauthorized',
+      'status 401: device_revoked',
+      undefined,
+      'device_revoked',
+    );
   }
 
   it('device_revoked on a data call revokes immediately without attempting refresh', async () => {
@@ -659,5 +697,135 @@ describe('device_revoked error.code (§7 note 8)', () => {
     expect(h.secrets.load()?.deviceToken).toBe('token-new'); // the fresh pair, not the revoked one
     // The loop is polling again.
     expect(h.scheduler.pendingCount).toBeGreaterThan(0);
+  });
+});
+
+describe('WSS channel integration', () => {
+  it('channel connect flips state online and the next cadence slows to the safety interval', async () => {
+    const h = makeHarness({}, { safetyPollIntervalMs: 300_000 });
+    await startAndSettle(h);
+    h.channel.connect();
+    expect(h.client.state()).toBe('online');
+    await h.scheduler.runNext(); // the pre-connect cycle runs; the NEXT one is safety-cadence
+    // 300_000 · (0.9 + 0.2·0.5) = 300_000 ms exactly.
+    expect(h.scheduler.nextDelay()).toBe(300_000);
+  });
+
+  it('delivers envelopes pushed over the channel through the same pipeline', async () => {
+    const { envelope, publicKeyB64Url } = makeSignedEnvelope();
+    const h = makeHarness({});
+    h.secrets.save(makeSecrets({ serverSigningPubkey: publicKeyB64Url }));
+    await startAndSettle(h);
+    const before = h.jobs.length;
+    h.channel.connect();
+    h.channel.push(envelope);
+    await settle();
+    expect(h.jobs.length).toBe(before + 1);
+  });
+
+  it('out-of-scope jobs pushed over the channel are rejected via REST acks', async () => {
+    const { envelope, publicKeyB64Url } = makeSignedEnvelope({
+      job: { tenant_id: OTHER_TENANT_ID },
+    });
+    const h = makeHarness({});
+    h.secrets.save(makeSecrets({ serverSigningPubkey: publicKeyB64Url }));
+    await startAndSettle(h);
+    h.channel.connect();
+    h.channel.push(envelope);
+    await settle();
+    const ackCall = h.transport.callsOf('acks')[0];
+    expect(ackCall?.batch?.acks[0]).toMatchObject({
+      job_id: (envelope.job as { job_id: string }).job_id,
+      status: 'rejected',
+    });
+  });
+
+  it('a revoke envelope over the channel wipes local state', async () => {
+    const h = makeHarness({});
+    await startAndSettle(h);
+    h.channel.connect();
+    h.channel.push({ type: 'revoke', reason: 'manager_initiated' });
+    await settle();
+    expect(h.revoked).toEqual([{ reason: 'manager_initiated' }]);
+    expect(h.revokedWipes).toEqual(['manager_initiated']);
+    expect(h.client.state()).toBe('revoked');
+  });
+
+  it('REST heartbeat is skipped while the channel carries heartbeats', async () => {
+    const h = makeHarness(
+      {},
+      {
+        heartbeatSample: () => ({
+          uptime_s: 1,
+          queue_depth: 0,
+          connection: 'poll' as const,
+          printers: [],
+        }),
+      },
+    );
+    h.channel.connect();
+    await startAndSettle(h);
+    expect(h.transport.callsOf('heartbeat')).toHaveLength(0);
+  });
+
+  it('channel disconnect triggers an immediate cycle that sends a poll-mode heartbeat', async () => {
+    const h = makeHarness(
+      {},
+      {
+        heartbeatSample: () => ({
+          uptime_s: 1,
+          queue_depth: 0,
+          connection: 'poll' as const,
+          printers: [],
+        }),
+      },
+    );
+    h.channel.connect();
+    await startAndSettle(h);
+    h.transport.calls.length = 0;
+    h.channel.disconnect(); // schedules the recovery cycle at delay 0
+    await h.scheduler.runNext();
+    expect(h.transport.callsOf('poll')).toHaveLength(1);
+    const hb = h.transport.callsOf('heartbeat')[0];
+    expect(hb?.sample?.connection).toBe('poll');
+  });
+
+  it('a failed poll cycle keeps state online while the channel is connected', async () => {
+    let pollCalls = 0;
+    const h = makeHarness({
+      poll: () => {
+        pollCalls += 1;
+        if (pollCalls > 1) throw new CloudError('network');
+        return makePollResponse([]);
+      },
+    });
+    await startAndSettle(h);
+    h.channel.connect();
+    await h.scheduler.runNext(); // failing cycle
+    expect(h.client.state()).toBe('online');
+  });
+
+  it('auth-failed runs a cycle; a successful refresh notifies the channel', async () => {
+    let pollCalls = 0;
+    const h = makeHarness({
+      poll: () => {
+        pollCalls += 1;
+        if (pollCalls === 2) throw new CloudError('unauthorized');
+        return makePollResponse([]);
+      },
+    });
+    await startAndSettle(h);
+    h.channel.authFailed();
+    await settle();
+    expect(h.transport.callsOf('refresh')).toHaveLength(1);
+    expect(h.channel.authChangedCalls).toBe(1);
+  });
+
+  it('start/stop/revoke manage the channel lifecycle', async () => {
+    const h = makeHarness({});
+    await startAndSettle(h);
+    expect(h.channel.starts).toBe(1);
+    h.client.stop();
+    expect(h.channel.stops).toBeGreaterThanOrEqual(1);
   });
 });

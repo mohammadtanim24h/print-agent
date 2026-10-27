@@ -16,6 +16,7 @@ import type {
 } from '../../src/main/cloud-client/secret-store';
 import { canonicalJson } from '../../src/main/cloud-client/canonical-json';
 import type { WsLike } from '../../src/main/cloud-client/ws-channel';
+import type { WssChannelLike, WssChannelState } from '../../src/main/cloud-client/types';
 
 /** Shared fixtures for the mocked cloud-client tests: no real network, no
  *  real Electron, deterministic IDs. */
@@ -393,5 +394,57 @@ export class FakeSocket implements WsLike {
 
   serverError(err: Error): void {
     this.emit('error', err);
+  }
+}
+
+/** Scriptable WssChannelLike for poller tests: tests drive connect/disconnect/
+ *  push/authFailed and assert on the recorded lifecycle calls. */
+export class FakeChannel implements WssChannelLike {
+  connected = false;
+  starts = 0;
+  stops = 0;
+  authChangedCalls = 0;
+  private messageListeners = new Set<(raw: unknown) => void>();
+  private stateListeners = new Set<(s: WssChannelState) => void>();
+  private authListeners = new Set<() => void>();
+
+  on(event: 'message', listener: (raw: unknown) => void): void;
+  on(event: 'state', listener: (s: WssChannelState) => void): void;
+  on(event: 'auth-failed', listener: () => void): void;
+  // Implementation signature: `never` (bottom type) is the only lint-safe
+  // callback param every overload above is assignable to; widened on storage.
+  on(event: string, listener: (first: never) => void): void {
+    if (event === 'message') this.messageListeners.add(listener as (raw: unknown) => void);
+    else if (event === 'state') this.stateListeners.add(listener as (s: WssChannelState) => void);
+    else this.authListeners.add(listener as () => void);
+  }
+
+  isConnected(): boolean {
+    return this.connected;
+  }
+  start(): void {
+    this.starts += 1;
+  }
+  stop(): void {
+    this.stops += 1;
+  }
+  notifyAuthChanged(): void {
+    this.authChangedCalls += 1;
+  }
+
+  // -- test drivers --
+  connect(): void {
+    this.connected = true;
+    for (const l of this.stateListeners) l('connected');
+  }
+  disconnect(): void {
+    this.connected = false;
+    for (const l of this.stateListeners) l('disconnected');
+  }
+  push(raw: unknown): void {
+    for (const l of this.messageListeners) l(raw);
+  }
+  authFailed(): void {
+    for (const l of this.authListeners) l();
   }
 }
