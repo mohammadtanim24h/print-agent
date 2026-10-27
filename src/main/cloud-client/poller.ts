@@ -128,9 +128,11 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
     try {
       handleServerMessage(raw);
     } catch {
-      // A listener further down (engine intake) must never turn a bad frame
-      // into an unhandled rejection on the socket thread.
-      log('cloud: dropped malformed WSS frame');
+      // `handleServerMessage` itself converts protocol garbage into rejections;
+      // reaching this catch means a downstream listener (engine intake) threw —
+      // our bug, not server data. It must never surface as an unhandled
+      // rejection on the socket thread.
+      log('cloud: WSS frame handler threw');
     }
   });
   channel?.on('state', (next) => {
@@ -138,9 +140,14 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
     if (next === 'connected') {
       backoffAttempt = 0;
       setState('online');
+      // Symmetric with disconnect: a reconnect during REST backoff should
+      // prompt a catch-up poll instead of waiting out the backoff timer (the
+      // `cycling` guard makes collisions with an in-flight cycle no-ops).
+      scheduleCycle(0);
       return;
     }
     if (next === 'disconnected') {
+      pendingImmediateCycle = true;
       scheduleCycle(0); // fast lane back to REST polling
     }
   });
@@ -156,6 +163,13 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
   let stopped = true;
   let cancelTimer: (() => void) | null = null;
   let cycling = false;
+  /**
+   * Set by the channel `disconnected` handler so that a cycle already in
+   * flight re-arms the immediate recovery cycle at delay 0 in its `finally`
+   * (its `scheduleCycle` would otherwise cancel the 0 ms timer and fall back
+   * to the regular ≥30 s cadence, silently dropping the fast lane).
+   */
+  let pendingImmediateCycle = false;
   let backoffAttempt = 0;
   let appliedConfigVersion = -1;
   let lastRefreshAt = -Infinity;
@@ -178,7 +192,12 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
    *  ~30 s ± jitter"; the 90 s offline window must never be raced by a
    *  synchronized fleet). While the WSS channel is connected, REST polls drop
    *  to the safety cadence — the socket is the delivery path, polls only
-   *  paper over a silently dead connection. */
+   *  paper over a silently dead connection.
+   *
+   *  Invariant: connectivity is sampled at schedule time; the channel state
+   *  handlers' `scheduleCycle(0)` guarantees the delay is re-derived at every
+   *  connect/disconnect transition, so fire-time staleness is bounded to one
+   *  cycle. */
   function healthyDelayMs(): number {
     const interval = channel?.isConnected() === true ? safetyPollIntervalMs : pollIntervalMs;
     return Math.floor(interval * (0.9 + 0.2 * random()));
@@ -207,6 +226,7 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
     }
     identity = { ...loaded };
     stopped = false;
+    pendingImmediateCycle = false; // fresh loop, no stale fast-lane flag
     backoffAttempt = 0;
     setState('connecting');
     scheduleCycle(0); // immediate first poll: recover pending work
@@ -245,7 +265,9 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
     } finally {
       cycling = false;
       if (!isStopped()) {
-        scheduleCycle(backoffAttempt === 0 ? healthyDelayMs() : backoffDelayMs());
+        const immediate = pendingImmediateCycle;
+        pendingImmediateCycle = false;
+        scheduleCycle(immediate ? 0 : backoffAttempt === 0 ? healthyDelayMs() : backoffDelayMs());
       }
     }
   }

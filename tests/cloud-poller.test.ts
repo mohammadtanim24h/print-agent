@@ -749,6 +749,10 @@ describe('WSS channel integration', () => {
     expect(h.revoked).toEqual([{ reason: 'manager_initiated' }]);
     expect(h.revokedWipes).toEqual(['manager_initiated']);
     expect(h.client.state()).toBe('revoked');
+    expect(h.channel.stops).toBeGreaterThanOrEqual(1); // wiped credentials must never redial
+    // Terminal-state guard: a redial attempt must not flip the state.
+    h.channel.connect();
+    expect(h.client.state()).toBe('revoked');
   });
 
   it('REST heartbeat is skipped while the channel carries heartbeats', async () => {
@@ -826,6 +830,46 @@ describe('WSS channel integration', () => {
     await startAndSettle(h);
     expect(h.channel.starts).toBe(1);
     h.client.stop();
-    expect(h.channel.stops).toBeGreaterThanOrEqual(1);
+    expect(h.channel.stops).toBe(1); // exactly one stop: startAndSettle, no revocation
+  });
+
+  it('a disconnect while a cycle is in flight still schedules the immediate recovery cycle', async () => {
+    // The poll script disconnects the channel synchronously from INSIDE the
+    // poll call — i.e. mid-cycle, while `cycling === true`. The disconnect's
+    // scheduleCycle(0) alone would be consumed by the in-flight guard; the
+    // pending flag must make the cycle's `finally` re-arm delay 0.
+    const h = makeHarness({
+      poll: (since: string) => {
+        if (since === '') return makePollResponse([], 'cursor-A');
+        h.channel.disconnect(); // fires mid-cycle
+        return makePollResponse([]);
+      },
+    });
+    await startAndSettle(h);
+    expect(h.client.state()).toBe('online');
+    expect(h.scheduler.nextDelay()).toBe(30_000);
+    await h.scheduler.runNext(); // in-flight cycle; disconnect fires during poll
+    // Without the pending flag this reschedule would be the plain 30 s cadence.
+    expect(h.scheduler.nextDelay()).toBe(0);
+    await h.scheduler.runNext(); // the immediate recovery cycle
+    expect(h.transport.callsOf('poll')).toHaveLength(3);
+    expect(h.scheduler.nextDelay()).toBe(30_000); // healthy cadence restored
+  });
+
+  it('a throwing intake listener does not escape as an unhandled rejection', async () => {
+    const { envelope, publicKeyB64Url } = makeSignedEnvelope();
+    const h = makeHarness({});
+    // Pin before start(): the poller reads the signing key into memory at start.
+    h.secrets.save(makeSecrets({ serverSigningPubkey: publicKeyB64Url }));
+    await startAndSettle(h);
+    h.client.on('job', () => {
+      throw new Error('intake bug');
+    });
+    h.channel.connect();
+    expect(() => {
+      h.channel.push(envelope);
+    }).not.toThrow();
+    await settle();
+    expect(h.logs).toContain('cloud: WSS frame handler threw');
   });
 });
