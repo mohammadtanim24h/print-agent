@@ -9,7 +9,15 @@ rejected, not ignored, within `data` payloads (envelope may gain additive fields
 
 - Base URL: `https://<saas-host>/api/agent/v1` (versioned path; v1 frozen once shipped).
 - WSS endpoint: `wss://<saas-host>/agent/v1/ws` — agent-initiated, persistent, outbound.
-  **Not implemented in v1** (§7: REST-only polling; heartbeats via `POST /heartbeat`).
+  **Implemented 2026-10 (ADR-15).** The agent connects after pairing, sends §3.2
+  heartbeats, and receives §2/§3.5/§4 envelopes. **Acks stay on REST (§3.3):** no WSS
+  ack-ack format is defined, and the §7.1 per-ack results semantics are REST-only.
+  Socket semantics: the server closes with **`4401`** for auth failures (invalid/
+  expired/revoked token, or an HTTP 401 upgrade rejection); the agent then refreshes
+  credentials and redials. All other closes reconnect with exponential backoff. The
+  agent sends ws-level pings every ~30 s and treats 90 s without a pong as a dead
+  connection. Jobs pushed over WSS are claimed on send (mirroring the pull-claim,
+  §7 note 6); agent acks remain the only path to terminal states.
 - Auth: `Authorization: Bearer <device_token>` (pairing-issued, rotated; short TTL
   access token + rotating refresh token). WSS passes the token in the `Authorization`
   header on the upgrade request.
@@ -244,6 +252,10 @@ Agent applies atomically on `config_version` increase; acks `config.applied` or
 - Ack: all statuses / batch idempotency (same ack twice = same result server-side).
 - Pairing: expired code / reused code / rate limit.
 - Config: version regression ignored / invalid transport address rejected.
+- WSS: upgrade with a valid token / with a bad token (4401 or 401 upgrade rejection) /
+  job delivered over WSS == job delivered over the poll batch (idempotent by
+  `job_id`+`attempt`) / revoke + config_update over WSS / oversized frame dropped /
+  90 s silence → agent reconnects.
 
 ## 7. Server implementation notes & deviations (servepro-api, 2026-10-24)
 
@@ -252,6 +264,10 @@ implemented in v1 — §3.2 heartbeats arrive via `POST /heartbeat` with
 `connection: "poll"`. Everything below is covered by
 `tests/Feature/Agent` + `tests/Feature/Printing` (executable contract examples:
 `ContractExamplesTest`).
+
+**2026-10-27 amendment:** WSS push (§1) is now implemented on both sides. The REST
+surface below remains the fallback + control plane; `connection: "wss"` heartbeats
+replace `POST /heartbeat` while the socket is healthy.
 
 1. **Restaurant identity** — deployments are single-restaurant. A stable
    `restaurant_uid` (UUIDv7, server-minted on the singleton `restaurant_settings`
