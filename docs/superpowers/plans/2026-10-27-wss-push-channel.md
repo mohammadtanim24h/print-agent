@@ -721,7 +721,7 @@ export function createWssChannel(deps: WssChannelDeps): WssChannelLike {
 }
 ```
 
-Extend the module's import block at the top (added in Task 3) with everything this implementation needs:
+Extend the module's import block at the top (added in Task 3) with everything this implementation needs, and re-declare the module-private constants (they were deferred out of Task 3 by review — this task's diff introduces them together with their consumers):
 
 ```ts
 import { CloudError } from './errors';
@@ -732,6 +732,14 @@ import type {
   WssChannelLike,
   WssChannelState,
 } from './types';
+
+const WS_OPEN = 1;
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
+const DEFAULT_PING_INTERVAL_MS = 30_000;
+const DEFAULT_DEAD_SILENCE_MS = 90_000;
+const DEFAULT_MAX_FRAME_BYTES = 1024 * 1024;
+const DEFAULT_MAX_BACKOFF_MS = 60_000;
+const BASE_BACKOFF_MS = 1_000;
 ```
 
 - [ ] **Step 5: Run tests to verify they pass**
