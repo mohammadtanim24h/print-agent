@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createServer } from 'node:http';
+import type { IncomingHttpHeaders, IncomingMessage } from 'node:http';
 import { WebSocketServer } from 'ws';
 import type { WebSocket } from 'ws';
-import type { IncomingHttpHeaders } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { createWssChannel } from '../src/main/cloud-client/ws-channel';
 
@@ -32,6 +33,31 @@ function startServer(
           new Promise<void>((resolveClose) => {
             wss.close(() => {
               resolveClose();
+            });
+          }),
+      });
+      resolve({ url: `ws://127.0.0.1:${String(addr.port)}/agent/v1/ws` });
+    });
+  });
+}
+
+/** A bare HTTP server that answers every upgrade with a plain 401 — no ws
+ *  server attached, so the REAL `ws` client hits a genuine non-101 upgrade
+ *  response. Used to pin the transport-level auth-failure routing. */
+function startRejectingServer(): Promise<{ url: string }> {
+  return new Promise((resolve) => {
+    const httpServer = createServer();
+    httpServer.on('upgrade', (_req: IncomingMessage, socket) => {
+      socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
+      socket.destroy();
+    });
+    httpServer.listen(0, '127.0.0.1', () => {
+      const addr = httpServer.address() as AddressInfo;
+      servers.push({
+        close: () =>
+          new Promise<void>((r) => {
+            httpServer.close(() => {
+              r();
             });
           }),
       });
@@ -141,5 +167,35 @@ describe('ws-channel over a real socket', () => {
     // ws enforces maxPayload by closing the connection (1009), not silently
     // skipping the frame — the server observes the client's 1009 close frame.
     expect(serverCloses).toContain(1009);
+  });
+
+  it('a real 401 upgrade rejection routes to auth-failed', async () => {
+    const { url } = await startRejectingServer();
+    const channel = createWssChannel({
+      url,
+      agentVersion: '0.1.0-test',
+      getAuth: () => ({ deviceId: '018f3c2e-0000-7000-8000-000000000003', deviceToken: 'tok' }),
+      allowInsecureWs: true,
+      heartbeatIntervalMs: 3_600_000,
+      pingIntervalMs: 3_600_000,
+      // Pin the auth routing, not the redial loop: the failed upgrade is
+      // followed by a 1006 close whose backoff redial would 401 again inside
+      // the wait window. `start()` dials synchronously, so a no-op scheduler
+      // changes nothing under test.
+      schedule: () => () => undefined,
+    });
+    // `onSocketError` fires auth-failed ONLY when the raw ws error message
+    // matches 'Unexpected server response: 401' — a success here proves the
+    // real client produced that exact string on a genuine 401 upgrade.
+    const authFailures = vi.fn();
+    channel.on('auth-failed', authFailures);
+    channel.start();
+    await vi.waitFor(
+      () => {
+        expect(authFailures).toHaveBeenCalledOnce();
+      },
+      { timeout: 2_000 },
+    );
+    channel.stop();
   });
 });

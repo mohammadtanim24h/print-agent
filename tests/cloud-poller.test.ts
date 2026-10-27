@@ -856,6 +856,34 @@ describe('WSS channel integration', () => {
     expect(h.scheduler.nextDelay()).toBe(30_000); // healthy cadence restored
   });
 
+  it('the same envelope delivered over WSS and the poll batch is handed to intake twice — dedup is downstream', async () => {
+    // §6 matrix row "same envelope on both channels": the poller deliberately
+    // does NOT dedupe — both delivery paths funnel through handleServerMessage
+    // and each valid envelope fires its own 'job' event. Suppression happens
+    // in the engine's submit, keyed on (restaurant_id, idempotency_key)
+    // BEFORE any re-execution — pinned in job-engine-intake.test.ts
+    // ('suppresses duplicate delivery per (restaurant_id, idempotency_key)').
+    const { envelope, publicKeyB64Url } = makeSignedEnvelope();
+    const h = makeHarness({ poll: makePollResponse([envelope]) });
+    h.secrets.save(makeSecrets({ serverSigningPubkey: publicKeyB64Url }));
+    await startAndSettle(h); // delivered via the poll batch
+    expect(h.jobs).toHaveLength(1);
+    h.channel.connect();
+    h.channel.push(envelope); // same envelope again over the socket
+    await settle();
+    expect(h.jobs).toHaveLength(2); // both reach engine.submit; the engine dedupes
+  });
+
+  it('a config_update pushed over the channel is applied', async () => {
+    const h = makeHarness({});
+    await startAndSettle(h);
+    h.channel.connect();
+    h.channel.push(makeConfig(41));
+    await settle();
+    expect(h.configs).toHaveLength(1);
+    expect(h.configs[0]?.config_version).toBe(41);
+  });
+
   it('a throwing intake listener does not escape as an unhandled rejection', async () => {
     const { envelope, publicKeyB64Url } = makeSignedEnvelope();
     const h = makeHarness({});
