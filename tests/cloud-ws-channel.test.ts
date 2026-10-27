@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { createWssChannel, deriveWssUrl, assertWssUrl } from '../src/main/cloud-client/ws-channel';
+import {
+  createWssChannel,
+  deriveWssUrl,
+  assertWssUrl,
+  WS_AUTH_CLOSE_CODE,
+} from '../src/main/cloud-client/ws-channel';
 import type { WsFactory } from '../src/main/cloud-client/ws-channel';
 import { CloudError } from '../src/main/cloud-client/errors';
 import type { HeartbeatSample, WssChannelState } from '../src/main/cloud-client/types';
@@ -110,7 +115,19 @@ function makeChannelHarness(
   channel.on('auth-failed', () => {
     authFailures += 1;
   });
-  return { channel, sockets, scheduler, states, messages, authFailures, logs };
+  // authFailures is a getter: a plain copy would freeze the count at 0
+  // (listeners fire after the harness returns).
+  return {
+    channel,
+    sockets,
+    scheduler,
+    states,
+    messages,
+    get authFailures(): number {
+      return authFailures;
+    },
+    logs,
+  };
 }
 
 describe('ws-channel lifecycle', () => {
@@ -339,5 +356,38 @@ describe('ws-channel heartbeat + watchdog', () => {
     h.scheduler.nowMs += 25_000; // t=85
     await h.scheduler.runNext(); // t=90: 5 s since last frame → ping, not terminate
     expect(h.sockets[0]?.pingCount).toBe(3);
+  });
+});
+
+describe('ws-channel auth failures', () => {
+  it('emits auth-failed on a 4401 close and still schedules a redial', () => {
+    const h = makeChannelHarness();
+    h.channel.start();
+    h.sockets[0]?.serverOpen();
+    h.sockets[0]?.serverClose(WS_AUTH_CLOSE_CODE);
+    expect(h.authFailures).toBe(1);
+    expect(h.scheduler.pendingCount).toBe(1); // consumer refreshes → notifyAuthChanged
+  });
+
+  it('emits auth-failed on an HTTP 401 upgrade rejection (no close frame)', () => {
+    const h = makeChannelHarness();
+    h.channel.start();
+    h.sockets[0]?.serverError(new Error('Unexpected server response: 401'));
+    expect(h.authFailures).toBe(1);
+    expect(h.logs).toContain('wss: upgrade rejected (auth failure)');
+  });
+
+  it('does not emit auth-failed for other errors or closes', () => {
+    const h = makeChannelHarness();
+    h.channel.start();
+    h.sockets[0]?.serverError(new Error('getaddrinfo ENOTFOUND cloud.test'));
+    h.sockets[0]?.serverClose(1011);
+    expect(h.authFailures).toBe(0);
+  });
+
+  it('notifyAuthChanged is a no-op while stopped', () => {
+    const h = makeChannelHarness();
+    h.channel.notifyAuthChanged();
+    expect(h.sockets).toHaveLength(0);
   });
 });
