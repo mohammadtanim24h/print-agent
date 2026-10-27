@@ -213,3 +213,50 @@ describe('ws-channel robustness', () => {
     expect(h.channel.isConnected()).toBe(true);
   });
 });
+
+describe('ws-channel inbound frames', () => {
+  it('delivers valid JSON frames as parsed values', () => {
+    const h = makeChannelHarness();
+    h.channel.start();
+    h.sockets[0]?.serverOpen();
+    h.sockets[0]?.serverMessage('{"type":"ping"}');
+    expect(h.messages).toEqual([{ type: 'ping' }]);
+  });
+
+  it('drops non-JSON frames without emitting', () => {
+    const h = makeChannelHarness();
+    h.channel.start();
+    h.sockets[0]?.serverOpen();
+    h.sockets[0]?.serverMessage('not json');
+    expect(h.messages).toHaveLength(0);
+    expect(h.logs).toContain('wss: dropped non-JSON frame');
+  });
+
+  it('drops frames above the size cap without emitting', () => {
+    const scheduler = new ManualScheduler();
+    const sockets: FakeSocket[] = [];
+    const logs: string[] = [];
+    const channel = createWssChannel({
+      url: 'wss://cloud.test/agent/v1/ws',
+      agentVersion: '0.1.0',
+      getAuth: () => ({ deviceId: DEVICE_ID, deviceToken: 't' }),
+      schedule: scheduler.schedule,
+      now: () => scheduler.nowMs,
+      random: () => 0.5,
+      maxFrameBytes: 64,
+      wsFactory: (url, options) => {
+        const s = new FakeSocket(url, options);
+        sockets.push(s);
+        return s;
+      },
+      log: (message) => logs.push(message),
+    });
+    const messages: unknown[] = [];
+    channel.on('message', (raw) => messages.push(raw));
+    channel.start();
+    sockets[0]?.serverOpen();
+    sockets[0]?.serverMessage(JSON.stringify({ type: 'ping', pad: 'x'.repeat(1024) }));
+    expect(messages).toHaveLength(0);
+    expect(logs).toContain('wss: dropped oversized frame');
+  });
+});
