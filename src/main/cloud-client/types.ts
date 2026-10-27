@@ -35,6 +35,26 @@ export interface AgentIdentity {
 
 export type CloudListener<T> = (value: T) => void;
 
+export type WssChannelState = 'stopped' | 'connecting' | 'connected' | 'disconnected';
+
+/**
+ * Live WSS push channel (api-contract §1). Owns the socket lifecycle only —
+ * identity, tokens and envelope validation stay with the polling client,
+ * which consumes `message` frames through the same pipeline as poll batches.
+ */
+export interface WssChannelLike {
+  on(event: 'message', listener: CloudListener<unknown>): void;
+  on(event: 'state', listener: CloudListener<WssChannelState>): void;
+  on(event: 'auth-failed', listener: CloudListener<void>): void;
+  isConnected(): boolean;
+  /** Begin dialing; no-op while unpaired (getAuth returns null). Idempotent. */
+  start(): void;
+  /** Tear down the socket and timers; redials only after a new start(). */
+  stop(): void;
+  /** Redial now with current credentials (token rotation, fresh pairing). */
+  notifyAuthChanged(): void;
+}
+
 export interface CloudClient {
   /** Validated, scope-checked print-job envelopes ready for engine intake. */
   on(event: 'job', listener: CloudListener<PrintJobEnvelope>): void;
