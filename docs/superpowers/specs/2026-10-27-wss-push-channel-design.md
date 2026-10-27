@@ -47,8 +47,11 @@ endpoint in the same train.
   `connection: "wss"` and queue/printer facts injected as a sample provider.
   Doubles as the keepalive. A failed send (socket not open) → terminate and
   reconnect.
-- **Dead-connection watchdog**: no inbound frame or pong for 90 s →
-  terminate and reconnect (matches the server's 90 s offline window).
+- **Dead-connection watchdog**: the channel sends ws-level ping frames
+  every 30 s (RFC 6455 requires the server to pong even when idle, so this
+  works with no application traffic). No pong — and no inbound frame — for
+  90 s → terminate and reconnect (matches the server's 90 s offline
+  window).
 - **Frame limits**: inbound frames larger than 1 MiB are dropped and logged
   (largest legitimate frame: config snapshot with 50 printers or a job
   envelope batch). Frames are `JSON.parse`d and handed to the consumer raw —
@@ -141,7 +144,8 @@ Engine acks ──▶ ack-buffer ──▶ POST /acks (REST, unchanged)
 - **Channel unit tests** against an in-process `ws` server (loopback
   listener in tests only): upgrade headers present; envelope → `message`
   event; malformed and oversized frames dropped; heartbeat cadence with
-  ± jitter and `connection: "wss"`; watchdog fires on silence; backoff on
+  ± jitter and `connection: "wss"`; watchdog fires when pongs stop;
+  backoff on
   repeated dial failures; `4401` close → `auth-failed` → redial after
   `notifyAuthChanged()`.
 - **Poller tests**: cadence switching (5 min vs 30 s); state transitions on
