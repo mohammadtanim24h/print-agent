@@ -75,7 +75,10 @@ export interface WsLike {
   on(event: 'error', cb: (err: Error) => void): void;
 }
 
-export type WsFactory = (url: string, options: { headers: Record<string, string> }) => WsLike;
+export type WsFactory = (
+  url: string,
+  options: { headers: Record<string, string>; maxPayload: number },
+) => WsLike;
 
 export interface WssChannelDeps {
   readonly url: string;
@@ -174,6 +177,9 @@ export function createWssChannel(deps: WssChannelDeps): WssChannelLike {
         'X-Agent-Version': deps.agentVersion,
         'X-Protocol-Version': PROTOCOL_VERSION,
       },
+      // Transport-level frame cap: ws buffers the whole frame before the
+      // app-level size check in onMessage can run (ws default is 100 MiB).
+      maxPayload: maxFrameBytes,
     });
     socket = ws;
     ws.on('open', () => {
@@ -221,6 +227,10 @@ export function createWssChannel(deps: WssChannelDeps): WssChannelLike {
     cancelDial = schedule(dial, backoffDelayMs());
   }
 
+  /** Re-reads the live flags after a listener dispatch: control-flow narrowing
+   *  can't see that listeners (notifyAuthChanged/stop) mutate them. */
+  const dialInvalidated = (): boolean => stopped || socket !== null;
+
   function onClose(code: number): void {
     socket = null;
     cancelHeartbeat?.();
@@ -232,15 +242,19 @@ export function createWssChannel(deps: WssChannelDeps): WssChannelLike {
     if (code === WS_AUTH_CLOSE_CODE) {
       log('wss: server closed with auth failure');
       for (const l of listeners['auth-failed']) l();
+      // A listener may have redialed (notifyAuthChanged) or stopped us —
+      // never schedule a dial that would tear down that fresh socket.
+      if (dialInvalidated()) return;
     }
     backoffAttempt += 1;
     scheduleDial();
   }
 
   function onSocketError(err: Error): void {
-    // Failed upgrades surface as "Unexpected server response: 401" with no
-    // close frame; match the status for routing — the text is never logged.
-    if (/\b401\b/.test(err.message)) {
+    // Failed upgrades surface as the exact ws message "Unexpected server
+    // response: 401" with no close frame — never log the text (it may echo
+    // server internals), and never substring-match a bare "401" (URLs/ports).
+    if (err.message.includes('Unexpected server response: 401')) {
       log('wss: upgrade rejected (auth failure)');
       for (const l of listeners['auth-failed']) l();
     } else {
@@ -282,19 +296,19 @@ export function createWssChannel(deps: WssChannelDeps): WssChannelLike {
   function sendHeartbeat(): void {
     cancelHeartbeat = null;
     if (socket === null || socket.readyState !== WS_OPEN) return;
-    const sample = deps.heartbeatSample?.();
-    const heartbeat = HeartbeatSchema.parse({
-      type: 'heartbeat' as const,
-      agent_version: deps.agentVersion,
-      uptime_s: sample?.uptime_s ?? 0,
-      queue_depth: sample?.queue_depth ?? 0,
-      connection: 'wss' as const,
-      printers: sample?.printers ?? [],
-    });
     try {
+      const sample = deps.heartbeatSample?.();
+      const heartbeat = HeartbeatSchema.parse({
+        type: 'heartbeat' as const,
+        agent_version: deps.agentVersion,
+        uptime_s: sample?.uptime_s ?? 0,
+        queue_depth: sample?.queue_depth ?? 0,
+        connection: 'wss' as const,
+        printers: sample?.printers ?? [],
+      });
       socket.send(JSON.stringify(heartbeat));
     } catch {
-      log('wss: heartbeat send failed'); // close/error handlers drive the reconnect
+      log('wss: heartbeat failed'); // static; the cadence must survive a bad sample
     }
     cancelHeartbeat = schedule(sendHeartbeat, jitteredHeartbeatMs());
   }

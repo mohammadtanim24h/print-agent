@@ -331,14 +331,16 @@ export async function settle(ticks = 6): Promise<void> {
 export class FakeSocket implements WsLike {
   readonly url: string;
   readonly headers: Record<string, string>;
+  readonly maxPayload: number | undefined;
   readyState = 0; // CONNECTING
   readonly sent: string[] = [];
   pingCount = 0;
   private handlers = new Map<string, Array<(...args: unknown[]) => void>>();
 
-  constructor(url: string, options: { headers: Record<string, string> }) {
+  constructor(url: string, options: { headers: Record<string, string>; maxPayload?: number }) {
     this.url = url;
     this.headers = options.headers;
+    this.maxPayload = options.maxPayload;
   }
 
   on(event: 'open' | 'pong', cb: () => void): void;

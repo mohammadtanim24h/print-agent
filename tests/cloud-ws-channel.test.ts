@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createWssChannel, deriveWssUrl, assertWssUrl } from '../src/main/cloud-client/ws-channel';
 import type { WsFactory } from '../src/main/cloud-client/ws-channel';
 import { CloudError } from '../src/main/cloud-client/errors';
-import type { WssChannelState } from '../src/main/cloud-client/types';
+import type { HeartbeatSample, WssChannelState } from '../src/main/cloud-client/types';
 import { FakeSocket, ManualScheduler, DEVICE_ID } from './helpers/cloud';
 
 describe('deriveWssUrl', () => {
@@ -71,7 +71,9 @@ interface ChannelHarness {
 function makeChannelHarness(
   overrides: {
     getAuth?: () => { deviceId: string; deviceToken: string } | null;
+    heartbeatSample?: () => HeartbeatSample;
     heartbeatIntervalMs?: number;
+    pingIntervalMs?: number;
   } = {},
 ): ChannelHarness {
   const scheduler = new ManualScheduler();
@@ -94,9 +96,13 @@ function makeChannelHarness(
     random: () => 0.5, // half-jitter backoff → attempt N waits exactly 750·2^(N-1) ms
     wsFactory: factory,
     log: (message) => logs.push(message),
+    ...(overrides.heartbeatSample !== undefined
+      ? { heartbeatSample: overrides.heartbeatSample }
+      : {}),
     ...(overrides.heartbeatIntervalMs !== undefined
       ? { heartbeatIntervalMs: overrides.heartbeatIntervalMs }
       : {}),
+    ...(overrides.pingIntervalMs !== undefined ? { pingIntervalMs: overrides.pingIntervalMs } : {}),
   });
   channel.on('state', (s) => states.push(s));
   channel.on('message', (raw) => messages.push(raw));
@@ -151,7 +157,7 @@ describe('ws-channel lifecycle', () => {
     expect(h.sockets).toHaveLength(1); // no redial after stop
   });
 
-  it('never dials while unpaired, and starts dialing once credentials exist', () => {
+  it('never dials while unpaired', () => {
     const h = makeChannelHarness({ getAuth: () => null });
     h.channel.start();
     expect(h.sockets).toHaveLength(0);
@@ -167,6 +173,41 @@ describe('ws-channel lifecycle', () => {
     expect(h.channel.isConnected()).toBe(false); // new socket is connecting
     // The disposed socket's close fires later — must not schedule a second dial.
     h.sockets[0]?.serverClose(1005);
+    expect(h.scheduler.pendingCount).toBe(0);
+    h.sockets[1]?.serverOpen();
+    expect(h.channel.isConnected()).toBe(true);
+  });
+});
+
+describe('ws-channel robustness', () => {
+  it('a failing heartbeat sample does not kill the cadence', async () => {
+    const h = makeChannelHarness({
+      heartbeatSample: () => {
+        throw new Error('boom');
+      },
+      // Keep the keepalive timer out of the scheduler so nextDelay reflects
+      // only the heartbeat cadence.
+      pingIntervalMs: 10_000_000,
+    });
+    h.channel.start();
+    h.sockets[0]?.serverOpen();
+    expect(h.scheduler.nextDelay()).toBe(30_000); // ~30s ± jitter (random=0.5 → exact)
+    await expect(h.scheduler.runNext()).resolves.toBeUndefined(); // must not throw
+    expect(h.sockets[0]?.sent).toEqual([]);
+    expect(h.scheduler.nextDelay()).toBe(30_000); // chain survived
+  });
+
+  it('an auth-failed listener that redials is not followed by a phantom backoff dial', () => {
+    const h = makeChannelHarness();
+    h.channel.on('auth-failed', () => {
+      h.channel.notifyAuthChanged();
+    });
+    h.channel.start();
+    h.sockets[0]?.serverOpen();
+    h.sockets[0]?.serverClose(4401);
+    // The listener redialed synchronously — exactly one fresh socket, and no
+    // backoff dial scheduled behind it that would tear that socket down.
+    expect(h.sockets).toHaveLength(2);
     expect(h.scheduler.pendingCount).toBe(0);
     h.sockets[1]?.serverOpen();
     expect(h.channel.isConnected()).toBe(true);
