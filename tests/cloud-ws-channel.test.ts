@@ -4,6 +4,7 @@ import type { WsFactory } from '../src/main/cloud-client/ws-channel';
 import { CloudError } from '../src/main/cloud-client/errors';
 import type { HeartbeatSample, WssChannelState } from '../src/main/cloud-client/types';
 import { FakeSocket, ManualScheduler, DEVICE_ID } from './helpers/cloud';
+import { HeartbeatSchema } from '../src/main/cloud-client/schemas';
 
 describe('deriveWssUrl', () => {
   it('maps the REST base URL to the §1 WSS endpoint path', () => {
@@ -258,5 +259,85 @@ describe('ws-channel inbound frames', () => {
     sockets[0]?.serverMessage(JSON.stringify({ type: 'ping', pad: 'x'.repeat(1024) }));
     expect(messages).toHaveLength(0);
     expect(logs).toContain('wss: dropped oversized frame');
+  });
+});
+
+describe('ws-channel heartbeat + watchdog', () => {
+  it('sends §3.2 heartbeats every 30 s with connection "wss" and live facts', async () => {
+    const scheduler = new ManualScheduler();
+    const sockets: FakeSocket[] = [];
+    const channel = createWssChannel({
+      url: 'wss://cloud.test/agent/v1/ws',
+      agentVersion: '1.4.2',
+      getAuth: () => ({ deviceId: DEVICE_ID, deviceToken: 'token-1' }),
+      heartbeatSample: () => ({
+        uptime_s: 120,
+        queue_depth: 3,
+        connection: 'poll' as const, // channel must override to 'wss'
+        printers: [],
+      }),
+      now: () => scheduler.nowMs,
+      schedule: scheduler.schedule,
+      random: () => 0.5,
+      // Keep the keepalive timer out of the scheduler so nextDelay reflects
+      // only the heartbeat cadence (it shares the 30 s default).
+      pingIntervalMs: 10_000_000,
+      wsFactory: (url, options) => {
+        const s = new FakeSocket(url, options);
+        sockets.push(s);
+        return s;
+      },
+    });
+    channel.start();
+    sockets[0]?.serverOpen();
+    // First heartbeat is scheduled 30 s after open (jitter 1.0 with random 0.5).
+    expect(scheduler.nextDelay()).toBe(30_000);
+    await scheduler.runNext();
+    expect(sockets[0]?.sent).toHaveLength(1);
+    const parsed = HeartbeatSchema.parse(JSON.parse(sockets[0]?.sent[0] ?? '{}'));
+    expect(parsed).toMatchObject({
+      type: 'heartbeat',
+      agent_version: '1.4.2',
+      uptime_s: 120,
+      queue_depth: 3,
+      connection: 'wss',
+    });
+    // Cadence repeats.
+    expect(scheduler.nextDelay()).toBe(30_000);
+  });
+
+  it('pings on the keepalive tick and terminates after 90 s of silence', async () => {
+    // Heartbeat timer disabled: it shares the 30 s delay and would interleave
+    // with the keepalive tick in the manual scheduler.
+    const h = makeChannelHarness({ heartbeatIntervalMs: 3_600_000 });
+    h.channel.start();
+    h.sockets[0]?.serverOpen();
+    // tick 1 at 30 s: ping (last activity = open time = 0)
+    await h.scheduler.runNext();
+    expect(h.sockets[0]?.pingCount).toBe(1);
+    // tick 2 at 60 s: still within the 90 s window → ping again
+    await h.scheduler.runNext();
+    expect(h.sockets[0]?.pingCount).toBe(2);
+    // tick 3 at 90 s: silence window reached → terminate (fires close 1006)
+    const before = h.sockets.length;
+    await h.scheduler.runNext();
+    expect(h.sockets[0]?.pingCount).toBe(2); // no ping on the terminating tick
+    expect(h.sockets.length).toBeGreaterThanOrEqual(before); // redial scheduled
+    expect(h.scheduler.pendingCount).toBe(1);
+  });
+
+  it('a pong or inbound frame refreshes the silence window', async () => {
+    const h = makeChannelHarness({ heartbeatIntervalMs: 3_600_000 });
+    h.channel.start();
+    h.sockets[0]?.serverOpen();
+    await h.scheduler.runNext(); // t=30: ping
+    h.sockets[0]?.emit('pong');
+    h.scheduler.nowMs += 25_000; // t=55
+    await h.scheduler.runNext(); // t=60: ping again (30 s since last activity)
+    expect(h.sockets[0]?.pingCount).toBe(2);
+    h.sockets[0]?.serverMessage('{"type":"ping"}');
+    h.scheduler.nowMs += 25_000; // t=85
+    await h.scheduler.runNext(); // t=90: 5 s since last frame → ping, not terminate
+    expect(h.sockets[0]?.pingCount).toBe(3);
   });
 });
