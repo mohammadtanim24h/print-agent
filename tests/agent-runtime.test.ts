@@ -21,16 +21,15 @@ import type {
   ServerKeysResponse,
 } from '../src/main/cloud-client/schemas';
 import { CloudError } from '../src/main/cloud-client/errors';
-import {
-  generateDeviceKeyPair,
-  signJobForTest,
-} from '../src/main/cloud-client/envelope-sig';
+import { generateDeviceKeyPair, signJobForTest } from '../src/main/cloud-client/envelope-sig';
 import { ENVELOPE_VERSION } from '../src/main/cloud-client/schemas';
 import type { TransportRegistry } from '../src/main/transport/registry';
 import { TransportError } from '../src/main/transport/errors';
 import { memoryAdapter } from './helpers/memory-adapter';
 import { makeDraft } from './helpers/printers';
 import { makeDoc } from './helpers/render';
+import { FakeChannel } from './helpers/cloud';
+import type { WssChannelLike } from '../src/main/cloud-client/types';
 
 /**
  * AgentRuntime tests: fake transport + kv + safeStorage over an in-memory
@@ -147,7 +146,8 @@ function failingTransports(): TransportRegistry {
       open: () => Promise.reject(new TransportError('host_unreachable', 'stub: unreachable')),
       write: () => Promise.reject(new TransportError('write_failed', 'stub: not connected')),
       close: () => Promise.resolve(),
-      healthCheck: () => Promise.reject(new TransportError('host_unreachable', 'stub: unreachable')),
+      healthCheck: () =>
+        Promise.reject(new TransportError('host_unreachable', 'stub: unreachable')),
     }),
   };
 }
@@ -242,6 +242,17 @@ afterEach(async () => {
   }
 });
 
+/** Inert channel: runtime tests exercise poll/engine behavior, not sockets. */
+function noopChannel(): WssChannelLike {
+  return {
+    on: () => {},
+    isConnected: () => false,
+    start: () => {},
+    stop: () => {},
+    notifyAuthChanged: () => {},
+  };
+}
+
 async function makeRuntime(
   overrides: {
     transport?: FakeTransport;
@@ -251,6 +262,7 @@ async function makeRuntime(
     kv?: SecretKv;
     safeStorage?: SafeStorageLike;
     log?: Logger;
+    channel?: FakeChannel;
   } = {},
 ): Promise<RuntimeHarness> {
   const db = openDatabase({ file: null });
@@ -283,10 +295,9 @@ async function makeRuntime(
     kvOverride: overrides.kv ?? fakeKv(),
     transportsOverride: overrides.transports ?? stubTransports(),
     adapterOverride: memoryAdapter(),
+    channelOverride: overrides.channel ?? noopChannel(),
     schedule,
-    ...(overrides.fetchOverride !== undefined
-      ? { fetchOverride: overrides.fetchOverride }
-      : {}),
+    ...(overrides.fetchOverride !== undefined ? { fetchOverride: overrides.fetchOverride } : {}),
   };
   const runtime = await createAgentRuntime({
     db,
@@ -624,9 +635,9 @@ describe('cloud event plumbing', () => {
         runtime.jobs.list().some((j) => j.jobId === reprinted.jobId && j.status === 'completed'),
       ).toBe(true);
     });
-    expect(db.prepare('SELECT reprint_of FROM jobs WHERE id = ?').get(reprinted.jobId)).toMatchObject(
-      { reprint_of: original.jobId },
-    );
+    expect(
+      db.prepare('SELECT reprint_of FROM jobs WHERE id = ?').get(reprinted.jobId),
+    ).toMatchObject({ reprint_of: original.jobId });
 
     // Completed jobs are not retryable — the typed engine error propagates.
     await expect(runtime.jobs.retry(reprinted.jobId)).rejects.toThrow(/only failed jobs/);
@@ -654,5 +665,21 @@ describe('cloud event plumbing', () => {
       expect(record?.status).toBe('failed');
       expect(record?.attempts).toBe(3);
     });
+  });
+});
+
+describe('AgentRuntime WSS wiring', () => {
+  it('passes the injected channel through to the cloud client', async () => {
+    const channel = new FakeChannel();
+    const { runtime } = await makeRuntime({ channel });
+    runtime.start();
+    // The client (and thus the channel) only starts once an identity exists —
+    // pairing is the trigger for the first dial.
+    await runtime.pair(PAIRING_CODE);
+    await vi.waitFor(() => {
+      expect(channel.starts).toBe(1);
+    });
+    await runtime.stop();
+    expect(channel.stops).toBeGreaterThanOrEqual(1);
   });
 });

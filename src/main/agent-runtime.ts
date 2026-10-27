@@ -2,6 +2,7 @@ import { hostname, release, type } from 'node:os';
 import { statSync } from 'node:fs';
 import { createPollingCloudClient } from './cloud-client/poller';
 import { createHttpTransport } from './cloud-client/http-transport';
+import { createWssChannel, deriveWssUrl } from './cloud-client/ws-channel';
 import {
   createSafeStorageSecretStore,
   type IdentitySecrets,
@@ -15,6 +16,7 @@ import type {
   CloudClient,
   ConnectionState,
   HeartbeatSample,
+  WssChannelLike,
 } from './cloud-client/types';
 import { createJobEngine, type JobEngine } from './jobs/engine';
 import type { AckSink } from './jobs/types';
@@ -65,7 +67,11 @@ export interface RuntimeDeps {
   /** Defaults to os.hostname(). */
   readonly deviceName?: string;
   readonly safeStorage: SafeStorageLike;
-  readonly cloud: { readonly baseUrl: string; readonly pollIntervalMs?: number };
+  readonly cloud: {
+    readonly baseUrl: string;
+    readonly pollIntervalMs?: number;
+    readonly safetyPollIntervalMs?: number;
+  };
   /** Test seams; defaults are the real implementations. */
   readonly env?: {
     readonly transportOverride?: AgentTransport;
@@ -74,6 +80,8 @@ export interface RuntimeDeps {
     readonly transportsOverride?: TransportRegistry;
     /** Test seam: file adapter for the printers store / identity kv (default: node fs). */
     readonly adapterOverride?: SettingsFileAdapter;
+    /** Test seam: replaces the default real WSS channel. */
+    readonly channelOverride?: WssChannelLike;
     readonly now?: () => number;
     /** Returns a cancel function (poller/ack-buffer seam); the engine's void-returning seam is adapted. */
     readonly schedule?: (fn: () => void, delayMs: number) => () => void;
@@ -114,10 +122,12 @@ export interface AgentRuntime {
 const CONNECTION_DETAILS: Readonly<Record<ConnectionState, string>> = {
   unpaired: 'Not paired. Enter a pairing code from the SaaS dashboard to begin.',
   connecting: 'Establishing the outbound connection.',
-  online: 'Connected to the cloud. Jobs are delivered by outbound polling.',
+  online:
+    'Connected to the cloud. Jobs arrive in real time over a secure socket; polling backs this up.',
   offline:
     'No connection to the cloud. Jobs sent while offline queue on the server and replay on reconnect.',
-  revoked: 'This device was revoked. The local data wipe was triggered — pair again with a new code.',
+  revoked:
+    'This device was revoked. The local data wipe was triggered — pair again with a new code.',
 };
 
 const CLOUD_CHECK_TIMEOUT_MS = 5_000;
@@ -136,8 +146,7 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
   const log = deps.log;
   const deviceName = deps.deviceName ?? hostname();
 
-  const fileAdapter: SettingsFileAdapter =
-    deps.env?.adapterOverride ?? createNodeSettingsAdapter();
+  const fileAdapter: SettingsFileAdapter = deps.env?.adapterOverride ?? createNodeSettingsAdapter();
   // Sync-persisting kv (secret-kv.ts): save() failures now THROW, so the
   // token-rotation/pairing callers observe them directly (poller poisons
   // refresh; pairing fails closed) instead of an onError swallow.
@@ -189,6 +198,29 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
     },
   });
 
+  // Outbound-only WSS push channel (contract §1); the poller keeps REST as the
+  // safety net. readIdentity/heartbeatSample are hoisted function declarations —
+  // the closures only fire at dial/heartbeat time, after construction.
+  const channel: WssChannelLike =
+    deps.env?.channelOverride ??
+    createWssChannel({
+      url: deriveWssUrl(deps.cloud.baseUrl),
+      agentVersion: deps.agentVersion,
+      getAuth: () => {
+        const identity = readIdentity();
+        return identity === null
+          ? null
+          : { deviceId: identity.deviceId, deviceToken: identity.deviceToken };
+      },
+      heartbeatSample: () => heartbeatSample(),
+      log: (message) => {
+        log.info(message);
+      },
+      now,
+      schedule,
+      random,
+    });
+
   client = createPollingCloudClient({
     transport,
     secrets,
@@ -199,8 +231,12 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
     now,
     schedule,
     random,
+    channel,
     ...(deps.cloud.pollIntervalMs !== undefined
       ? { pollIntervalMs: deps.cloud.pollIntervalMs }
+      : {}),
+    ...(deps.cloud.safetyPollIntervalMs !== undefined
+      ? { safetyPollIntervalMs: deps.cloud.safetyPollIntervalMs }
       : {}),
     heartbeatSample: () => heartbeatSample(),
     onRevoked: () => {
@@ -484,7 +520,12 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
   async function printersCheck(): Promise<ConnectivityCheck> {
     const list = printers.list();
     if (list.length === 0) {
-      return { id: 'printers', label: 'Printers', status: 'pass', detail: 'No printers configured' };
+      return {
+        id: 'printers',
+        label: 'Printers',
+        status: 'pass',
+        detail: 'No printers configured',
+      };
     }
     const failedCodes: string[] = [];
     for (const printer of list) {
