@@ -15,6 +15,7 @@ import type {
   SafeStorageLike,
 } from '../../src/main/cloud-client/secret-store';
 import { canonicalJson } from '../../src/main/cloud-client/canonical-json';
+import type { WsLike } from '../../src/main/cloud-client/ws-channel';
 
 /** Shared fixtures for the mocked cloud-client tests: no real network, no
  *  real Electron, deterministic IDs. */
@@ -322,5 +323,73 @@ export class ManualScheduler {
 export async function settle(ticks = 6): Promise<void> {
   for (let i = 0; i < ticks; i += 1) {
     await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+}
+
+/** Scriptable stand-in for a `ws` WebSocket. `server*` methods simulate the
+ *  remote end; `emit` drives the channel's event handlers directly. */
+export class FakeSocket implements WsLike {
+  readonly url: string;
+  readonly headers: Record<string, string>;
+  readyState = 0; // CONNECTING
+  readonly sent: string[] = [];
+  pingCount = 0;
+  private handlers = new Map<string, Array<(...args: unknown[]) => void>>();
+
+  constructor(url: string, options: { headers: Record<string, string> }) {
+    this.url = url;
+    this.headers = options.headers;
+  }
+
+  on(event: 'open' | 'pong', cb: () => void): void;
+  on(event: 'message', cb: (data: unknown) => void): void;
+  on(event: 'close', cb: (code: number) => void): void;
+  on(event: 'error', cb: (err: Error) => void): void;
+  // Implementation signature: `never` (bottom type) is the only lint-safe
+  // callback param every overload above is assignable to; widened on storage.
+  on(event: string, cb: (first: never) => void): void {
+    const list = this.handlers.get(event) ?? [];
+    list.push(cb as (...args: unknown[]) => void);
+    this.handlers.set(event, list);
+  }
+
+  emit(event: string, ...args: unknown[]): void {
+    for (const cb of this.handlers.get(event) ?? []) cb(...args);
+  }
+
+  send(data: string): void {
+    this.sent.push(data);
+  }
+
+  ping(): void {
+    this.pingCount += 1;
+  }
+
+  close(): void {
+    this.readyState = 3;
+  }
+
+  terminate(): void {
+    this.readyState = 3;
+    this.emit('close', 1006);
+  }
+
+  serverOpen(): void {
+    this.readyState = 1;
+    this.emit('open');
+  }
+
+  /** Real `ws` delivers text frames as Buffers. */
+  serverMessage(text: string): void {
+    this.emit('message', Buffer.from(text, 'utf8'));
+  }
+
+  serverClose(code: number): void {
+    this.readyState = 3;
+    this.emit('close', code);
+  }
+
+  serverError(err: Error): void {
+    this.emit('error', err);
   }
 }

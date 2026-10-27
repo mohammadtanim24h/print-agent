@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { deriveWssUrl, assertWssUrl } from '../src/main/cloud-client/ws-channel';
+import { createWssChannel, deriveWssUrl, assertWssUrl } from '../src/main/cloud-client/ws-channel';
+import type { WsFactory } from '../src/main/cloud-client/ws-channel';
 import { CloudError } from '../src/main/cloud-client/errors';
+import type { WssChannelState } from '../src/main/cloud-client/types';
+import { FakeSocket, ManualScheduler, DEVICE_ID } from './helpers/cloud';
 
 describe('deriveWssUrl', () => {
   it('maps the REST base URL to the §1 WSS endpoint path', () => {
@@ -52,5 +55,120 @@ describe('assertWssUrl', () => {
       if (prev === undefined) delete process.env.NODE_ENV;
       else process.env.NODE_ENV = prev;
     }
+  });
+});
+
+interface ChannelHarness {
+  channel: ReturnType<typeof createWssChannel>;
+  sockets: FakeSocket[];
+  scheduler: ManualScheduler;
+  states: WssChannelState[];
+  messages: unknown[];
+  authFailures: number;
+  logs: string[];
+}
+
+function makeChannelHarness(
+  overrides: {
+    getAuth?: () => { deviceId: string; deviceToken: string } | null;
+    heartbeatIntervalMs?: number;
+  } = {},
+): ChannelHarness {
+  const scheduler = new ManualScheduler();
+  const sockets: FakeSocket[] = [];
+  const states: WssChannelState[] = [];
+  const messages: unknown[] = [];
+  let authFailures = 0;
+  const logs: string[] = [];
+  const factory: WsFactory = (url, options) => {
+    const s = new FakeSocket(url, options);
+    sockets.push(s);
+    return s;
+  };
+  const channel = createWssChannel({
+    url: 'wss://cloud.test/agent/v1/ws',
+    agentVersion: '0.1.0',
+    getAuth: overrides.getAuth ?? (() => ({ deviceId: DEVICE_ID, deviceToken: 'token-1' })),
+    now: () => scheduler.nowMs,
+    schedule: scheduler.schedule,
+    random: () => 0.5, // half-jitter backoff → attempt N waits exactly 750·2^(N-1) ms
+    wsFactory: factory,
+    log: (message) => logs.push(message),
+    ...(overrides.heartbeatIntervalMs !== undefined
+      ? { heartbeatIntervalMs: overrides.heartbeatIntervalMs }
+      : {}),
+  });
+  channel.on('state', (s) => states.push(s));
+  channel.on('message', (raw) => messages.push(raw));
+  channel.on('auth-failed', () => {
+    authFailures += 1;
+  });
+  return { channel, sockets, scheduler, states, messages, authFailures, logs };
+}
+
+describe('ws-channel lifecycle', () => {
+  it('dials with §1 upgrade headers and reports connected on open', () => {
+    const h = makeChannelHarness();
+    h.channel.start();
+    expect(h.sockets).toHaveLength(1);
+    expect(h.states).toContain('connecting');
+    expect(h.sockets[0]?.headers).toEqual({
+      Authorization: 'Bearer token-1',
+      'X-Device-Id': DEVICE_ID,
+      'X-Agent-Version': '0.1.0',
+      'X-Protocol-Version': '1',
+    });
+    h.sockets[0]?.serverOpen();
+    expect(h.channel.isConnected()).toBe(true);
+    expect(h.states).toContain('connected');
+  });
+
+  it('redials with backoff after a close; backoff resets on a successful open', async () => {
+    const h = makeChannelHarness();
+    h.channel.start();
+    h.sockets[0]?.serverOpen();
+    h.sockets[0]?.serverClose(1000);
+    expect(h.channel.isConnected()).toBe(false);
+    // attempt 1 → 1000/2 + 0.5·1000/2 = 750 ms
+    expect(h.scheduler.nextDelay()).toBe(750);
+    await h.scheduler.runNext();
+    expect(h.sockets).toHaveLength(2);
+    // Redial reads credentials at dial time.
+    expect(h.sockets[1]?.headers['Authorization']).toBe('Bearer token-1');
+    h.sockets[1]?.serverOpen(); // backoff resets
+    h.sockets[1]?.serverClose(1011);
+    expect(h.scheduler.nextDelay()).toBe(750); // attempt restarted at 1
+  });
+
+  it('stop() tears down the socket and cancels the pending redial', async () => {
+    const h = makeChannelHarness();
+    h.channel.start();
+    h.sockets[0]?.serverClose(1000);
+    expect(h.scheduler.pendingCount).toBe(1);
+    h.channel.stop();
+    expect(h.scheduler.pendingCount).toBe(0);
+    await h.scheduler.runNext().catch(() => undefined);
+    expect(h.sockets).toHaveLength(1); // no redial after stop
+  });
+
+  it('never dials while unpaired, and starts dialing once credentials exist', () => {
+    const h = makeChannelHarness({ getAuth: () => null });
+    h.channel.start();
+    expect(h.sockets).toHaveLength(0);
+    expect(h.channel.isConnected()).toBe(false);
+  });
+
+  it('replaces a live socket on notifyAuthChanged and ignores the stale close', () => {
+    const h = makeChannelHarness();
+    h.channel.start();
+    h.sockets[0]?.serverOpen();
+    h.channel.notifyAuthChanged();
+    expect(h.sockets).toHaveLength(2);
+    expect(h.channel.isConnected()).toBe(false); // new socket is connecting
+    // The disposed socket's close fires later — must not schedule a second dial.
+    h.sockets[0]?.serverClose(1005);
+    expect(h.scheduler.pendingCount).toBe(0);
+    h.sockets[1]?.serverOpen();
+    expect(h.channel.isConnected()).toBe(true);
   });
 });
