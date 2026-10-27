@@ -19,15 +19,11 @@ import { CloudError } from './errors';
 /** Close code the server uses for auth failures on the socket (§1, additive). */
 export const WS_AUTH_CLOSE_CODE = 4401;
 
-const WS_OPEN = 1;
-const DEFAULT_HEARTBEAT_INTERVAL_MS = 30_000;
-const DEFAULT_PING_INTERVAL_MS = 30_000;
-const DEFAULT_DEAD_SILENCE_MS = 90_000;
-const DEFAULT_MAX_FRAME_BYTES = 1024 * 1024;
-const DEFAULT_MAX_BACKOFF_MS = 60_000;
-const BASE_BACKOFF_MS = 1_000;
-
-/** REST base URL → §1 WSS endpoint (https→wss; http→ws for local dev). */
+/**
+ * REST base URL → §1 WSS endpoint (https→wss; http→ws for local dev).
+ * Precondition: `baseUrl` has already been validated by the HTTP transport's
+ * `assertSecureBaseUrl` (https/http only) — any other scheme maps blindly to ws.
+ */
 export function deriveWssUrl(baseUrl: string): string {
   const url = new URL(baseUrl);
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:';

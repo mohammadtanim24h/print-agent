@@ -40,4 +40,17 @@ describe('assertWssUrl', () => {
       'ws://127.0.0.1:9876/agent/v1/ws',
     );
   });
+
+  it('refuses ws:// even with the flag when NODE_ENV=production', () => {
+    const prev = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'production';
+    try {
+      expect(() => assertWssUrl('ws://saas.test/agent/v1/ws', true)).toThrow(
+        /forbidden in production/,
+      );
+    } finally {
+      if (prev === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = prev;
+    }
+  });
 });
