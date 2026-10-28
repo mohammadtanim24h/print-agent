@@ -19,6 +19,13 @@ export interface PrinterStore {
   add(draft: PrinterDraft): Promise<PrinterProfile>;
   update(printerId: string, patch: Partial<PrinterDraft>): Promise<PrinterProfile>;
   remove(printerId: string): Promise<boolean>;
+  /**
+   * FR-16 merge point: swaps in the mapped cloud fleet. Locals (source !==
+   * 'cloud') are preserved in order; a cloud id colliding with a local one
+   * replaces it (the server now manages that printer). Atomic like every
+   * other mutation — a failed write leaves the cache untouched.
+   */
+  replaceCloud(cloudProfiles: PrinterProfile[]): Promise<void>;
   /** Wipes all cached printer profiles (revocation/unpair wipe, §3.5). */
   clear(): Promise<void>;
 }
@@ -72,6 +79,9 @@ export async function createPrinterStore(options: {
       if ('printerId' in patch) {
         throw new Error('printerId is immutable'); // strict re-parse alone would accept a valid UUID
       }
+      if ('source' in patch) {
+        throw new Error('source is managed by the store'); // same reason as printerId: strict re-parse alone would accept it
+      }
       const next = PrinterProfileSchema.parse({ ...current, ...patch });
       const nextList = cached.map((p) => (p.printerId === printerId ? next : p));
       await adapter.writeAtomic(filePath, JSON.stringify(nextList));
@@ -84,6 +94,13 @@ export async function createPrinterStore(options: {
       await adapter.writeAtomic(filePath, JSON.stringify(nextList));
       cached = nextList;
       return true;
+    },
+    async replaceCloud(cloudProfiles) {
+      const cloudIds = new Set(cloudProfiles.map((p) => p.printerId));
+      const locals = cached.filter((p) => p.source !== 'cloud' && !cloudIds.has(p.printerId));
+      const next = [...locals, ...cloudProfiles];
+      await adapter.writeAtomic(filePath, JSON.stringify(next));
+      cached = next;
     },
     async clear() {
       await adapter.writeAtomic(filePath, JSON.stringify([]));

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createPrinterStore } from '../src/main/printers/store';
 import type { SettingsFileAdapter } from '../src/main/services/settings';
 import { memoryAdapter } from './helpers/memory-adapter';
-import { makeDraft } from './helpers/printers';
+import { makeDraft, makeProfile } from './helpers/printers';
 
 let idCounter = 0;
 function createStore(adapter: SettingsFileAdapter, report?: (message: string) => void) {
@@ -140,5 +140,68 @@ describe('printer store', () => {
     });
     await expect(colliding.add(makeDraft({ name: 'Bar' }))).rejects.toThrow('duplicate printerId');
     expect(colliding.list()).toHaveLength(1);
+  });
+});
+
+describe('printer store: replaceCloud (FR-16 merge)', () => {
+  function cloudProfile(printerId: string, name = 'Cloud-Kitchen') {
+    return { ...makeProfile({ name, source: 'cloud' }), printerId };
+  }
+
+  it('adds cloud entries and preserves locals, persisting the merged list', async () => {
+    const adapter = memoryAdapter(null);
+    const store = await createStore(adapter);
+    const local = await store.add(makeDraft({ name: 'Front' }));
+    const cloud = cloudProfile('018f0000-0000-7000-8000-0000000000d1');
+    await store.replaceCloud([cloud]);
+    expect(store.list()).toEqual([local, cloud]);
+    expect(JSON.parse(adapter.written.at(-1) ?? '')).toEqual([local, cloud]);
+  });
+
+  it('replaces previous cloud entries wholesale; a second apply drops removed printers', async () => {
+    const store = await createStore(memoryAdapter(null));
+    await store.replaceCloud([cloudProfile('018f0000-0000-7000-8000-0000000000d1', 'Old')]);
+    const next = cloudProfile('018f0000-0000-7000-8000-0000000000d2', 'New');
+    await store.replaceCloud([next]);
+    expect(store.list()).toEqual([next]);
+  });
+
+  it('a cloud id colliding with a local printer replaces the local entry', async () => {
+    const store = await createStore(memoryAdapter(null));
+    const local = await store.add(makeDraft({ name: 'Local-Managed' }));
+    const cloud = cloudProfile(local.printerId, 'Now-Managed');
+    await store.replaceCloud([cloud]);
+    expect(store.list()).toEqual([cloud]);
+  });
+
+  it('rolls back when persistence fails', async () => {
+    // Seed the local through a working adapter; the store under test reads the
+    // same file but its writeAtomic always fails (as in the add() rollback test).
+    const adapter = memoryAdapter(null);
+    const local = await (await createStore(adapter)).add(makeDraft());
+    const failing: SettingsFileAdapter = {
+      read: (path) => adapter.read(path),
+      writeAtomic: () => Promise.reject(new Error('disk full')),
+    };
+    const store = await createStore(failing);
+    await expect(
+      store.replaceCloud([cloudProfile('018f0000-0000-7000-8000-0000000000d3')]),
+    ).rejects.toThrow('disk full');
+    expect(store.list()).toEqual([local]);
+  });
+
+  it('an empty cloud list removes only cloud-managed entries', async () => {
+    const store = await createStore(memoryAdapter(null));
+    const local = await store.add(makeDraft());
+    await store.replaceCloud([cloudProfile('018f0000-0000-7000-8000-0000000000d4')]);
+    await store.replaceCloud([]);
+    expect(store.list()).toEqual([local]);
+  });
+
+  it('update() rejects a patch that tries to flip source (runtime guard)', async () => {
+    const store = await createStore(memoryAdapter(null));
+    const saved = await store.add(makeDraft());
+    await expect(store.update(saved.printerId, { source: 'cloud' } as never)).rejects.toThrow();
+    expect(store.get(saved.printerId)?.source).toBe('local');
   });
 });
