@@ -297,6 +297,11 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
   }
 
   async function runApply(config: ConfigUpdate, generation: number): Promise<void> {
+    // A wiped/unpaired device must never apply config — a fetch that resolves
+    // mid-wipe (or after) would otherwise re-arm state on an unpaired agent.
+    // The generation check alone cannot close this: a config chained onto the
+    // tail the wipe awaits carries the CURRENT generation, so it would pass.
+    if (readIdentity() === null) return;
     const marker = deps.settings.get().appliedConfigVersion;
     if (config.config_version <= marker) return; // regression — ignore (§6)
     configStore.save(config); // record of latest known config, even if apply fails

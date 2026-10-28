@@ -823,6 +823,86 @@ describe('AgentRuntime config application (FR-16)', () => {
     expect(settings.get().appliedConfigVersion).toBe(-1);
     expect(settings.get().pairedAt).toBeNull();
   });
+
+  it('applies two back-to-back config versions from one poll batch in order', async () => {
+    const { runtime, transport, settings } = await makeRuntime();
+    // Both versions queued BEFORE pairing: the first poll cycle after pair()
+    // hands both to the client in one batch — the apply chain must serialize
+    // them (v1 then v2) without the regression guard misfiring on v2.
+    transport.queuedJobs.push(
+      makeCloudConfig(1, [makeCloudPrinterConfig(1)]),
+      makeCloudConfig(2, [makeCloudPrinterConfig(1), makeCloudPrinterConfig(2)]),
+    );
+    runtime.start();
+    await runtime.pair(PAIRING_CODE);
+    await vi.waitFor(() => {
+      expect(runtime.printers.list().filter((p) => p.config.source === 'cloud')).toHaveLength(2);
+    });
+    expect(runtime.printers.list().map((p) => p.config.name).sort()).toEqual([
+      'Cloud-1',
+      'Cloud-2',
+    ]);
+    expect(settings.get().appliedConfigVersion).toBe(2);
+  });
+
+  it('config and revoke in the same poll batch end fully wiped', async () => {
+    const { runtime, transport, settings, db } = await makeRuntime();
+    runtime.start();
+    await runtime.pair(PAIRING_CODE);
+    transport.queuedJobs.push(makeCloudConfig(1, [makeCloudPrinterConfig(1)]));
+    await vi.waitFor(() => {
+      expect(runtime.printers.list()).toHaveLength(1);
+    });
+
+    // v2 is processed before the revoke envelope in the same batch, so its
+    // apply races the wipe — the generation + identity gates must leave
+    // nothing armed on the now-unpaired device.
+    transport.queuedJobs.push(
+      makeCloudConfig(2, [makeCloudPrinterConfig(2)]),
+      { type: 'revoke', reason: 'device revoked by operator' },
+    );
+    await vi.waitFor(async () => {
+      expect((await runtime.snapshot()).connection).toBe('revoked');
+    });
+    expect(runtime.printers.list()).toEqual([]);
+    expect((await runtime.snapshot()).identity).toBeNull();
+    expect(settings.get().appliedConfigVersion).toBe(-1);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM cloud_config').get()).toMatchObject({ n: 0 });
+  });
+
+  it('an unreadable persisted config warns and applies nothing at start', async () => {
+    const warn = vi.fn();
+    const { runtime, db, transport, settings } = await makeRuntime({
+      log: { debug: vi.fn(), info: vi.fn(), warn, error: vi.fn() },
+    });
+    runtime.start();
+    await runtime.pair(PAIRING_CODE);
+    transport.queuedJobs.push(makeCloudConfig(1, [makeCloudPrinterConfig(1)]));
+    await vi.waitFor(() => {
+      expect(runtime.printers.list()).toHaveLength(1);
+    });
+    await runtime.stop();
+
+    // Simulate a corrupted/partial persisted payload that fails ConfigUpdateSchema.
+    const broken = JSON.stringify({
+      type: 'config_update',
+      config_version: 3,
+      printers: [{ broken: true }],
+    });
+    const upsert = db.prepare(
+      `INSERT INTO cloud_config (id, config_version, payload_json, updated_at) VALUES (1, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET config_version = excluded.config_version,
+         payload_json = excluded.payload_json, updated_at = excluded.updated_at`,
+    );
+    upsert.run(3, broken, Date.now());
+
+    runtime.start(); // restart path: persisted config is unreadable → warn, skip
+    await vi.waitFor(() => {
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('unreadable'));
+    });
+    expect(runtime.printers.list().map((p) => p.config.name)).toEqual(['Cloud-1']);
+    expect(settings.get().appliedConfigVersion).toBe(1);
+  });
 });
 
 describe('AgentRuntime WSS wiring', () => {
