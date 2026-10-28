@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { createSettingsStore, type SettingsFileAdapter } from '../src/main/services/settings';
+import {
+  createSettingsStore,
+  DEFAULT_SETTINGS,
+  type SettingsFileAdapter,
+} from '../src/main/services/settings';
+import { AppSettingsSchema } from '../src/shared/ipc-contract';
 
 function memoryAdapter(initial: string | null = null): SettingsFileAdapter & { written: string[] } {
   let content = initial;
@@ -23,6 +28,7 @@ describe('settings store', () => {
     startMinimized: true,
     logLevel: 'info',
     pairedAt: null,
+    appliedConfigVersion: -1,
   };
 
   it('loads defaults when no file exists', async () => {
@@ -75,5 +81,24 @@ describe('settings store', () => {
       adapter: memoryAdapter(null),
     });
     await expect(store.set({ launchAtLogin: false, extra: 1 } as never)).rejects.toThrow();
+  });
+});
+
+describe('appliedConfigVersion', () => {
+  it('defaults to -1 (nothing applied yet) and survives a round-trip parse', () => {
+    expect(DEFAULT_SETTINGS.appliedConfigVersion).toBe(-1);
+    const parsed = AppSettingsSchema.parse({ launchAtLogin: false });
+    expect(parsed.appliedConfigVersion).toBe(-1);
+    const bumped = AppSettingsSchema.parse({
+      launchAtLogin: false,
+      appliedConfigVersion: 41,
+    });
+    expect(bumped.appliedConfigVersion).toBe(41);
+  });
+
+  it('rejects a non-integer marker', () => {
+    expect(() =>
+      AppSettingsSchema.parse({ launchAtLogin: false, appliedConfigVersion: 1.5 }),
+    ).toThrow();
   });
 });

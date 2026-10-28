@@ -88,6 +88,11 @@ export const AppSettingsSchema = z.strictObject({
   logLevel: z.enum(LOG_LEVELS).default('info'),
   /** Non-secret: when the device was paired (RFC 3339), null before pairing. */
   pairedAt: z.string().nullable().default(null),
+  /** FR-16 marker: config_version of the last SUCCESSFULLY applied cloud
+   *  config. -1 = none. Read by the runtime's config guard; the renderer
+   *  never sets it (main-only concern living in the shared schema because
+   *  the settings file is one schema). */
+  appliedConfigVersion: z.number().int().default(-1),
 });
 
 export type AgentInfo = z.output<typeof AgentInfoSchema>;
