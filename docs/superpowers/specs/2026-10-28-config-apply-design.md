@@ -57,9 +57,13 @@ Two structural gaps make this more than a one-line change:
 ## 2. Pure mapper — `src/main/printers/config-apply.ts`
 
 ```
-computeApply(current: PrinterProfile[], config: ConfigUpdate):
-  { ok: true; profiles: PrinterProfile[] } | { ok: false; reason: string }
+mapCloudPrinters(config: ConfigUpdate):
+  { ok: true; printers: PrinterProfile[] } | { ok: false; reason: string }
 ```
+
+(Correction from the approved draft: the mapper only maps and validates; the
+merge lives solely in `PrinterStore.replaceCloud()` — one merge point, not
+two.)
 
 - **Map** each cloud `PrinterConfig` → `PrinterProfile`:
   - `printer_id` → `printerId`, `name` → `name`.
@@ -77,10 +81,10 @@ computeApply(current: PrinterProfile[], config: ConfigUpdate):
     `cut_default` → `cutDefault`, `duplicate_policy` → `duplicatePolicy`,
     `status_polling` → also kept in `statusPolling`.
   - `source: 'cloud'` on every mapped profile.
-- **Merge**: next list = all `source === 'local'` profiles (untouched, order
-  preserved) + mapped cloud profiles. A cloud `printer_id` colliding with an
-  existing local id replaces the local entry (same printer; the server now
-  manages it).
+  - An entry with an empty `name` (the wire schema allows `bytes(64)` = empty)
+    or a duplicate `printer_id` inside `printers[]` also rejects the whole
+    config — the local profile schema and the store's uniqueness invariant
+    cannot represent either.
 - Purity: zero I/O, zero timers, does not mutate its inputs. Deterministic.
 
 Rejection is logged by the runtime. Contract §4 mentions
@@ -91,9 +95,11 @@ scope**.
 ## 3. Store — `replaceCloud()` (`src/main/printers/store.ts`)
 
 One new method, `replaceCloud(profiles: PrinterProfile[])`:
-next list = local profiles + incoming cloud profiles → single
-`adapter.writeAtomic` → swap cache. A failed write leaves the cache unchanged
-(rollback), the same invariant as `add/update/remove/clear`.
+next list = all `source !== 'cloud'` profiles (untouched, order preserved) +
+incoming cloud profiles. A cloud `printer_id` colliding with an existing
+local id replaces the local entry (same printer; the server now manages it).
+Single `adapter.writeAtomic` → swap cache. A failed write leaves the cache
+unchanged (rollback), the same invariant as `add/update/remove/clear`.
 
 ## 4. Runtime orchestration (`src/main/agent-runtime.ts`)
 
@@ -118,10 +124,14 @@ this is exactly the "saved but not successfully applied" set.
 Wiring:
 
 - The persist-only `client.on('config')` handler becomes `applyConfig`.
-- `start()` (paired): apply the persisted config first (offline cache, FR-16;
-  covers crash and transient-failure windows), then fire-and-forget
-  `client.refreshConfig()` with catch-and-log — a fresh pair gets its initial
-  fleet; offline errors are benign (poll/push deliver later).
+- `start()` (paired at launch): apply the persisted config first (offline
+  cache, FR-16; covers crash and transient-failure windows), then
+  fire-and-forget `client.refreshConfig()` with catch-and-log; offline errors
+  are benign (poll/push deliver later).
+- `pair()` success also fires the same one-shot `refreshConfig()` — a fresh
+  pair never re-enters `start()` (the poller starts inside `client.pair()`),
+  so without this the initial fleet would only arrive when the server happens
+  to push a `config_update`.
 - Wipe path unchanged (`configStore.clear()` already runs; the settings
   marker is cleared with the rest of settings on wipe).
 - `heartbeatSample()` needs no change — it lists the store, which now
