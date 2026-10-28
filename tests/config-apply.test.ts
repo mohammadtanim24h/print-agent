@@ -40,6 +40,7 @@ describe('mapCloudPrinters', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.printers.map((p) => p.role)).toEqual(['bar', 'custom']);
+    expect(result.printers.map((p) => p.station)).toEqual(['bar', 'cashier']);
   });
 
   it('maps status_polling off to capabilities.statusPolling false', () => {
@@ -102,6 +103,8 @@ describe('mapCloudPrinters', () => {
       makeConfigUpdate([makePrinterConfig(), makePrinterConfig()]),
     );
     expect(dup.ok).toBe(false);
+    if (!emptyName.ok) expect(emptyName.reason).toContain('empty name');
+    if (!dup.ok) expect(dup.reason).toContain('duplicate printer_id');
   });
 
   it('accepts an empty printers array (config that removes the whole fleet)', () => {
