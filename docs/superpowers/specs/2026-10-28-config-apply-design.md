@@ -1,7 +1,7 @@
 # A1 — Apply Cloud Config to Printers (FR-16) — Design
 
 Date: 2026-10-28
-Status: approved
+Status: implemented (2026-10-28)
 Closes: `docs/production-readiness.md` A1
 
 ## Problem

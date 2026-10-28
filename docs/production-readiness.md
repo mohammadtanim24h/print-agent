@@ -13,9 +13,12 @@ the acceptance evidence required before ticking.
 
 ### A1. Apply cloud config to printers (FR-16)
 
-- **Status:** open — `agent-runtime.ts` persists config only
-  (`configStore.save(config)`, comment: "Persist-only this phase; FR-16 is a
-  later phase").
+- **Status:** done (2026-10-28) — apply pipeline in `agent-runtime.ts`
+  (`applyConfig`) + `printers/config-apply.ts` + `PrinterStore.replaceCloud`;
+  source-tagged merge policy documented in api-contract §4. Evidence:
+  `tests/config-apply.test.ts`, `tests/printer-store.test.ts` (replaceCloud),
+  runtime wiring tests in `tests/agent-runtime.test.ts` ("AgentRuntime config
+  application (FR-16)"), regression-ignored test at the runtime guard.
 - **What:** server `config_update` / `GET /config` snapshots must drive the
   printer store atomically: create/update/remove printers from the
   `printers[]` array (§4 shape) on `config_version` increase, keyed by
@@ -125,11 +128,10 @@ the acceptance evidence required before ticking.
 | Cash drawer pulse | R-VAL-9 | Verify during B1 hardware access |
 | WSS proxy support | — | Polling fallback covers proxied networks; revisit on pilot feedback |
 | Reconnect/dial counters in diagnostics UI | — | Nice-to-have observability; no contract surface yet |
+| Concurrent-write hardening for `writeAtomic` | settings-fs.ts fixed `.tmp` path | Bounded, recoverable (failed rename logged; next apply self-heals); revisit before pilot if concurrent-writer count grows |
 
 ---
 
 ## Suggested order
 
-A1 → A3 (parallel with A2) → B2 → B1 → C1 → C2 → C3. A1 is first: pure
-agent work, no hardware or cross-team dependency, and it converts "receives
-jobs" into "prints what the SaaS configures."
+A3 (parallel with A2) → B2 → B1 → C1 → C2 → C3.

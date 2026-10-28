@@ -233,6 +233,14 @@ stolen tokens; revocation is also enforced server-side on every REST call.
 Agent applies atomically on `config_version` increase; acks `config.applied` or
 `config.rejected{error}`. Offline agents apply on reconnect.
 
+Agent-side merge policy (v1): profiles are source-tagged `local`/`cloud`; a
+config_update manages only cloud-tagged entries (locally-added printers are
+never removed by the sync). v1 applies `tcp_raw` with IP-literal hosts only —
+a config containing a hostname, `spooler_raw` (until P7), or `usb` (v1.1)
+printer, a duplicate `printer_id`, or an empty `name` is rejected whole
+(nothing applied). A `codepage` value is stored as sent but rendering supports
+cp437/cp850 (R-VAL-1).
+
 ## 5. Versioning & compatibility rules
 
 1. `envelope_version` major = breaking; agent refuses unknown majors with a structured
@@ -303,6 +311,9 @@ replace `POST /heartbeat` while the socket is healthy.
    REVOKES the device (stolen-token containment; the previous rotation's hash
    is retained solely for detection). Revoked devices get
    `{error:{code:"device_revoked"}}` on refresh and 401 on every call.
+9. **Config acks** (`config.applied` / `config.rejected{error}` in §4) have no
+   REST/WSS surface yet; the agent logs rejections locally. Define the
+   endpoint before relying on rejection telemetry.
 
 ### 7.1 Credential & endpoint summary (agent implementers)
 

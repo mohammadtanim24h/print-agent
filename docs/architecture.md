@@ -152,8 +152,17 @@ Event flow:
 - **Connection state:** on `state → 'online'` the runtime drains retained acks
   immediately (`flushNow()`) — offline-held acks never wait out the buffer's
   delay timer after a reconnect.
-- **Config:** `config` events are persisted to the `cloud_config` table only;
-  application is a later phase (FR-16).
+- **Config (FR-16):** `config` events run the apply pipeline: runtime guard
+  (`config_version` > `settings.appliedConfigVersion`) → persist to
+  `cloud_config` → `mapCloudPrinters` (all-or-nothing §4→profile mapping;
+  tcp_raw + IP-literal hosts only) → `PrinterStore.replaceCloud` (locals
+  preserved, stale cloud entries removed, id collision replaces) → marker
+  update. Applies are serialized and wipe-safe (generation + identity gates;
+  the wipe double-drains in-flight applies). Rejected configs are logged and
+  never applied. `start()` re-applies a persisted-but-unapplied config;
+  `start()`/`pair()` fetch `GET /config` once for the initial fleet. Merge
+  policy: source-tagged coexistence — locally-added printers are never
+  touched by the sync.
 
 Recovery ordering: `runtime.start()` runs `engine.recover()` **before**
 `client.start()` — crash-recovered jobs (incl. `sending` → `ambiguous`) must be
