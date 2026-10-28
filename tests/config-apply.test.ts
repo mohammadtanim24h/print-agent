@@ -8,7 +8,8 @@ describe('mapCloudPrinters', () => {
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.printers).toHaveLength(1);
-    const p = result.printers[0]!;
+    const [p] = result.printers;
+    if (p === undefined) return;
     expect(p.printerId).toBe('018f0000-0000-7000-8000-0000000000c1');
     expect(p.name).toBe('Kitchen-1');
     expect(p.source).toBe('cloud');
