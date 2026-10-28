@@ -17,6 +17,7 @@ import type {
   ConfigUpdate,
   PairResponse,
   PollResponse,
+  PrinterConfig,
   RefreshResponse,
   ServerKeysResponse,
 } from '../src/main/cloud-client/schemas';
@@ -71,6 +72,9 @@ export interface FakeTransport extends AgentTransport {
   readonly heartbeats: HeartbeatSample[];
   /** Next pollJobs call throws this once (e.g. CloudError with serverCode 'device_revoked'). */
   failNextPoll: Error | null;
+  /** Mutable GET /config response for refreshConfig tests. */
+  configResponse: ConfigUpdate;
+  readonly configFetches: number;
 }
 
 function fakeTransport(): FakeTransport {
@@ -80,6 +84,12 @@ function fakeTransport(): FakeTransport {
     acks: [] as AckBatch[],
     heartbeats: [] as HeartbeatSample[],
     failNextPoll: null as Error | null,
+    configResponse: {
+      type: 'config_update',
+      config_version: 0,
+      printers: [],
+    } as ConfigUpdate,
+    configFetches: 0,
     pair(): Promise<PairResponse> {
       return Promise.resolve().then(() => ({
         device_id: makeUuid(3),
@@ -115,7 +125,8 @@ function fakeTransport(): FakeTransport {
       }));
     },
     getConfig(): Promise<ConfigUpdate> {
-      return Promise.resolve({ type: 'config_update', config_version: 0, printers: [] });
+      impl.configFetches += 1;
+      return Promise.resolve().then(() => impl.configResponse);
     },
     heartbeat(_auth: TransportAuth, sample: HeartbeatSample): Promise<void> {
       impl.heartbeats.push(sample);
@@ -126,6 +137,31 @@ function fakeTransport(): FakeTransport {
     },
   };
   return impl;
+}
+
+function makeCloudPrinterConfig(n: number, overrides: Partial<PrinterConfig> = {}): PrinterConfig {
+  return {
+    printer_id: makeUuid(100 + n),
+    name: `Cloud-${String(n)}`,
+    transport: {
+      kind: 'tcp_raw',
+      host: '192.168.1.87',
+      port: 9100,
+      connect_timeout_ms: 3000,
+      write_timeout_ms: 5000,
+    },
+    station: 'kitchen',
+    copies_default: 1,
+    codepage: 'cp437',
+    cut_default: 'partial',
+    duplicate_policy: 'ask_operator',
+    status_polling: 'auto',
+    ...overrides,
+  };
+}
+
+function makeCloudConfig(configVersion: number, printers: PrinterConfig[]): ConfigUpdate {
+  return { type: 'config_update', config_version: configVersion, printers };
 }
 
 /** Printer transports that succeed instantly — hermetic, no real sockets. */
@@ -665,6 +701,128 @@ describe('cloud event plumbing', () => {
       expect(record?.status).toBe('failed');
       expect(record?.attempts).toBe(3);
     });
+  });
+});
+
+describe('AgentRuntime config application (FR-16)', () => {
+  it('applies a config_update from the poll batch to the printer store', async () => {
+    const { runtime, transport } = await makeRuntime();
+    transport.queuedJobs.push(makeCloudConfig(1, [makeCloudPrinterConfig(1)]));
+    runtime.start();
+    await runtime.pair(PAIRING_CODE);
+    await vi.waitFor(() => {
+      const cloud = runtime.printers.list().find((p) => p.config.source === 'cloud');
+      expect(cloud?.config.name).toBe('Cloud-1');
+    });
+    expect(
+      runtime.printers.list().find((p) => p.config.printerId === makeUuid(101))?.config.source,
+    ).toBe('cloud');
+  });
+
+  it('a later config removes a dropped cloud printer but keeps local ones', async () => {
+    const { runtime, transport } = await makeRuntime();
+    runtime.start();
+    await runtime.pair(PAIRING_CODE);
+    const local = await runtime.printers.add(makeDraft({ name: 'Local-Front' }));
+
+    transport.queuedJobs.push(makeCloudConfig(1, [makeCloudPrinterConfig(1), makeCloudPrinterConfig(2)]));
+    await vi.waitFor(() => {
+      expect(runtime.printers.list().filter((p) => p.config.source === 'cloud')).toHaveLength(2);
+    });
+
+    transport.queuedJobs.push(makeCloudConfig(2, [makeCloudPrinterConfig(1)]));
+    await vi.waitFor(() => {
+      const ids = runtime.printers.list().map((p) => p.config.printerId);
+      expect(ids).toContain(local.config.printerId);
+      expect(ids).toContain(makeUuid(101));
+      expect(ids).not.toContain(makeUuid(102));
+    });
+  });
+
+  it('ignores a config_version regression end-to-end (contract §6)', async () => {
+    const { runtime, transport } = await makeRuntime();
+    runtime.start();
+    await runtime.pair(PAIRING_CODE);
+    transport.queuedJobs.push(makeCloudConfig(5, [makeCloudPrinterConfig(1)]));
+    await vi.waitFor(() => {
+      expect(runtime.printers.list()).toHaveLength(1);
+    });
+
+    transport.queuedJobs.push(makeCloudConfig(4, [makeCloudPrinterConfig(2)]));
+    // Give the poll loop a moment; the regression must never mutate the store.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(runtime.printers.list().map((p) => p.config.name)).toEqual(['Cloud-1']);
+  });
+
+  it('reject-all: a config with an unmappable printer mutates nothing and warns', async () => {
+    const warn = vi.fn();
+    const { runtime, transport } = await makeRuntime({
+      log: { debug: vi.fn(), info: vi.fn(), warn, error: vi.fn() },
+    });
+    runtime.start();
+    await runtime.pair(PAIRING_CODE);
+    transport.queuedJobs.push(
+      makeCloudConfig(3, [
+        makeCloudPrinterConfig(1, { transport: { kind: 'usb', vid: '04b8', pid: '0202' } }),
+      ]),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(runtime.printers.list()).toHaveLength(0);
+    expect(warn.mock.calls.some((args) => String(args[0]).includes('not applicable in v1'))).toBe(
+      true,
+    );
+  });
+
+  it('a fresh pair fetches GET /config once (initial fleet)', async () => {
+    const { runtime, transport } = await makeRuntime();
+    transport.configResponse = makeCloudConfig(7, [makeCloudPrinterConfig(3)]);
+    runtime.start();
+    await runtime.pair(PAIRING_CODE);
+    await vi.waitFor(() => {
+      expect(runtime.printers.list().some((p) => p.config.name === 'Cloud-3')).toBe(true);
+    });
+    expect(transport.configFetches).toBeGreaterThanOrEqual(1);
+  });
+
+  it('start() re-applies a persisted config that was saved but never applied', async () => {
+    const { runtime, db, transport } = await makeRuntime();
+    runtime.start();
+    await runtime.pair(PAIRING_CODE);
+    // Applied v1 (marker = 1), then simulate a crash after save of v2 but
+    // before its apply: write v2 straight into cloud_config.
+    transport.queuedJobs.push(makeCloudConfig(1, [makeCloudPrinterConfig(1)]));
+    await vi.waitFor(() => {
+      expect(runtime.printers.list()).toHaveLength(1);
+    });
+    await runtime.stop();
+    const v2 = makeCloudConfig(2, [makeCloudPrinterConfig(1), makeCloudPrinterConfig(2)]);
+    const upsert = db.prepare(
+      `INSERT INTO cloud_config (id, config_version, payload_json, updated_at) VALUES (1, ?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET config_version = excluded.config_version,
+         payload_json = excluded.payload_json, updated_at = excluded.updated_at`,
+    );
+    upsert.run(v2.config_version, JSON.stringify(v2), Date.now());
+
+    runtime.start(); // restart path: persisted v2 > marker 1 → apply
+
+    await vi.waitFor(() => {
+      expect(runtime.printers.list()).toHaveLength(2);
+    });
+  });
+
+  it('unpair resets the applied-version marker so a fresh pair can use lower versions', async () => {
+    const { runtime, transport, settings } = await makeRuntime();
+    runtime.start();
+    await runtime.pair(PAIRING_CODE);
+    transport.queuedJobs.push(makeCloudConfig(9, [makeCloudPrinterConfig(1)]));
+    await vi.waitFor(() => {
+      expect(runtime.printers.list()).toHaveLength(1);
+    });
+    expect(settings.get().appliedConfigVersion).toBe(9);
+
+    await runtime.unpair();
+    expect(settings.get().appliedConfigVersion).toBe(-1);
+    expect(settings.get().pairedAt).toBeNull();
   });
 });
 

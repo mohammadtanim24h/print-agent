@@ -11,6 +11,9 @@ import {
   type SecretStore,
 } from './cloud-client/secret-store';
 import { CloudError } from './cloud-client/errors';
+import { mapCloudPrinters } from './printers/config-apply';
+import { ConfigUpdateSchema } from './cloud-client/schemas';
+import type { ConfigUpdate } from './cloud-client/schemas';
 import type {
   AgentTransport,
   CloudClient,
@@ -270,10 +273,43 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
     });
   });
 
-  // Persist-only this phase; FR-16 (config application) is a later phase.
   client.on('config', (config) => {
-    configStore.save(config);
+    applyConfig(config);
   });
+
+  // ---- cloud config application (FR-16) ------------------------------------
+
+  /** Reject-all semantics: nothing is applied unless every entry maps. */
+  function applyConfig(config: ConfigUpdate): void {
+    const marker = deps.settings.get().appliedConfigVersion;
+    if (config.config_version <= marker) return; // regression — ignore (§6)
+    configStore.save(config); // record of latest known config, even if apply fails
+    const mapped = mapCloudPrinters(config);
+    if (!mapped.ok) {
+      log.warn(`runtime: rejected config v${String(config.config_version)}: ${mapped.reason}`);
+      return;
+    }
+    printers
+      .replaceCloud(mapped.printers)
+      .then(() => deps.settings.set({ appliedConfigVersion: config.config_version }))
+      .catch((err: unknown) => {
+        // Persist failed / marker failed: the store is unchanged (replaceCloud
+        // is atomic) and the marker stays old, so start() re-applies this config.
+        log.error(
+          `runtime: config v${String(config.config_version)} apply failed: ${describeErr(err)}`,
+        );
+      });
+  }
+
+  /** One-shot GET /config (initial fleet for a fresh pair, catch-up at
+   *  launch). Failure is benign — poll/push deliver the config later. */
+  function fetchConfigOnce(): void {
+    client.refreshConfig().catch((err: unknown) => {
+      log.warn(
+        `runtime: initial config fetch failed (will arrive via poll/push): ${describeErr(err)}`,
+      );
+    });
+  }
 
   // ---- lifecycle -----------------------------------------------------------
 
@@ -289,7 +325,18 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
     // unpaired, never wipe — so the client only starts when the identity is
     // readable; any residual failure still degrades to unpaired, never crashes.
     try {
-      if (readIdentity() !== null) client.start(); // no-op while unpaired
+      if (readIdentity() !== null) {
+        // Re-apply a config that was persisted but never successfully applied
+        // (crash or transient failure window). The marker guard makes this a
+        // no-op when the persisted config is already applied. The safeParse
+        // guard is the honest runtime check: cloud_config is on-disk state,
+        // and StoredCloudConfig (config-store) validates less than ConfigUpdate.
+        const persisted = configStore.get();
+        const validated = persisted !== null ? ConfigUpdateSchema.safeParse(persisted) : null;
+        if (validated?.success) applyConfig(validated.data);
+        client.start();
+        fetchConfigOnce();
+      }
     } catch (err) {
       log.error('runtime: cloud client start failed — presenting as unpaired', err);
     }
@@ -310,7 +357,7 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
       jobStore.clearJobs();
       await printers.clear();
       configStore.clear();
-      await deps.settings.set({ pairedAt: null });
+      await deps.settings.set({ pairedAt: null, appliedConfigVersion: -1 });
     } catch (err) {
       log.error(`runtime: local state wipe failed: ${describeErr(err)}`);
     }
@@ -352,6 +399,7 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
       const identity = await client.pair({ pairingCode: code, deviceName });
       const pairedAt = new Date(now()).toISOString();
       await deps.settings.set({ pairedAt });
+      fetchConfigOnce(); // fire-and-forget; the fleet also arrives via poll/push
       return { ok: true, identity: toAgentIdentity(identity, pairedAt) };
     } catch (err) {
       if (err instanceof CloudError) return mapPairFailure(err);
