@@ -739,6 +739,31 @@ describe('AgentRuntime config application (FR-16)', () => {
     });
   });
 
+  it('updates a cloud printer in place when a new version changes its fields', async () => {
+    const { runtime, transport } = await makeRuntime();
+    runtime.start();
+    await runtime.pair(PAIRING_CODE);
+    transport.queuedJobs.push(makeCloudConfig(1, [makeCloudPrinterConfig(1)]));
+    await vi.waitFor(() => {
+      expect(runtime.printers.list()).toHaveLength(1);
+    });
+
+    transport.queuedJobs.push(
+      makeCloudConfig(2, [
+        makeCloudPrinterConfig(1, { name: 'Cloud-1-renamed', station: 'bar' }),
+      ]),
+    );
+    await vi.waitFor(() => {
+      expect(runtime.printers.list().map((p) => p.config.name)).toEqual(['Cloud-1-renamed']);
+    });
+    const updated = runtime.printers.list()[0];
+    if (updated === undefined) return;
+    expect(updated.config.role).toBe('bar');
+    expect(updated.config.source).toBe('cloud');
+    // Still exactly one printer: update-in-place, not create+stale.
+    expect(runtime.printers.list()).toHaveLength(1);
+  });
+
   it('ignores a config_version regression end-to-end (contract §6)', async () => {
     const { runtime, transport } = await makeRuntime();
     runtime.start();

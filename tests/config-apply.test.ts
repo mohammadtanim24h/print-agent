@@ -112,4 +112,12 @@ describe('mapCloudPrinters', () => {
     const result = mapCloudPrinters(makeConfigUpdate([]));
     expect(result).toEqual({ ok: true, printers: [] });
   });
+
+  it('does not mutate its inputs (purity)', () => {
+    const pc = makePrinterConfig();
+    const config = makeConfigUpdate([pc]);
+    const snapshot = JSON.stringify(config);
+    mapCloudPrinters(config);
+    expect(JSON.stringify(config)).toBe(snapshot);
+  });
 });

@@ -33,7 +33,7 @@ Two structural gaps make this more than a one-line change:
 | Merge policy for locally-added printers | Source-tagged coexistence: `source: 'local' \| 'cloud'`; sync only manages cloud entries |
 | Physical print fields for cloud printers | `DEFAULT_80MM_PROFILE` values (80 mm / 576 dots / 48 cpl / capabilities all true); cloud-only fields preserved on the profile |
 | Initial sync | Fetch `GET /config` at start + re-apply persisted config on start |
-| Apply mechanics | Pure `computeApply` mapper + atomic `PrinterStore.replaceCloud()` + runtime orchestrator |
+| Apply mechanics | Pure `mapCloudPrinters` mapper + atomic `PrinterStore.replaceCloud()` + runtime orchestrator |
 
 ## 1. Schema changes (`src/main/printers/profile.ts`)
 
@@ -49,7 +49,8 @@ Two structural gaps make this more than a one-line change:
   entries always carry them):
   - `station?: string ≤ 24`
   - `copiesDefault?: int 1..4`
-  - `codepage?: 'cp437' | 'cp850' | 'utf8_double_byte' | 'string'`
+  - `codepage?: string ≤ 24` (stored as sent; rendering supports
+    `cp437`/`cp850` — R-VAL-1)
   - `cutDefault?: 'full' | 'partial' | 'none'`
   - `duplicatePolicy?: 'ask_operator' | 'auto_reprint' | 'never'`
   - `statusPolling?: 'auto' | 'off'`
@@ -113,7 +114,7 @@ unchanged (rollback), the same invariant as `add/update/remove/clear`.
    applied state with an older persisted config.
 2. `configStore.save(config)` — the record of the latest known server config
    is persisted even when apply subsequently fails, so startup re-applies it.
-3. `computeApply(...)` → reject ⇒ `log.warn(reason)`, stop (marker unchanged).
+3. `mapCloudPrinters(config)` → reject ⇒ `log.warn(reason)`, stop (marker unchanged).
 4. `printers.replaceCloud(profiles)` → on success
    `settings.set({ appliedConfigVersion: config.config_version })`.
 
