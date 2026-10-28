@@ -60,7 +60,7 @@ export async function createPrinterStore(options: {
       if (cached.some((p) => p.printerId === printerId)) {
         throw new Error(`duplicate printerId: ${printerId}`);
       }
-      const profile: PrinterProfile = { ...validated, printerId };
+      const profile: PrinterProfile = { ...validated, printerId, source: 'local' };
       const next = [...cached, profile];
       await adapter.writeAtomic(filePath, JSON.stringify(next));
       cached = next;

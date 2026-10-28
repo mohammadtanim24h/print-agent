@@ -107,3 +107,60 @@ describe('printer profile schema', () => {
     expect(parsed.transport.port).toBe(9100);
   });
 });
+
+describe('profile schema: source tag + cloud-sourced fields', () => {
+  // A pre-A1 on-disk file has no `source` field — it must parse as 'local',
+  // not hit the strict rejection ("printers file invalid, starting empty").
+  it('defaults a missing source to local (legacy file upgrade path)', () => {
+    const legacy = {
+      printerId: '018f0000-0000-7000-8000-000000000001',
+      name: 'Kitchen',
+      role: 'kitchen',
+      paperWidthMm: 80,
+      printableDots: 576,
+      charsPerLine: 48,
+      capabilities: { cut: true, qrCode: false, barcode128: false, statusPolling: false, cashDrawer: false },
+      transport: { kind: 'tcp_raw', host: '192.168.1.50', port: 9100 },
+    };
+    const parsed = PrinterProfileSchema.parse(legacy);
+    expect(parsed.source).toBe('local');
+    expect(parsed.station).toBeUndefined();
+    expect(parsed.duplicatePolicy).toBeUndefined();
+  });
+
+  it('accepts a cloud-sourced profile with the cloud-only fields', () => {
+    const parsed = PrinterProfileSchema.parse({
+      ...makeProfile({ source: 'cloud' }),
+      station: 'kitchen',
+      copiesDefault: 2,
+      codepage: 'cp850',
+      cutDefault: 'partial',
+      duplicatePolicy: 'auto_reprint',
+      statusPolling: 'auto',
+    });
+    expect(parsed.source).toBe('cloud');
+    expect(parsed.copiesDefault).toBe(2);
+    expect(parsed.station).toBe('kitchen');
+  });
+
+  it('rejects an unknown source value', () => {
+    expect(() =>
+      PrinterProfileSchema.parse({ ...makeProfile(), source: 'admin' }),
+    ).toThrow();
+  });
+
+  it('rejects out-of-range cloud fields (copiesDefault, cutDefault)', () => {
+    expect(() =>
+      PrinterProfileSchema.parse({ ...makeProfile(), copiesDefault: 5 }),
+    ).toThrow();
+    expect(() =>
+      PrinterProfileSchema.parse({ ...makeProfile(), cutDefault: 'tear' }),
+    ).toThrow();
+  });
+
+  it('drafts cannot set printerId or source', () => {
+    expect(() =>
+      PrinterDraftSchema.parse({ ...makeDraft(), source: 'cloud' }),
+    ).toThrow();
+  });
+});

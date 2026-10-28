@@ -23,6 +23,7 @@ export function makeProfile(overrides: Partial<PrinterProfile> = {}): PrinterPro
   return {
     ...makeDraft(),
     printerId: '018f0000-0000-7000-8000-000000000001',
+    source: 'local',
     ...overrides,
   };
 }

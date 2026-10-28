@@ -117,8 +117,20 @@ export const PrinterProfileSchema = z.strictObject({
   charsPerLine: z.number().int().min(16).max(96),
   capabilities: PrinterCapabilitiesSchema,
   transport: EndpointTcpRawSchema,
+  /** Who manages this profile: the local UI or the SaaS config stream (FR-16).
+   *  Default keeps pre-A1 on-disk files valid (they are all local). */
+  source: z.enum(['local', 'cloud']).default('local'),
+  // Cloud-sourced fields (api-contract §4) — optional: local profiles never
+  // carry them; cloud-applied profiles always do. Preserved for FR-14
+  // (duplicate_policy) and C1 (status_polling) to consume.
+  station: z.string().max(24).optional(),
+  copiesDefault: z.number().int().min(1).max(4).optional(),
+  codepage: z.string().max(24).optional(),
+  cutDefault: z.enum(['full', 'partial', 'none']).optional(),
+  duplicatePolicy: z.enum(['ask_operator', 'auto_reprint', 'never']).optional(),
+  statusPolling: z.enum(['auto', 'off']).optional(),
 });
 export type PrinterProfile = z.output<typeof PrinterProfileSchema>;
 
-export const PrinterDraftSchema = PrinterProfileSchema.omit({ printerId: true });
+export const PrinterDraftSchema = PrinterProfileSchema.omit({ printerId: true, source: true });
 export type PrinterDraft = z.output<typeof PrinterDraftSchema>;

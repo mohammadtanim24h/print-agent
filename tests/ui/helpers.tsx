@@ -46,6 +46,7 @@ function profile(input: {
         cashDrawer: false,
       },
       transport: { kind: 'tcp_raw', host: input.host, port: input.port },
+      source: 'local',
     },
     health: input.health,
     lastPrintAt: input.health === 'offline' ? null : rfc3339(Date.now() - 90_000),
@@ -241,7 +242,7 @@ class FakeAgentService implements AgentService {
 
   async addPrinter(draft: PrinterDraft): Promise<PrinterInfo> {
     const printer: PrinterInfo = {
-      config: { ...draft, printerId: crypto.randomUUID() },
+      config: { ...draft, printerId: crypto.randomUUID(), source: 'local' },
       health: 'unknown',
       lastPrintAt: null,
     };
@@ -255,7 +256,7 @@ class FakeAgentService implements AgentService {
     if (index === -1 || existing === undefined) {
       throw new Error(`unknown printer: ${printerId}`);
     }
-    const updated: PrinterInfo = { ...existing, config: { ...draft, printerId } };
+    const updated: PrinterInfo = { ...existing, config: { ...draft, printerId, source: 'local' } };
     this.printers[index] = updated;
     return updated;
   }
