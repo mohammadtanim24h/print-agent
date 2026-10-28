@@ -297,10 +297,12 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
   }
 
   async function runApply(config: ConfigUpdate, generation: number): Promise<void> {
-    // A wiped/unpaired device must never apply config — a fetch that resolves
-    // mid-wipe (or after) would otherwise re-arm state on an unpaired agent.
-    // The generation check alone cannot close this: a config chained onto the
-    // tail the wipe awaits carries the CURRENT generation, so it would pass.
+    // A wiped/unpaired device must never apply config. This gate catches
+    // applies that observe the device after the wipe cleared the identity:
+    // post-wipe arrivals, and the revoke path where the poller clears secrets
+    // synchronously before onRevoked fires the wipe. (An unpair-path apply
+    // registered mid-drain can still pass this gate — the wipe's
+    // double-drain closes that overlap instead.)
     if (readIdentity() === null) return;
     const marker = deps.settings.get().appliedConfigVersion;
     if (config.config_version <= marker) return; // regression — ignore (§6)
@@ -311,11 +313,11 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
       return;
     }
     await printers.replaceCloud(mapped.printers);
-    // A wipe that started mid-apply (config + revoke in one poll batch) must
-    // not see the marker re-armed after its reset. If this set fails, the
-    // store is unchanged (replaceCloud is atomic) and the marker stays old, so
-    // start() re-applies this config.
-    if (generation === wipeGeneration) {
+    // A wipe that started mid-apply (unpair or config+revoke in one poll
+    // batch) must not see the marker re-armed after its reset. If this set
+    // fails, the store is unchanged (replaceCloud is atomic) and the marker
+    // stays old, so start() re-applies this config.
+    if (generation === wipeGeneration && readIdentity() !== null) {
       await deps.settings.set({ appliedConfigVersion: config.config_version });
     }
   }
@@ -380,6 +382,11 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
     // the destructive file writes (writeAtomic) never race a concurrent writer.
     wipeGeneration += 1;
     await applyChain.catch(() => undefined); // never block the wipe on an apply's errors
+    // An apply registered during the drain carries the post-increment
+    // generation — invalidate it and drain once more so no apply's file
+    // write or marker write overlaps the destructive steps below.
+    wipeGeneration += 1;
+    await applyChain.catch(() => undefined);
     try {
       client.stop();
       secrets.clear();

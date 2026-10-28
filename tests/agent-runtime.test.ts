@@ -855,8 +855,12 @@ describe('AgentRuntime config application (FR-16)', () => {
     });
 
     // v2 is processed before the revoke envelope in the same batch, so its
-    // apply races the wipe — the generation + identity gates must leave
-    // nothing armed on the now-unpaired device.
+    // apply races the wipe. This test's wipe-safety coverage comes via the
+    // poller's synchronous secrets.clear() before onRevoked: by the time the
+    // wipe runs, the identity gate sees a null identity. The unpair-path
+    // mid-drain window is closed by the wipe's double-drain and is not
+    // directly arrangeable with the fake transport's microtask-timed
+    // promises.
     transport.queuedJobs.push(
       makeCloudConfig(2, [makeCloudPrinterConfig(2)]),
       { type: 'revoke', reason: 'device revoked by operator' },
