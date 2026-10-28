@@ -279,8 +279,24 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
 
   // ---- cloud config application (FR-16) ------------------------------------
 
+  // Config applies are serialized: a poll batch can deliver config updates
+  // back-to-back and start() fires a persisted apply + fetch concurrently.
+  // wipeGeneration invalidates an in-flight apply's marker write so a config
+  // landing mid-wipe cannot re-arm the guard after the reset (§3.5).
+  let applyChain: Promise<void> = Promise.resolve();
+  let wipeGeneration = 0;
+
   /** Reject-all semantics: nothing is applied unless every entry maps. */
   function applyConfig(config: ConfigUpdate): void {
+    const generation = wipeGeneration;
+    applyChain = applyChain
+      .then(() => runApply(config, generation))
+      .catch((err: unknown) => {
+        log.error(`runtime: config v${String(config.config_version)} apply failed: ${describeErr(err)}`);
+      });
+  }
+
+  async function runApply(config: ConfigUpdate, generation: number): Promise<void> {
     const marker = deps.settings.get().appliedConfigVersion;
     if (config.config_version <= marker) return; // regression — ignore (§6)
     configStore.save(config); // record of latest known config, even if apply fails
@@ -289,16 +305,14 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
       log.warn(`runtime: rejected config v${String(config.config_version)}: ${mapped.reason}`);
       return;
     }
-    printers
-      .replaceCloud(mapped.printers)
-      .then(() => deps.settings.set({ appliedConfigVersion: config.config_version }))
-      .catch((err: unknown) => {
-        // Persist failed / marker failed: the store is unchanged (replaceCloud
-        // is atomic) and the marker stays old, so start() re-applies this config.
-        log.error(
-          `runtime: config v${String(config.config_version)} apply failed: ${describeErr(err)}`,
-        );
-      });
+    await printers.replaceCloud(mapped.printers);
+    // A wipe that started mid-apply (config + revoke in one poll batch) must
+    // not see the marker re-armed after its reset. If this set fails, the
+    // store is unchanged (replaceCloud is atomic) and the marker stays old, so
+    // start() re-applies this config.
+    if (generation === wipeGeneration) {
+      await deps.settings.set({ appliedConfigVersion: config.config_version });
+    }
   }
 
   /** One-shot GET /config (initial fleet for a fresh pair, catch-up at
@@ -333,7 +347,13 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
         // and StoredCloudConfig (config-store) validates less than ConfigUpdate.
         const persisted = configStore.get();
         const validated = persisted !== null ? ConfigUpdateSchema.safeParse(persisted) : null;
-        if (validated?.success) applyConfig(validated.data);
+        if (validated?.success) {
+          applyConfig(validated.data);
+        } else if (persisted !== null) {
+          log.warn(
+            'runtime: stored cloud config is unreadable — skipping; the next server push replaces it',
+          );
+        }
         client.start();
         fetchConfigOnce();
       }
@@ -351,6 +371,10 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
 
   /** Shared by unpair and revocation (§3.5). Never throws to the caller. */
   async function wipeLocalState(): Promise<void> {
+    // Invalidate any in-flight apply's marker write, then drain the chain so
+    // the destructive file writes (writeAtomic) never race a concurrent writer.
+    wipeGeneration += 1;
+    await applyChain.catch(() => undefined); // never block the wipe on an apply's errors
     try {
       client.stop();
       secrets.clear();

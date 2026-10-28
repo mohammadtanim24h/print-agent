@@ -766,11 +766,10 @@ describe('AgentRuntime config application (FR-16)', () => {
         makeCloudPrinterConfig(1, { transport: { kind: 'usb', vid: '04b8', pid: '0202' } }),
       ]),
     );
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await vi.waitFor(() => {
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('not applicable in v1'));
+    });
     expect(runtime.printers.list()).toHaveLength(0);
-    expect(warn.mock.calls.some((args) => String(args[0]).includes('not applicable in v1'))).toBe(
-      true,
-    );
   });
 
   it('a fresh pair fetches GET /config once (initial fleet)', async () => {
