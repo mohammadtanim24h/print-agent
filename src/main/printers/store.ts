@@ -24,6 +24,8 @@ export interface PrinterStore {
    * 'cloud') are preserved in order; a cloud id colliding with a local one
    * replaces it (the server now manages that printer). Atomic like every
    * other mutation — a failed write leaves the cache untouched.
+   * Precondition: cloudProfiles have unique printerIds (mapCloudPrinters
+   * guarantees this); duplicates are not defended against here.
    */
   replaceCloud(cloudProfiles: PrinterProfile[]): Promise<void>;
   /** Wipes all cached printer profiles (revocation/unpair wipe, §3.5). */

@@ -201,7 +201,9 @@ describe('printer store: replaceCloud (FR-16 merge)', () => {
   it('update() rejects a patch that tries to flip source (runtime guard)', async () => {
     const store = await createStore(memoryAdapter(null));
     const saved = await store.add(makeDraft());
-    await expect(store.update(saved.printerId, { source: 'cloud' } as never)).rejects.toThrow();
+    await expect(
+      store.update(saved.printerId, { source: 'cloud' } as never),
+    ).rejects.toThrow('source is managed by the store');
     expect(store.get(saved.printerId)?.source).toBe('local');
   });
 });
