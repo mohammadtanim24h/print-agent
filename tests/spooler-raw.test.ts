@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createSpoolerRawTransport } from '../src/main/transport/spooler-raw';
+import { TransportError } from '../src/main/transport/errors';
 import type { SpoolerBridge } from '../src/main/transport/spooler-native';
 
 type WriteRecord = { name: string; bytes: Uint8Array };
@@ -72,16 +73,29 @@ describe('spooler-raw transport — failures', () => {
     expect(writeRaw).not.toHaveBeenCalled();
   });
 
-  it('propagates a spooler write failure as write_failed', async () => {
-    const writeRaw = vi.fn(() =>
-      Promise.reject(new Error('WritePrinter failed (Windows error 1168)')),
-    );
+  it('propagates a spooler write failure as write_failed with the original error as cause', async () => {
+    const original = new Error('WritePrinter failed (Windows error 1168)');
+    const writeRaw = vi.fn(() => Promise.reject(original));
     const bridge = makeBridge({ writeRaw });
     const transport = makeTransport(bridge);
     await transport.open();
-    await expect(transport.write(new Uint8Array([0x0a]))).rejects.toMatchObject({
-      code: 'write_failed',
-    });
+    const err = await transport.write(new Uint8Array([0x0a])).then(
+      () => {
+        throw new Error('expected write() to reject');
+      },
+      (e: unknown) => e,
+    );
+    expect(err).toBeInstanceOf(TransportError);
+    expect((err as TransportError).code).toBe('write_failed');
+    expect((err as TransportError).cause).toBe(original);
+  });
+
+  it('passes a TransportError write failure through unwrapped (identity)', async () => {
+    const failure = new TransportError('printer_not_found', 'from bridge');
+    const bridge = makeBridge({ writeRaw: vi.fn(() => Promise.reject(failure)) });
+    const transport = makeTransport(bridge);
+    await transport.open();
+    await expect(transport.write(new Uint8Array([0x0a]))).rejects.toBe(failure);
   });
 
   it('propagates a probe failure (access denied) from open() unchanged', async () => {

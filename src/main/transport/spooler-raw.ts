@@ -43,6 +43,10 @@ export function createSpoolerRawTransport(options: SpoolerRawTransportOptions): 
 
   const write = (bytes: Uint8Array): Promise<void> => {
     const attempt = async (): Promise<void> => {
+      // Late binding vs tcp-raw: the live `open` flag is read at attempt time,
+      // so a write queued before close() still fails not_open (stateless close
+      // ⇒ nothing spools if close() lands before the attempt runs) — tcp-raw
+      // captures its socket at call time instead.
       if (!open) {
         throw new TransportError('not_open', `${target}: transport is not open`);
       }
