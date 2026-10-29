@@ -5,6 +5,7 @@ export type TransportErrorCode =
   | 'connect_timeout'
   | 'host_unreachable'
   | 'dns_unsupported'
+  | /** spooler_raw only: OpenPrinterW found no such printer on this machine. */ 'printer_not_found'
   | 'write_timeout'
   | 'write_failed'
   | 'disconnected'
