@@ -157,6 +157,13 @@ as the belt-and-braces step.
    restaurants are expected (§1, ADR-14).
 7. Before any Electron major bump enters a release: upgrade smoke on
    Win10 19045 and Win11 23H2, clean profile + upgrade path.
+8. Spooler RAW capture (release trains that change `native/spooler-raw/` or the
+   transport layer): on a Windows machine, run
+   `powershell -ExecutionPolicy Bypass -File scripts/setup-capture-printer.ps1`
+   elevated, then `pnpm vitest run tests/spooler-raw-capture.test.ts` — the
+   byte-exact capture test must PASS (it auto-skips without the printer).
+   Teardown: `Remove-Printer PrintAgentCapture`. Real-hardware pass/fail stays
+   tracked as R-VAL-4 (printer-compatibility §6).
 
 If the version-bump commit + tag landed locally but `git push` failed, do not
 re-run `pnpm release` (it would skip a version): push manually with
