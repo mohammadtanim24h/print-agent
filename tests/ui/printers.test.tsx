@@ -171,4 +171,63 @@ describe('PrintersScreen', () => {
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(await service.getPrinters()).toHaveLength(3);
   });
+
+  it('adds a spooler printer via the Windows-printer dropdown', async () => {
+    const user = userEvent.setup();
+    const service = makeService();
+    renderWithService(<PrintersScreen />, service);
+    await user.click(await screen.findByRole('button', { name: /add printer/i }));
+    const dialog = screen.getByRole('dialog');
+
+    await user.selectOptions(within(dialog).getByLabelText('Transport type'), 'spooler_raw');
+    const printerSelect = await within(dialog).findByLabelText('Windows printer');
+    await user.selectOptions(printerSelect, 'EPSON TM-T20 (Copy 1)');
+
+    await user.type(within(dialog).getByLabelText(/^Name$/i), 'Front desk');
+    await user.click(within(dialog).getByRole('button', { name: /^add printer$/i }));
+
+    const row = await screen.findByText('Front desk');
+    expect(row.closest('li')?.textContent).toContain('Spooler: EPSON TM-T20 (Copy 1)');
+  });
+
+  it('blocks saving a spooler printer with no Windows printer selected', async () => {
+    const user = userEvent.setup();
+    renderWithService(<PrintersScreen />, makeService());
+    await user.click(await screen.findByRole('button', { name: /add printer/i }));
+    const dialog = screen.getByRole('dialog');
+    await user.selectOptions(within(dialog).getByLabelText('Transport type'), 'spooler_raw');
+    await user.type(within(dialog).getByLabelText(/^Name$/i), 'Front desk');
+    await user.click(within(dialog).getByRole('button', { name: /^add printer$/i }));
+    expect(await screen.findByText(/pick a windows printer/i)).toBeInTheDocument();
+  });
+
+  it('labels spooler transports in the printer list', async () => {
+    const fresh = makeService();
+    for (const p of await fresh.getPrinters()) {
+      await fresh.removePrinter(p.config.printerId);
+    }
+    await fresh.addPrinter({
+      name: 'Bar spooler',
+      role: 'bar',
+      paperWidthMm: 80,
+      printableDots: 576,
+      charsPerLine: 48,
+      capabilities: { cut: true, qrCode: true, barcode128: false, statusPolling: false, cashDrawer: false },
+      transport: { kind: 'spooler_raw', windowsPrinterName: 'Star TSP143 (STR-001)' },
+    });
+    renderWithService(<PrintersScreen />, fresh);
+    expect(await screen.findByText('Spooler: Star TSP143 (STR-001)')).toBeInTheDocument();
+  });
+
+  it('switching back to TCP restores the host/port fields', async () => {
+    const user = userEvent.setup();
+    renderWithService(<PrintersScreen />, makeService());
+    await user.click(await screen.findByRole('button', { name: /add printer/i }));
+    const dialog = screen.getByRole('dialog');
+    await user.selectOptions(within(dialog).getByLabelText('Transport type'), 'spooler_raw');
+    await within(dialog).findByLabelText('Windows printer');
+    await user.selectOptions(within(dialog).getByLabelText('Transport type'), 'tcp_raw');
+    expect(within(dialog).getByLabelText('Address')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Port')).toBeInTheDocument();
+  });
 });

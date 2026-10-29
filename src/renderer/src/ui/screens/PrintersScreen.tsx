@@ -66,7 +66,7 @@ function parseIntOr(raw: string, fallback: number): number {
 export function transportLabel(transport: PrinterProfile['transport']): string {
   return transport.kind === 'tcp_raw'
     ? `TCP ${transport.host}:${String(transport.port)}`
-    : `Spooler ${transport.windowsPrinterName}`;
+    : `Spooler: ${transport.windowsPrinterName}`;
 }
 
 export function PrintersScreen(): React.JSX.Element {
@@ -308,14 +308,39 @@ function PrinterFormDialog(props: {
   const [capabilities, setCapabilities] = useState<Capabilities>(
     initial?.capabilities ?? emptyDraft.capabilities,
   );
-  // The form edits tcp_raw endpoints only — a spooler_raw profile falls back
-  // to the empty draft until the form grows spooler fields.
   const initialTransport = initial?.transport;
-  const [transport, setTransport] = useState<Extract<PrinterProfile['transport'], { kind: 'tcp_raw' }>>(
-    initialTransport?.kind === 'tcp_raw' ? initialTransport : { kind: 'tcp_raw', host: '', port: 9100 },
+  const [transport, setTransport] = useState<PrinterProfile['transport']>(
+    initialTransport ?? emptyDraft.transport,
+  );
+  const [transportKind, setTransportKind] = useState<'tcp_raw' | 'spooler_raw'>(
+    initialTransport?.kind ?? 'tcp_raw',
+  );
+  // Unconditional hook call: only the live spooler kind triggers enumeration.
+  const systemPrinters = useAsync(
+    () => (transportKind === 'spooler_raw' ? service.listSystemPrinters() : Promise.resolve([])),
+    [service, transportKind],
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Switching kind swaps the transport draft; fields of the previously edited
+  // profile are restored when the user toggles back before saving.
+  const changeTransportKind = (kind: 'tcp_raw' | 'spooler_raw'): void => {
+    setTransportKind(kind);
+    setTransport(
+      kind === 'tcp_raw'
+        ? {
+            kind: 'tcp_raw',
+            host: initialTransport?.kind === 'tcp_raw' ? initialTransport.host : '',
+            port: initialTransport?.kind === 'tcp_raw' ? initialTransport.port : 9100,
+          }
+        : {
+            kind: 'spooler_raw',
+            windowsPrinterName:
+              initialTransport?.kind === 'spooler_raw' ? initialTransport.windowsPrinterName : '',
+          },
+    );
+  };
 
   const changePaperWidth = (width: PrinterProfile['paperWidthMm']): void => {
     setPaperWidthMm(width);
@@ -329,7 +354,11 @@ function PrinterFormDialog(props: {
       setError('Give the printer a name.');
       return;
     }
-    if (transport.host.trim().length === 0) {
+    if (transport.kind === 'spooler_raw' && transport.windowsPrinterName === '') {
+      setError('Pick a Windows printer.');
+      return;
+    }
+    if (transport.kind === 'tcp_raw' && transport.host.trim().length === 0) {
       setError('Enter the printer IP address.');
       return;
     }
@@ -430,37 +459,83 @@ function PrinterFormDialog(props: {
               ))}
             </div>
           </div>
-          <div className="form-grid-2">
-            <Field label="Address">
-              <input
-                className="input mono"
-                value={transport.host}
+          <Field label="Transport type">
+            <select
+              className="input"
+              value={transportKind}
+              onChange={(e) => {
+                changeTransportKind(e.target.value === 'spooler_raw' ? 'spooler_raw' : 'tcp_raw');
+              }}
+              disabled={busy}
+            >
+              <option value="tcp_raw">Network printer (TCP)</option>
+              <option value="spooler_raw">Windows printer (driver)</option>
+            </select>
+          </Field>
+          {transportKind === 'tcp_raw' ? (
+            <div className="form-grid-2">
+              <Field label="Address">
+                <input
+                  className="input mono"
+                  value={transport.kind === 'tcp_raw' ? transport.host : ''}
+                  onChange={(e) => {
+                    if (transport.kind === 'tcp_raw') {
+                      setTransport({ kind: 'tcp_raw', host: e.target.value, port: transport.port });
+                    }
+                  }}
+                  placeholder="192.168.1.87"
+                  disabled={busy}
+                />
+              </Field>
+              <Field label="Port">
+                <input
+                  className="input mono"
+                  type="number"
+                  min={1}
+                  max={65535}
+                  value={transport.kind === 'tcp_raw' ? transport.port : 9100}
+                  onChange={(e) => {
+                    const parsed = Number(e.target.value);
+                    if (transport.kind === 'tcp_raw') {
+                      setTransport({
+                        kind: 'tcp_raw',
+                        host: transport.host,
+                        port: Number.isInteger(parsed) ? parsed : transport.port,
+                      });
+                    }
+                  }}
+                  disabled={busy}
+                />
+              </Field>
+            </div>
+          ) : systemPrinters.error !== null ? (
+            <ErrorBanner
+              message={`Could not list Windows printers. ${systemPrinters.error}`}
+              onRetry={systemPrinters.reload}
+            />
+          ) : (
+            <Field label="Windows printer">
+              <select
+                className="input"
+                value={transport.kind === 'spooler_raw' ? transport.windowsPrinterName : ''}
                 onChange={(e) => {
-                  setTransport({ kind: 'tcp_raw', host: e.target.value, port: transport.port });
+                  if (transport.kind === 'spooler_raw') {
+                    setTransport({ kind: 'spooler_raw', windowsPrinterName: e.target.value });
+                  }
                 }}
-                placeholder="192.168.1.87"
-                disabled={busy}
-              />
+                disabled={busy || systemPrinters.loading}
+              >
+                <option value="">
+                  {systemPrinters.loading ? 'Loading printers…' : 'Select a printer…'}
+                </option>
+                {(systemPrinters.data ?? []).map((printerName) => (
+                  <option key={printerName} value={printerName}>
+                    {printerName}
+                  </option>
+                ))}
+              </select>
             </Field>
-            <Field label="Port">
-              <input
-                className="input mono"
-                type="number"
-                min={1}
-                max={65535}
-                value={transport.port}
-                onChange={(e) => {
-                  const parsed = Number(e.target.value);
-                  setTransport({
-                    kind: 'tcp_raw',
-                    host: transport.host,
-                    port: Number.isInteger(parsed) ? parsed : transport.port,
-                  });
-                }}
-                disabled={busy}
-              />
-            </Field>
-          </div>
+          )}
           <div className="form-grid-2">
             <Field label="Printable dots" hint="Advanced: printable width in dots (192–800).">
               <input
