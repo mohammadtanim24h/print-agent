@@ -58,6 +58,16 @@ describe('exactPinViolations', () => {
     ).toEqual([]);
   });
 
+  it('flags outside-repo file: deps (exemption is file:./ only)', () => {
+    const violations = exactPinViolations({
+      dependencies: { evil: 'file:../../evil' },
+      devDependencies: {},
+    });
+    expect(violations).toHaveLength(1);
+    expect(violations[0]?.rule).toBe('exact-pin');
+    expect(violations[0]?.item).toBe('evil@file:../../evil');
+  });
+
   it('flags ranges, carets, tildes, and tags', () => {
     const violations = exactPinViolations({
       dependencies: { a: '^1.0.0', b: '~2.0.0', c: '>=3.0.0', d: 'latest' },

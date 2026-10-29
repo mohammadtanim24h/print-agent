@@ -9,7 +9,9 @@ function load() {
   if (binding !== null) return binding;
   const binaryPath = path.join(__dirname, 'build', 'Release', 'spooler_raw.node');
   if (!existsSync(binaryPath)) {
-    throw new Error('print-agent-spooler-raw native addon is not built (run: pnpm install)');
+    throw new Error(
+      `print-agent-spooler-raw native addon is not built (expected: ${binaryPath}; run: pnpm install)`,
+    );
   }
   binding = require(binaryPath);
   return binding;

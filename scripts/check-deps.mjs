@@ -42,7 +42,9 @@ export function exactPinViolations(pkg) {
   const violations = [];
   for (const section of ['dependencies', 'devDependencies']) {
     for (const [name, spec] of Object.entries(pkg[section] ?? {})) {
-      if (spec.startsWith('file:')) continue; // in-repo package, pinned by the lockfile
+      // Exempt only in-repo relative links (file:./...), pinned by the
+      // lockfile — outside-repo file: deps still fail the exact-pin rule.
+      if (spec.startsWith('file:./')) continue;
       if (!EXACT_PIN.test(spec)) {
         violations.push({
           rule: 'exact-pin',

@@ -1,5 +1,7 @@
 // Win32 spooler RAW N-API addon (ADR-4). Surface:
-//   printerExists(name) -> boolean        (OpenPrinterW/ClosePrinter probe)
+//   printerExists(name) -> boolean        (OpenPrinterW probe: false only for a
+//                                         genuinely unknown printer; any other
+//                                         OpenPrinterW failure throws)
 //   writeRaw(name, buffer) -> Promise     (ONE RAW-datatype spooler job; AsyncWorker)
 //   enumeratePrinters() -> string[]       (EnumPrintersW level 4, capped)
 // Success of writeRaw = Windows accepted (spooled) the job — never "printed"
@@ -70,8 +72,16 @@ class WriteRawWorker : public Napi::AsyncWorker {
     doc.pDocName = const_cast<LPWSTR>(L"Print Agent job");
     doc.pDatatype = const_cast<LPWSTR>(L"RAW");
     doc.pOutputFile = nullptr;
-    if (!StartDocPrinterW(printer, 1, reinterpret_cast<LPBYTE>(&doc))) {
-      FailWith(LastWinError("StartDocPrinterW"), printer);
+    // Mid-job failure deletes the spooler job (SetJob JOB_CONTROL_DELETE) — a
+    // partial document never reaches the port. Downstream driver buffering
+    // remains the R-VAL-4 risk. StartDocPrinterW's return value IS the job id,
+    // captured so AbortJob can remove a half-written job from the queue
+    // (EndDocPrinter would instead FINALIZE and dispatch the truncated job).
+    const DWORD job_id = StartDocPrinterW(printer, 1, reinterpret_cast<LPBYTE>(&doc));
+    if (job_id == 0) {
+      // No document is open — closing the handle is the whole teardown.
+      ClosePrinter(printer);
+      SetError(LastWinError("StartDocPrinterW"));
       return;
     }
     size_t offset = 0;
@@ -80,13 +90,18 @@ class WriteRawWorker : public Napi::AsyncWorker {
       const DWORD chunk = static_cast<DWORD>(remaining < kChunkBytes ? remaining : kChunkBytes);
       DWORD written = 0;
       if (!WritePrinter(printer, bytes_.data() + offset, chunk, &written)) {
-        FailWith(LastWinError("WritePrinter"), printer);
+        AbortJob(printer, job_id, LastWinError("WritePrinter"));
+        return;
+      }
+      if (written == 0) {
+        // TRUE + 0 bytes would otherwise spin forever on `offset += 0`.
+        AbortJob(printer, job_id, "WritePrinter wrote 0 bytes");
         return;
       }
       offset += written;
     }
     if (!EndDocPrinter(printer)) {
-      FailWith(LastWinError("EndDocPrinter"), printer);
+      AbortJob(printer, job_id, LastWinError("EndDocPrinter"));
       return;
     }
     ClosePrinter(printer);
@@ -96,9 +111,11 @@ class WriteRawWorker : public Napi::AsyncWorker {
   void OnError(const Napi::Error& error) override { deferred_.Reject(error.Value()); }
 
  private:
-  // Best-effort job teardown after a mid-job failure; the original error wins.
-  void FailWith(const std::string& message, HANDLE printer) {
-    EndDocPrinter(printer);
+  // Best-effort abort after a mid-job failure; the original error wins. The
+  // delete removes the partial job from the queue — never call EndDocPrinter
+  // here, it would finalize (and dispatch) the truncated document.
+  void AbortJob(HANDLE printer, DWORD job_id, const std::string& message) {
+    SetJob(printer, job_id, 0, nullptr, JOB_CONTROL_DELETE);
     ClosePrinter(printer);
     SetError(message);
   }
@@ -117,7 +134,15 @@ Napi::Value PrinterExists(const Napi::CallbackInfo& info) {
   const std::wstring name = WideFromUtf8(info[0].As<Napi::String>().Utf8Value());
   HANDLE handle = nullptr;
   if (!OpenPrinterW(const_cast<LPWSTR>(name.c_str()), &handle, nullptr)) {
-    return Napi::Boolean::New(env, false);  // not installed / not accessible by name
+    const DWORD err = GetLastError();
+    // false means "genuinely no such printer" (downstream maps it to
+    // printer_not_found). Anything else — access denied, spooler stopped — is
+    // NOT a missing printer, so surface it as a JS error instead.
+    if (err == ERROR_FILE_NOT_FOUND || err == ERROR_INVALID_PRINTER_NAME) {
+      return Napi::Boolean::New(env, false);
+    }
+    Napi::Error::New(env, LastWinError("OpenPrinterW")).ThrowAsJavaScriptException();
+    return env.Null();
   }
   ClosePrinter(handle);
   return Napi::Boolean::New(env, true);
@@ -145,6 +170,11 @@ Napi::Value EnumeratePrinters(const Napi::CallbackInfo& info) {
   DWORD count = 0;
   const DWORD flags = PRINTER_ENUM_LOCAL | PRINTER_ENUM_CONNECTIONS;
   EnumPrintersW(flags, nullptr, 4, nullptr, 0, &needed, &count);
+  if (needed == 0) {
+    // Sizing call reported nothing to enumerate — a second call with cbBuf 0
+    // is pointless (and on some spooler states fails spuriously).
+    return Napi::Array::New(env, 0);
+  }
   std::vector<BYTE> buffer(needed);
   if (!EnumPrintersW(flags, nullptr, 4, buffer.data(), needed, &needed, &count)) {
     Napi::Error::New(env, LastWinError("EnumPrintersW")).ThrowAsJavaScriptException();
