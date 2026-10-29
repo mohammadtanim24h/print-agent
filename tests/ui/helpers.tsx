@@ -285,6 +285,10 @@ class FakeAgentService implements AgentService {
     };
   }
 
+  listSystemPrinters(): Promise<readonly string[]> {
+    return Promise.resolve(['EPSON TM-T20 (Copy 1)', 'Star TSP143 (STR-001)']);
+  }
+
   getJobs(): Promise<readonly JobRecord[]> {
     return Promise.resolve([...this.jobs]);
   }

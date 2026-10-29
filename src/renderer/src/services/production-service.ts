@@ -15,6 +15,7 @@ export function createProductionService(): AgentService {
     updatePrinter: (printerId, draft) => bridge.updatePrinter(printerId, draft),
     removePrinter: (printerId) => bridge.removePrinter(printerId).then(() => undefined),
     testPrint: (printerId) => bridge.testPrint(printerId),
+    listSystemPrinters: () => bridge.listSystemPrinters(),
     getJobs: () => bridge.getJobs(),
     retryJob: (jobId) => bridge.retryJob(jobId),
     reprintJob: (jobId) => bridge.reprintJob(jobId),

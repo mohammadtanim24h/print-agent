@@ -29,6 +29,8 @@ export interface AgentService {
   removePrinter(printerId: string): Promise<void>;
   /** Transport-level test print; resolves with hand-off semantics, never "printed". */
   testPrint(printerId: string): Promise<TestPrintResult>;
+  /** Windows printer names installed on this machine (add-printer dropdown). */
+  listSystemPrinters(): Promise<readonly string[]>;
 
   getJobs(): Promise<readonly JobRecord[]>;
   /** Failed jobs only. Explicit operator action — never automatic (no silent reprints). */
