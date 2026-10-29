@@ -27,7 +27,8 @@ export function createNativeSpoolerBridge(load: () => NativeSpooler = defaultLoa
   const wrap = (name: string, error: unknown): TransportError => {
     if (error instanceof TransportError) return error;
     const message = error instanceof Error ? error.message : String(error);
-    return new TransportError('write_failed', `spooler:${name}: ${message}`);
+    // `cause` keeps the original failure for logs, matching tcp-raw.ts classifiers.
+    return new TransportError('write_failed', `spooler:${name}: ${message}`, { cause: error });
   };
   // `await` inside the try means one wrapper covers both failure modes: a
   // synchronous native throw (OpenPrinterW/spooler errors) and an async

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createNativeSpoolerBridge } from '../src/main/transport/spooler-native';
+import { TransportError } from '../src/main/transport/errors';
 import type { NativeSpooler } from 'print-agent-spooler-raw';
 
 function stubNative(overrides: Partial<NativeSpooler> = {}): NativeSpooler {
@@ -35,6 +36,30 @@ describe('native spooler bridge adapter', () => {
     await expect(bridge.writeRaw('EPSON TM-T20', new Uint8Array([0x0a]))).rejects.toMatchObject({
       code: 'write_failed',
       message: expect.stringContaining('Windows error 1802'),
+      cause: expect.objectContaining({ message: 'StartDocPrinterW failed (Windows error 1802)' }),
+    });
+  });
+
+  it('passes an injected TransportError through unwrapped (no double wrap)', async () => {
+    const bridge = createNativeSpoolerBridge(() => {
+      throw new TransportError('not_open', 'injected');
+    });
+    await expect(bridge.writeRaw('P', new Uint8Array([0x0a]))).rejects.toMatchObject({
+      code: 'not_open',
+      message: 'injected',
+    });
+  });
+
+  it('maps an enumerate failure to write_failed with the spooler:printers: prefix', async () => {
+    const native = stubNative({
+      enumeratePrinters: vi.fn(() => {
+        throw new Error('EnumPrintersW failed (Windows error 1460)');
+      }),
+    });
+    const bridge = createNativeSpoolerBridge(() => native);
+    await expect(bridge.enumerate()).rejects.toMatchObject({
+      code: 'write_failed',
+      message: expect.stringMatching(/^spooler:printers: /),
     });
   });
 
