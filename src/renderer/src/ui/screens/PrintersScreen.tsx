@@ -64,7 +64,9 @@ function parseIntOr(raw: string, fallback: number): number {
 }
 
 export function transportLabel(transport: PrinterProfile['transport']): string {
-  return `TCP ${transport.host}:${String(transport.port)}`;
+  return transport.kind === 'tcp_raw'
+    ? `TCP ${transport.host}:${String(transport.port)}`
+    : `Spooler ${transport.windowsPrinterName}`;
 }
 
 export function PrintersScreen(): React.JSX.Element {
@@ -306,8 +308,11 @@ function PrinterFormDialog(props: {
   const [capabilities, setCapabilities] = useState<Capabilities>(
     initial?.capabilities ?? emptyDraft.capabilities,
   );
-  const [transport, setTransport] = useState<PrinterProfile['transport']>(
-    initial?.transport ?? emptyDraft.transport,
+  // The form edits tcp_raw endpoints only — a spooler_raw profile falls back
+  // to the empty draft until the form grows spooler fields.
+  const initialTransport = initial?.transport;
+  const [transport, setTransport] = useState<Extract<PrinterProfile['transport'], { kind: 'tcp_raw' }>>(
+    initialTransport?.kind === 'tcp_raw' ? initialTransport : { kind: 'tcp_raw', host: '', port: 9100 },
   );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

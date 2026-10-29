@@ -37,3 +37,37 @@ describe('transport registry', () => {
     }
   });
 });
+
+describe('transport registry — spooler_raw', () => {
+  it('builds a spooler transport from the approved profile endpoint', async () => {
+    const bridge = {
+      printerExists: () => Promise.resolve(true),
+      writeRaw: () => Promise.resolve(),
+      enumerate: () => Promise.resolve(['EPSON TM-T20']),
+    };
+    const registry = createTransportRegistry({ spoolerBridge: bridge });
+    const transport = registry.forPrinter(
+      makeProfile({ transport: { kind: 'spooler_raw', windowsPrinterName: 'EPSON TM-T20' } }),
+    );
+    await expect(transport.healthCheck()).resolves.toBeUndefined();
+  });
+
+  it('routes writes to the profiled printer name', async () => {
+    const writes: Array<{ name: string; bytes: Uint8Array }> = [];
+    const bridge = {
+      printerExists: () => Promise.resolve(true),
+      writeRaw: (name: string, bytes: Uint8Array) => {
+        writes.push({ name, bytes });
+        return Promise.resolve();
+      },
+      enumerate: () => Promise.resolve(['EPSON TM-T20']),
+    };
+    const registry = createTransportRegistry({ spoolerBridge: bridge });
+    const transport = registry.forPrinter(
+      makeProfile({ transport: { kind: 'spooler_raw', windowsPrinterName: 'EPSON TM-T20' } }),
+    );
+    await transport.open();
+    await transport.write(new Uint8Array([0x1b, 0x40]));
+    expect(writes).toEqual([{ name: 'EPSON TM-T20', bytes: new Uint8Array([0x1b, 0x40]) }]);
+  });
+});

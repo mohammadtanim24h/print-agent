@@ -1,5 +1,7 @@
 import type { PrinterProfile } from '../printers/profile';
 import { createNetSocketFactory, type SocketFactory } from './socket';
+import { createSpoolerRawTransport } from './spooler-raw';
+import { createNativeSpoolerBridge, type SpoolerBridge } from './spooler-native';
 import { createTcpRawTransport, type TcpRawTransportOptions } from './tcp-raw';
 import type { PrinterTransport } from './types';
 
@@ -15,6 +17,8 @@ export interface TransportRegistry {
 export interface TransportRegistryOptions {
   /** Defaults to the production node:net factory. */
   socketFactory?: SocketFactory;
+  /** Defaults to the native winspool bridge (lazy dlopen). */
+  spoolerBridge?: SpoolerBridge;
   connectTimeoutMs?: number;
   writeTimeoutMs?: number;
 }
@@ -23,12 +27,9 @@ export function createTransportRegistry(options: TransportRegistryOptions = {}):
   return {
     forPrinter(profile) {
       const endpoint = profile.transport;
-      // Exhaustive switch over the endpoint kind: once PrinterProfile's
-      // `transport` widens to a union (spooler_raw, usb, ...), a new kind
-      // becomes a compile error here until a transport is wired for it.
-      // Today it is a single-variant type, so the check is a no-op for ESLint.
+      // Exhaustive switch over the endpoint union: adding a kind to the
+      // profile schema is a compile error here until a transport is wired.
       switch (endpoint.kind) {
-        // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
         case 'tcp_raw': {
           const tcpOptions: TcpRawTransportOptions = {
             host: endpoint.host,
@@ -43,6 +44,11 @@ export function createTransportRegistry(options: TransportRegistryOptions = {}):
           }
           return createTcpRawTransport(tcpOptions);
         }
+        case 'spooler_raw':
+          return createSpoolerRawTransport({
+            printerName: endpoint.windowsPrinterName,
+            bridge: options.spoolerBridge ?? createNativeSpoolerBridge(),
+          });
       }
     },
   };

@@ -104,7 +104,36 @@ describe('printer profile schema', () => {
       ...draft,
       transport: { kind: 'tcp_raw', host: '192.168.1.50' },
     });
-    expect(parsed.transport.port).toBe(9100);
+    expect(parsed.transport).toEqual({ kind: 'tcp_raw', host: '192.168.1.50', port: 9100 });
+  });
+
+  it('accepts a spooler_raw endpoint', () => {
+    const spoolerTransport = { kind: 'spooler_raw', windowsPrinterName: 'EPSON TM-T20' } as const;
+    const parsed = PrinterProfileSchema.parse(makeProfile({ transport: spoolerTransport }));
+    expect(parsed.transport).toEqual({ kind: 'spooler_raw', windowsPrinterName: 'EPSON TM-T20' });
+  });
+
+  it('rejects a spooler endpoint with an empty or over-long printer name (strict bounds)', () => {
+    expect(
+      PrinterProfileSchema.safeParse(
+        makeProfile({ transport: { kind: 'spooler_raw', windowsPrinterName: '' } }),
+      ).success,
+    ).toBe(false);
+    expect(
+      PrinterProfileSchema.safeParse(
+        makeProfile({ transport: { kind: 'spooler_raw', windowsPrinterName: 'x'.repeat(129) } }),
+      ).success,
+    ).toBe(false);
+  });
+
+  it('rejects spooler endpoints with unknown fields (strict)', () => {
+    expect(
+      PrinterProfileSchema.safeParse(
+        makeProfile({
+          transport: { kind: 'spooler_raw', windowsPrinterName: 'P', host: '1.2.3.4' } as never,
+        }),
+      ).success,
+    ).toBe(false);
   });
 });
 

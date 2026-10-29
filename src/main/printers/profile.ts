@@ -98,6 +98,14 @@ const EndpointTcpRawSchema = z.strictObject({
   port: z.number().int().min(1).max(65535).default(9100),
 });
 
+/** Windows printer name — the approved destination for spooler delivery.
+ *  Existence is validated at open time by the spooler shim (the printer can
+ *  be installed/uninstalled after pairing), not by the schema. */
+const EndpointSpoolerRawSchema = z.strictObject({
+  kind: z.literal('spooler_raw'),
+  windowsPrinterName: z.string().min(1).max(128),
+});
+
 export const PrinterCapabilitiesSchema = z.strictObject({
   cut: z.boolean(),
   qrCode: z.boolean(),
@@ -116,7 +124,7 @@ export const PrinterProfileSchema = z.strictObject({
   printableDots: z.number().int().min(192).max(800),
   charsPerLine: z.number().int().min(16).max(96),
   capabilities: PrinterCapabilitiesSchema,
-  transport: EndpointTcpRawSchema,
+  transport: z.union([EndpointTcpRawSchema, EndpointSpoolerRawSchema]),
   /** Who manages this profile: the local UI or the SaaS config stream (FR-16).
    *  Default keeps pre-A1 on-disk files valid (they are all local). */
   source: z.enum(['local', 'cloud']).default('local'),
