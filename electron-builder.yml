@@ -10,6 +10,7 @@ files:
 asar: true
 asarUnpack:
   - '**/node_modules/better-sqlite3/**/*.node' # native module must live on disk
+  - '**/node_modules/print-agent-spooler-raw/**/*.node' # same (ADR-4 spooler shim)
 win:
   target:
     - target: nsis

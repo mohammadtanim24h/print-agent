@@ -9,3 +9,5 @@ coverage/
 .DS_Store
 *.tsbuildinfo
 .worktrees/
+native/spooler-raw/build/
+native/spooler-raw/node/

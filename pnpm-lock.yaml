@@ -20,6 +20,9 @@ importers:
       node-thermal-printer:
         specifier: 4.6.1
         version: 4.6.1
+      print-agent-spooler-raw:
+        specifier: file:./native/spooler-raw
+        version: file:native/spooler-raw
       react:
         specifier: 19.3.1
         version: 19.3.1
@@ -1822,6 +1825,10 @@ packages:
     resolution: {integrity: sha512-GuvqvtrOk+AC27RidBxBsMzVNkwNl7PjHgc4NXbmdvSVLgIUjpaqcG1FjNRYnt2Yn9Ytq+Ln37XsBaglUcte/w==}
     engines: {node: '>=22.12.0'}
 
+  node-addon-api@8.5.0:
+    resolution: {integrity: sha512-/bRZty2mXUIFY/xU5HLvveNHlswNJej+RnxBjOMkidWfwZzgTbPG1E3K5TOxRLOR+5hX7bSofy8yf1hZevMS8A==}
+    engines: {node: ^18 || ^20 || >= 21}
+
   node-addon-api@8.9.2:
     resolution: {integrity: sha512-VijLXbi3UACN69I0JVXJsX4tjACjNoQDgv2gTF6sx2wWEi8tkSg2eX8p5gSIFi8z2+DL3oHmY6OyKce38SDolg==}
     engines: {node: ^18 || ^20 || >= 21}
@@ -1939,6 +1946,9 @@ packages:
   pretty-format@27.5.1:
     resolution: {integrity: sha512-Qb1gy5OrP5+zDf2Bvnzdl3jsTf1qXVMazbvCoKhtKqVs4/YK4ozX4gKQJJVyNe+cajNPn0KoC0MC3FUmaHWEmQ==}
     engines: {node: ^10.13.0 || ^12.13.0 || ^14.15.0 || >=15.0.0}
+
+  print-agent-spooler-raw@file:native/spooler-raw:
+    resolution: {directory: native/spooler-raw, type: directory}
 
   proc-log@6.1.0:
     resolution: {integrity: sha512-iG+GYldRf2BQ0UDUAd6JQ/RwzaQy6mXmsk/IzlYyal4A4SNFw54MeH4/tLkF4I5WoWG9SQwuqWzS99jaFQHBuQ==}
@@ -4224,6 +4234,8 @@ snapshots:
     dependencies:
       semver: 7.8.5
 
+  node-addon-api@8.5.0: {}
+
   node-addon-api@8.9.2: {}
 
   node-api-version@0.2.1:
@@ -4341,6 +4353,10 @@ snapshots:
       ansi-regex: 5.0.1
       ansi-styles: 5.2.0
       react-is: 17.0.2
+
+  print-agent-spooler-raw@file:native/spooler-raw:
+    dependencies:
+      node-addon-api: 8.5.0
 
   proc-log@6.1.0: {}
 

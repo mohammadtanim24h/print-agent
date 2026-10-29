@@ -4,7 +4,7 @@ import tseslint from 'typescript-eslint';
 // Security rails per CLAUDE.md rule 4: never execute dynamic code.
 export default defineConfig(
   // Build output, deps, and plain-JS operational scripts (not type-checked).
-  { ignores: ['out/', 'node_modules/', 'dist/', 'coverage/', 'eslint.config.js', 'scripts/'] },
+  { ignores: ['out/', 'node_modules/', 'dist/', 'coverage/', 'native/', 'eslint.config.js', 'scripts/'] },
   ...tseslint.configs.strictTypeChecked,
   {
     languageOptions: {

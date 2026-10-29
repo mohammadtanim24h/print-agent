@@ -21,7 +21,9 @@ export default defineConfig({
     build: {
       outDir: 'out/main',
       lib: { entry: 'src/main/main.ts' },
-      rolldownOptions: { external: ['electron', 'electron-log', 'better-sqlite3'] },
+      rolldownOptions: {
+        external: ['electron', 'electron-log', 'better-sqlite3', 'print-agent-spooler-raw'],
+      },
     },
   },
   preload: {

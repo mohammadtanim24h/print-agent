@@ -16,10 +16,12 @@ const ALLOWED_LICENSES = new Set([
   'BSD-2-Clause',
   'BSD-3-Clause',
 ]);
-// better-sqlite3 is deliberately NOT here: its tarball ships prebuilds/ and
-// lib/binding.js loads them at runtime — no build script is needed, and
-// allowing one would run node-gyp (needs Visual Studio) for nothing.
-const BUILD_SCRIPT_ALLOWLIST = ['electron', 'esbuild'];
+// The local spooler addon is built from source by design (ADR-4): its
+// "install" script runs node-gyp. better-sqlite3 is still deliberately NOT
+// here: its tarball ships prebuilds/ and lib/binding.js loads them at runtime —
+// no build script is needed, and allowing one would run node-gyp (needs
+// Visual Studio) for nothing.
+const BUILD_SCRIPT_ALLOWLIST = ['electron', 'esbuild', 'print-agent-spooler-raw'];
 const EXACT_PIN = /^\d+\.\d+\.\d+$/;
 
 /** SPDX expression check: an OR passes if any branch is fully allowed; every
@@ -40,6 +42,7 @@ export function exactPinViolations(pkg) {
   const violations = [];
   for (const section of ['dependencies', 'devDependencies']) {
     for (const [name, spec] of Object.entries(pkg[section] ?? {})) {
+      if (spec.startsWith('file:')) continue; // in-repo package, pinned by the lockfile
       if (!EXACT_PIN.test(spec)) {
         violations.push({
           rule: 'exact-pin',
