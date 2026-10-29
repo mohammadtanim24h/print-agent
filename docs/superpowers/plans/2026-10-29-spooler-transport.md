@@ -1585,10 +1585,19 @@ New-Item -ItemType Directory -Force -Path (Split-Path $CaptureFile) | Out-Null
 # job, so the (mangling-prone) Generic/Text-Only rendering path is bypassed —
 # the port receives exactly what the agent wrote.
 $portsKey = 'HKLM:\SYSTEM\CurrentControlSet\Control\Print\Monitors\Local Port\Ports'
-New-Item -Path $portsKey -Force | Out-Null
+# Create-only-if-missing: New-Item -Force on an EXISTING key recreates it and
+# wipes all values (including the system's COM1:/LPT1:/FILE: port definitions).
+if (-not (Test-Path $portsKey)) {
+  New-Item -Path $portsKey | Out-Null
+}
+# -Force here only overwrites THIS one value, not the key.
 New-ItemProperty -Path $portsKey -Name $CaptureFile -PropertyType String -Value '' -Force | Out-Null
 Restart-Service Spooler -Force
 
+if (Get-Printer -Name $PrinterName -ErrorAction SilentlyContinue) {
+  Write-Output "'$PrinterName' already exists - removing and recreating it."
+  Remove-Printer -Name $PrinterName
+}
 Add-Printer -Name $PrinterName -DriverName 'Generic / Text Only' -PortName $CaptureFile
 Write-Output "Created '$PrinterName' on file port '$CaptureFile'."
 Write-Output 'Run: pnpm vitest run tests/spooler-raw-capture.test.ts'
