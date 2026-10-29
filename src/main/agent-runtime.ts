@@ -28,6 +28,7 @@ import type { PrinterDraft } from './printers/profile';
 import { createPrinterService, type PrinterService } from './printers/service';
 import { createTransportRegistry } from './transport/registry';
 import type { TransportRegistry } from './transport/registry';
+import { createNativeSpoolerBridge, type SpoolerBridge } from './transport/spooler-native';
 import { createNodeSettingsAdapter } from './services/settings-fs';
 import type { SettingsFileAdapter, SettingsStore } from './services/settings';
 import { getRecentLogLines, type Logger } from './services/logger/logger';
@@ -81,6 +82,8 @@ export interface RuntimeDeps {
     readonly kvOverride?: SecretKv;
     /** Test seam: replaces the default real-socket transport registry. */
     readonly transportsOverride?: TransportRegistry;
+    /** Test seam: replaces the native spooler bridge (default: winspool addon). */
+    readonly spoolerBridgeOverride?: SpoolerBridge;
     /** Test seam: file adapter for the printers store / identity kv (default: node fs). */
     readonly adapterOverride?: SettingsFileAdapter;
     /** Test seam: replaces the default real WSS channel. */
@@ -109,6 +112,8 @@ export interface AgentRuntime {
     update(printerId: string, patch: unknown): Promise<PrinterInfo>;
     remove(printerId: string): Promise<boolean>;
     testPrint(printerId: string): Promise<TestPrintResult>;
+    /** Windows printer names installed on this machine (UI dropdown). */
+    systemPrinters(): Promise<readonly string[]>;
   };
   readonly jobs: {
     list(): readonly JobRecord[];
@@ -167,7 +172,12 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
       log.warn(message);
     },
   });
-  const registry: TransportRegistry = deps.env?.transportsOverride ?? createTransportRegistry();
+  // The bridge dlopen's the winspool addon lazily on its first call, so
+  // constructing it here (tests without the override included) never loads it.
+  const spoolerBridge: SpoolerBridge =
+    deps.env?.spoolerBridgeOverride ?? createNativeSpoolerBridge();
+  const registry: TransportRegistry =
+    deps.env?.transportsOverride ?? createTransportRegistry({ spoolerBridge });
   const printerService: PrinterService = createPrinterService({ store: printers, registry });
   const configStore = createConfigStore(deps.db);
 
@@ -495,6 +505,9 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
   // ---- printers ------------------------------------------------------------
 
   const printersApi = {
+    systemPrinters(): Promise<readonly string[]> {
+      return spoolerBridge.enumerate();
+    },
     list(): readonly PrinterInfo[] {
       return printers.list().map(toPrinterInfo);
     },

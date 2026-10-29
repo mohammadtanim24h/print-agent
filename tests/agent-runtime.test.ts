@@ -25,6 +25,7 @@ import { CloudError } from '../src/main/cloud-client/errors';
 import { generateDeviceKeyPair, signJobForTest } from '../src/main/cloud-client/envelope-sig';
 import { ENVELOPE_VERSION } from '../src/main/cloud-client/schemas';
 import type { TransportRegistry } from '../src/main/transport/registry';
+import type { SpoolerBridge } from '../src/main/transport/spooler-native';
 import { TransportError } from '../src/main/transport/errors';
 import { memoryAdapter } from './helpers/memory-adapter';
 import { makeDraft } from './helpers/printers';
@@ -299,6 +300,7 @@ async function makeRuntime(
     safeStorage?: SafeStorageLike;
     log?: Logger;
     channel?: FakeChannel;
+    spoolerBridge?: SpoolerBridge;
   } = {},
 ): Promise<RuntimeHarness> {
   const db = openDatabase({ file: null });
@@ -334,6 +336,9 @@ async function makeRuntime(
     channelOverride: overrides.channel ?? noopChannel(),
     schedule,
     ...(overrides.fetchOverride !== undefined ? { fetchOverride: overrides.fetchOverride } : {}),
+    ...(overrides.spoolerBridge !== undefined
+      ? { spoolerBridgeOverride: overrides.spoolerBridge }
+      : {}),
   };
   const runtime = await createAgentRuntime({
     db,
@@ -947,5 +952,20 @@ describe('AgentRuntime WSS wiring', () => {
     });
     await runtime.stop();
     expect(channel.stops).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('AgentRuntime system printers (A2)', () => {
+  it('exposes Windows printer names via the injected spooler bridge', async () => {
+    const spoolerBridge = {
+      printerExists: () => Promise.resolve(true),
+      writeRaw: () => Promise.resolve(),
+      enumerate: () => Promise.resolve(['EPSON TM-T20', 'Star TSP143']),
+    };
+    const { runtime } = await makeRuntime({ spoolerBridge });
+    await expect(runtime.printers.systemPrinters()).resolves.toEqual([
+      'EPSON TM-T20',
+      'Star TSP143',
+    ]);
   });
 });
