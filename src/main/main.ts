@@ -200,6 +200,7 @@ async function start(): Promise<void> {
       runtime.printers.remove(printerId),
     [Channel.PrintersTest]: ({ printerId }: { printerId: string }) =>
       runtime.printers.testPrint(printerId),
+    [Channel.PrintersListSystem]: () => runtime.printers.systemPrinters(),
     [Channel.JobsList]: () => runtime.jobs.list(),
     [Channel.JobsRetry]: ({ jobId }: { jobId: string }) => runtime.jobs.retry(jobId),
     [Channel.JobsReprint]: ({ jobId }: { jobId: string }) => runtime.jobs.reprint(jobId),

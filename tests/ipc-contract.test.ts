@@ -37,6 +37,11 @@ describe('ipc contract', () => {
     expect(RequestSchemas[Channel.GetSettings].safeParse(undefined).success).toBe(true);
     expect(RequestSchemas[Channel.GetSettings].safeParse({}).success).toBe(false);
   });
+
+  it('printers:list-system is a no-payload channel', () => {
+    expect(RequestSchemas[Channel.PrintersListSystem].safeParse(undefined).success).toBe(true);
+    expect(RequestSchemas[Channel.PrintersListSystem].safeParse({}).success).toBe(false);
+  });
 });
 
 describe('ipc router', () => {
@@ -196,6 +201,7 @@ describe('wiring-phase channels', () => {
     expect(Channel.PrintersUpdate).toBe('printers:update');
     expect(Channel.PrintersRemove).toBe('printers:remove');
     expect(Channel.PrintersTest).toBe('printers:test');
+    expect(Channel.PrintersListSystem).toBe('printers:list-system');
     expect(Channel.JobsList).toBe('jobs:list');
     expect(Channel.JobsRetry).toBe('jobs:retry');
     expect(Channel.JobsReprint).toBe('jobs:reprint');

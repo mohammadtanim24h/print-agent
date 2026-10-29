@@ -45,6 +45,8 @@ const api = {
     ipcRenderer.invoke(Channel.PrintersRemove, { printerId }),
   testPrint: (printerId: string): Promise<TestPrintResult> =>
     ipcRenderer.invoke(Channel.PrintersTest, { printerId }),
+  listSystemPrinters: (): Promise<readonly string[]> =>
+    ipcRenderer.invoke(Channel.PrintersListSystem),
   getJobs: (): Promise<readonly JobRecord[]> => ipcRenderer.invoke(Channel.JobsList),
   retryJob: (jobId: string): Promise<JobRecord> => ipcRenderer.invoke(Channel.JobsRetry, { jobId }),
   reprintJob: (jobId: string): Promise<JobRecord> =>
