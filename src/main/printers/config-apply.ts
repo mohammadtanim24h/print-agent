@@ -9,9 +9,8 @@ import { isApprovedEndpointHost, type PrinterProfile } from './profile';
  * unmappable entry rejects the whole config (api-contract §4 "applies
  * atomically", §6 "invalid transport address rejected").
  *
- * v1 applies tcp_raw only: spooler_raw arrives with A2 (P7), usb is v1.1.
- * Hostnames are rejected — the approved-destination policy (profile.ts)
- * admits IP literals only; there is no DNS surface in v1.
+ * v1 applies tcp_raw (IP-literal hosts only — no DNS surface) and
+ * spooler_raw (ADR-4 shim). usb remains v1.1 and rejects the whole config.
  */
 
 export type ConfigApplyResult =
@@ -26,16 +25,27 @@ function roleFromStation(station: string): 'kitchen' | 'receipt' | 'bar' | 'cust
 
 function toProfile(pc: PrinterConfig): PrinterProfile | { readonly error: string } {
   if (pc.name === '') return { error: `printer ${pc.printer_id}: empty name` };
-  if (pc.transport.kind !== 'tcp_raw') {
+  if (pc.transport.kind === 'usb') {
     return {
-      error: `printer ${pc.printer_id}: transport ${pc.transport.kind} not applicable in v1 (tcp_raw only)`,
+      error: `printer ${pc.printer_id}: transport usb not applicable in v1 (tcp_raw/spooler_raw only)`,
     };
   }
-  if (isIP(pc.transport.host) === 0) {
-    return { error: `printer ${pc.printer_id}: host must be an IP literal (no DNS in v1)` };
-  }
-  if (!isApprovedEndpointHost(pc.transport.host)) {
-    return { error: `printer ${pc.printer_id}: host is loopback, multicast or otherwise not approved` };
+  let transport: PrinterProfile['transport'];
+  if (pc.transport.kind === 'tcp_raw') {
+    if (isIP(pc.transport.host) === 0) {
+      return { error: `printer ${pc.printer_id}: host must be an IP literal (no DNS in v1)` };
+    }
+    if (!isApprovedEndpointHost(pc.transport.host)) {
+      return {
+        error: `printer ${pc.printer_id}: host is loopback, multicast or otherwise not approved`,
+      };
+    }
+    transport = { kind: 'tcp_raw', host: pc.transport.host, port: pc.transport.port };
+  } else {
+    if (pc.transport.windows_printer_name === '') {
+      return { error: `printer ${pc.printer_id}: empty windows_printer_name` };
+    }
+    transport = { kind: 'spooler_raw', windowsPrinterName: pc.transport.windows_printer_name };
   }
   return {
     printerId: pc.printer_id,
@@ -53,7 +63,7 @@ function toProfile(pc: PrinterConfig): PrinterProfile | { readonly error: string
       statusPolling: pc.status_polling === 'auto',
       cashDrawer: false,
     },
-    transport: { kind: 'tcp_raw', host: pc.transport.host, port: pc.transport.port },
+    transport,
     station: pc.station,
     copiesDefault: pc.copies_default,
     codepage: pc.codepage,

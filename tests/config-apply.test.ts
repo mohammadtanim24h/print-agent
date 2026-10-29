@@ -75,15 +75,52 @@ describe('mapCloudPrinters', () => {
     }
   });
 
-  it('rejects spooler_raw and usb transports (not applicable in v1)', () => {
-    const spooler = mapCloudPrinters(
-      makeConfigUpdate([makePrinterConfig({ transport: { kind: 'spooler_raw', windows_printer_name: 'EPSON TM-T20' } })]),
+  it('maps spooler_raw entries (windows_printer_name → windowsPrinterName)', () => {
+    const result = mapCloudPrinters(
+      makeConfigUpdate([
+        makePrinterConfig({ transport: { kind: 'spooler_raw', windows_printer_name: 'EPSON TM-T20' } }),
+      ]),
     );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.printers[0]?.transport).toEqual({
+      kind: 'spooler_raw',
+      windowsPrinterName: 'EPSON TM-T20',
+    });
+    expect(result.printers[0]?.source).toBe('cloud');
+  });
+
+  it('accepts a mixed tcp_raw + spooler_raw config', () => {
+    const result = mapCloudPrinters(
+      makeConfigUpdate([
+        makePrinterConfig(),
+        makePrinterConfig({
+          printer_id: '018f0000-0000-7000-8000-0000000000c2',
+          transport: { kind: 'spooler_raw', windows_printer_name: 'Star TSP143' },
+        }),
+      ]),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.printers.map((p) => p.transport.kind)).toEqual(['tcp_raw', 'spooler_raw']);
+  });
+
+  it('rejects an empty windows_printer_name', () => {
+    const result = mapCloudPrinters(
+      makeConfigUpdate([
+        makePrinterConfig({ transport: { kind: 'spooler_raw', windows_printer_name: '' } }),
+      ]),
+    );
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain('windows_printer_name');
+  });
+
+  it('still rejects usb transports (not applicable in v1)', () => {
     const usb = mapCloudPrinters(
       makeConfigUpdate([makePrinterConfig({ transport: { kind: 'usb', vid: '04b8', pid: '0202' } })]),
     );
-    expect(spooler.ok).toBe(false);
     expect(usb.ok).toBe(false);
+    if (!usb.ok) expect(usb.reason).toContain('usb');
   });
 
   it('reject-all: any bad entry rejects the whole config', () => {
