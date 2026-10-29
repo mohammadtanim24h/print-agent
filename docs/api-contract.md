@@ -236,10 +236,11 @@ Agent applies atomically on `config_version` increase; acks `config.applied` or
 Agent-side merge policy (v1): profiles are source-tagged `local`/`cloud`; a
 config_update manages only cloud-tagged entries (locally-added printers are
 never removed by the sync). v1 applies `tcp_raw` with IP-literal hosts only
-(no DNS surface) and `spooler_raw` (`windows_printer_name` ≤ 128 chars,
+(no DNS surface) and `spooler_raw` (`windows_printer_name` ≤ 128 UTF-8 bytes,
 non-empty; the printer must be installed on the agent machine at print time —
 otherwise jobs fail with `printer_not_found`). A config containing a hostname,
-`usb` (v1.1) printer, a duplicate `printer_id`, or an empty
+a host on the non-approved list (loopback/multicast), `usb` (v1.1) printer,
+a duplicate `printer_id`, or an empty
 `name`/`windows_printer_name` is rejected whole (nothing applied). A
 `codepage` value is stored as sent but rendering supports
 cp437/cp850 (R-VAL-1).

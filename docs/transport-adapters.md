@@ -43,7 +43,9 @@ and `docs/superpowers/specs/2026-10-29-spooler-transport-design.md`.
 - **Partial-job safety.** A mid-write spooler failure deletes the job
   (`SetJob` JOB_CONTROL_DELETE) — a truncated document never reaches the
   port. Downstream driver buffering remains the R-VAL-4 risk.
-- **Endpoint.** `windowsPrinterName` (1–128 chars) lives in the printer store
+- **Endpoint.** `windowsPrinterName` (1–128 characters in the local profile;
+  the cloud `windows_printer_name` is capped at 128 UTF-8 bytes) lives in the
+  printer store
   like any approved destination. Existence is validated at open/healthCheck
   time by an `OpenPrinterW` probe — printers can be installed/uninstalled
   after pairing, so the schema does not freeze machine state.
