@@ -32,8 +32,14 @@ the acceptance evidence required before ticking.
 
 ### A2. Spooler transport — `spooler_raw` (P7)
 
-- **Status:** open — `transport/registry.ts` implements `tcp_raw` only; the
-  schema accepts `spooler_raw` but no transport exists.
+- **Status:** done — agent side (2026-10-29). Own N-API shim in
+  `native/spooler-raw/` + `transport/spooler-raw.ts` + registry/schema/
+  config-apply support + UI dropdown + `printers:list-system` IPC. Evidence:
+  `tests/spooler-raw.test.ts` (fake bridge), `tests/spooler-native.test.ts`,
+  registry/schema/config-apply/IPC/UI tests, and the opt-in file-port capture
+  `tests/spooler-raw-capture.test.ts` (`scripts/setup-capture-printer.ps1`).
+  Byte-exact-vs-real-hardware evidence remains open as R-VAL-4 (B1); P7's
+  "driver inventory" deliverable also stays with B1.
 - **What:** N-API/FFI shim or `node-thermal-printer` spooler path sending RAW
   datatype to a named Windows printer (`windows_printer_name`), per ADR-4.
   File-port capture tests (ADR-10) instead of driver-dependent assertions.
@@ -134,4 +140,4 @@ the acceptance evidence required before ticking.
 
 ## Suggested order
 
-A3 (parallel with A2) → B2 → B1 → C1 → C2 → C3.
+A3 → B2 → B1 → C1 → C2 → C3.

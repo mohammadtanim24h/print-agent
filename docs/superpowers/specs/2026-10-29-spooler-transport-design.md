@@ -162,3 +162,23 @@ with no hardware (ADR-10 layering).
 - Spooler driver auto-install/detection.
 - Cloud-side UI for spooler printers (Laravel's concern; the agent now
   accepts §4 `spooler_raw` entries).
+
+## As-built deviations (2026-10-29)
+
+- **`printerExists` probe is narrow.** Only Windows errors 2
+  (ERROR_FILE_NOT_FOUND) and 1801 (ERROR_INVALID_PRINTER_NAME) return
+  `false` → `printer_not_found`. Any other `OpenPrinterW` failure (access
+  denied, spooler stopped) **throws** from the addon and maps to
+  `write_failed`, not `printer_not_found` — §2's blanket wording was too
+  broad.
+- **Mid-write failures delete the spooler job.** If `WritePrinter` fails
+  mid-document, the shim captures the job id and issues
+  `SetJob(JOB_CONTROL_DELETE)` — a partial document is never dispatched.
+  Not in the original flow; a partial-job-safety guarantee.
+- **`enumeratePrinters` is synchronous.** EnumPrintersW runs on the calling
+  thread, unlike the AsyncWorker-backed write — a stalled spooler service
+  would block the main-process event loop. AsyncWorker migration is the
+  noted follow-up (transport-adapters.md).
+- **Spooler awaits are unbounded by design.** The call is in-process; a
+  timeout could not un-spool a job and would invent ambiguity semantics.
+  The job engine's own timeouts govern the workflow.
