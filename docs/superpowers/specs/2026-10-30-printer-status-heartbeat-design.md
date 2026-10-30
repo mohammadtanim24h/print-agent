@@ -55,8 +55,8 @@ read 1 byte → destroy. Pure exported parser
 
 - printer byte bit 5 (0x20, error) → `'offline'`; bit 2 (0x04, cover) →
   `'cover_open'`
-- paper byte: out bits (0x60) → `'paper_out'`; near-end bits (0x0C) →
-  `'paper_low'`
+- paper byte: out bits (bits 3–5, mask 0x38) → `'paper_out'`; near-end bits
+  (bits 0–2, mask 0x07) → `'paper_low'`
 - severity precedence: `paper_out > cover_open > paper_low > ok`
 
 Bit semantics follow the ESC/POS R&P spec; exact fleet behavior is precisely
