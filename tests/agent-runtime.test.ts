@@ -957,3 +957,95 @@ describe('AgentRuntime system printers (A2)', () => {
     ]);
   });
 });
+
+// ---- printer status polling (C1) ------------------------------------------------
+
+/** Factory so a rejected probe creates a FRESH rejected promise per call — a
+ *  single shared rejected promise would trip vitest's unhandled-rejection
+ *  detection before the poller ever attaches its handler. */
+function statusTransports(
+  answer: () => Promise<readonly [number, number]>,
+): TransportRegistry {
+  return {
+    forPrinter: () => ({
+      open: () => Promise.resolve(),
+      write: () => Promise.resolve(),
+      close: () => Promise.resolve(),
+      healthCheck: () => Promise.resolve(),
+      status: () => answer(),
+    }),
+  };
+}
+
+describe('AgentRuntime printer status polling (C1)', () => {
+  it('heartbeat reports cached DLE EOT status for gated printers', async () => {
+    const { runtime, transport } = await makeRuntime({
+      transports: statusTransports(() => Promise.resolve([0x12, 0x00] as const)),
+    });
+    runtime.start();
+    expect((await runtime.pair(PAIRING_CODE)).ok).toBe(true);
+    await runtime.printers.add(makeDraft({ statusPolling: 'auto', name: 'Kitchen-1' }));
+
+    await vi.waitFor(
+      () => {
+        const sample = transport.heartbeats.at(-1);
+        expect(sample?.printers[0]).toMatchObject({ health: 'ok' });
+      },
+      { timeout: 2_000 },
+    );
+  });
+
+  it('ungated printers keep reporting unknown', async () => {
+    const { runtime, transport } = await makeRuntime({
+      transports: statusTransports(() => Promise.resolve([0x12, 0x00] as const)),
+    });
+    runtime.start();
+    expect((await runtime.pair(PAIRING_CODE)).ok).toBe(true);
+    await runtime.printers.add(makeDraft({ name: 'Kitchen-2' })); // statusPolling unset
+
+    await vi.waitFor(
+      () => {
+        const sample = transport.heartbeats.at(-1);
+        expect(sample?.printers[0]).toMatchObject({ health: 'unknown' });
+      },
+      { timeout: 2_000 },
+    );
+  });
+
+  it('an unreachable gated printer reports offline (connect-class mapping)', async () => {
+    const { runtime, transport } = await makeRuntime({
+      transports: statusTransports(() =>
+        Promise.reject(new TransportError('connect_refused', 'refused')),
+      ),
+    });
+    runtime.start();
+    expect((await runtime.pair(PAIRING_CODE)).ok).toBe(true);
+    await runtime.printers.add(makeDraft({ statusPolling: 'auto', name: 'Kitchen-3' }));
+
+    await vi.waitFor(
+      () => {
+        const sample = transport.heartbeats.at(-1);
+        expect(sample?.printers[0]).toMatchObject({ health: 'offline' });
+      },
+      { timeout: 2_000 },
+    );
+  });
+
+  it('stop() halts cleanly after status polling ran', async () => {
+    const { runtime, transport } = await makeRuntime({
+      transports: statusTransports(() => Promise.resolve([0x12, 0x00] as const)),
+    });
+    runtime.start();
+    expect((await runtime.pair(PAIRING_CODE)).ok).toBe(true);
+    await runtime.printers.add(makeDraft({ statusPolling: 'auto', name: 'Kitchen-4' }));
+    await vi.waitFor(() => {
+      expect(transport.heartbeats.length).toBeGreaterThanOrEqual(1);
+    });
+    await runtime.stop();
+    // stop() intentionally keeps the last connection state; the observable
+    // halt is that no further heartbeat cycles reach the wire.
+    const atStop = transport.heartbeats.length;
+    await new Promise((resolve) => setTimeout(resolve, 60)); // several poll cadences
+    expect(transport.heartbeats.length).toBe(atStop);
+  });
+});

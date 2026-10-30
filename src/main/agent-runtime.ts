@@ -24,6 +24,7 @@ import type { AckSink } from './jobs/types';
 import { createPrinterStore, type PrinterStore } from './printers/store';
 import type { PrinterDraft } from './printers/profile';
 import { createPrinterService, type PrinterService } from './printers/service';
+import { createStatusPoller, type StatusPoller } from './printers/status-poller';
 import { createTransportRegistry } from './transport/registry';
 import type { TransportRegistry } from './transport/registry';
 import { createNativeSpoolerBridge, type SpoolerBridge } from './transport/spooler-native';
@@ -176,6 +177,20 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
   const printerService: PrinterService = createPrinterService({ store: printers, registry });
   const configStore = createConfigStore(deps.db);
 
+  // Printer status polling (C1, R-VAL-3-gated): background DLE EOT probes
+  // feeding the heartbeat `health` and ack `printer_status`. With no gated
+  // printers this is an inert timer; ungated and spooler printers report
+  // 'unknown' as before.
+  const statusPoller: StatusPoller = createStatusPoller({
+    printers,
+    registry,
+    now,
+    schedule,
+    log: (message) => {
+      log.warn(message);
+    },
+  });
+
   // Ack flow: engine → buffer → client. The buffer is created before the
   // client and reaches it through this forward reference (the first submit
   // only happens after start()/pair(), both post-construction).
@@ -199,6 +214,7 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
     printers,
     transports: registry,
     acks: ackSink,
+    printerStatus: (printerId) => statusPoller.get(printerId),
     now,
     // The engine's schedule seam returns void; the env seam returns a cancel fn.
     schedule: (fn, delayMs) => {
@@ -323,6 +339,7 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
   function start(): void {
     if (started) return;
     started = true;
+    statusPoller.start(); // unconditional: gating is per-printer, no gated printers = inert timer
     engine.recover(); // crash recovery BEFORE the first poll (architecture §5)
     // Pre-flight the identity read: the poller's start() calls secrets.load()
     // too, and CloudError('secure_storage_unavailable') (e.g. a DPAPI decrypt
@@ -358,6 +375,7 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
     if (!started) return;
     started = false;
     client.stop();
+    statusPoller.stop();
     await ackBuffer.stop(); // best-effort final flush; never blocks on a dead network
   }
 
@@ -373,6 +391,7 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
     wipeGeneration += 1;
     await applyChain.catch(() => undefined);
     try {
+      statusPoller.stop();
       client.stop();
       secrets.clear();
       jobStore.clearJobs();
@@ -420,6 +439,7 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
       const identity = await client.pair({ pairingCode: code, deviceName });
       const pairedAt = new Date(now()).toISOString();
       await deps.settings.set({ pairedAt });
+      statusPoller.start(); // idempotent: covers a runtime that booted unpaired
       fetchConfigOnce(); // fire-and-forget; the fleet also arrives via poll/push
       return { ok: true, identity: toAgentIdentity(identity, pairedAt) };
     } catch (err) {
@@ -463,8 +483,8 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
     return { name: 'print-agent', version: deps.agentVersion, connectionState: state };
   }
 
-  /** §3.2 in-cycle heartbeat facts; health stays 'unknown' until status
-   *  polling lands (R-VAL-3). */
+  /** §3.2 in-cycle heartbeat facts; health comes from the C1 status poller's
+   *  TTL cache ('unknown' unless the printer opts in via statusPolling). */
   function heartbeatSample(): HeartbeatSample {
     return {
       uptime_s: Math.floor(process.uptime()),
@@ -472,7 +492,7 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
       connection: 'poll',
       printers: printers.list().map((p) => ({
         printer_id: p.printerId,
-        health: 'unknown' as const,
+        health: statusPoller.get(p.printerId),
       })),
     };
   }
