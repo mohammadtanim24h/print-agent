@@ -90,11 +90,13 @@ the acceptance evidence required before ticking.
 
 ### B2. Windows release smoke train
 
-- **Status:** open for the WSS changes (v0.1.1 predates them).
+- **Status:** open — v0.1.1 predates A1 (config apply), A2 (spooler
+  transport) and the polling-first / 3 s cadence changes (A3 descope).
 - **What:** package the current main (electron-builder NSIS, unsigned manual
   distribution per ADR-14), install/upgrade smoke on Win10 19045 and Win11;
-  verify pairing → WSS connect → test print → revoke wipe. Run the ops §6
-  checklist and the no-listen smoke on the packaged build.
+  verify pairing → cloud poll → test print (tcp_raw + spooler_raw) → revoke
+  wipe. Run the ops §6 checklist and the no-listen smoke on the packaged
+  build.
 - **Closes with:** checklist results recorded in `docs/operations.md` §6 for
   this release train.
 
@@ -130,8 +132,9 @@ the acceptance evidence required before ticking.
 - **Status:** open — final P10 exit.
 - **What:** 2–3 restaurants on a packaged build; watch `last_seen_at`
   online-staleness alerts, ack result distribution (`applied|duplicate|
-  stale|not_found|rejected`), ambiguous-job rate, WSS reconnect churn.
-  Define abort/rollback criteria before starting.
+  stale|not_found|rejected`), ambiguous-job rate, poll backoff churn
+  (REST cycle failure rate). Define abort/rollback criteria before
+  starting.
 - **Depends on:** A1, A2, B1, B2, C1, C2.
 - **Closes with:** PRD §8 success metrics met during the pilot window.
 
