@@ -135,7 +135,14 @@ the acceptance evidence required before ticking.
 
 ### C2. Load burst test (R-VAL-6)
 
-- **Status:** open.
+- **Status:** CI burst test done (2026-10-30) — `tests/burst-load.test.ts`:
+  10 signed envelopes delivered in one poll response across two tcp_raw
+  printers (5+5), asserting per-printer FIFO order (decoded ESC/POS output),
+  full ack drain (accepted + completed for every burst job id), zero
+  ambiguous/failed/rejected, and queue depth back to 0. Shared runtime
+  harness extracted to `tests/helpers/runtime-harness.ts`. Still open: the
+  recorded run against staging — blocked on the staging backend (same
+  blocker as B2).
 - **What:** 10 jobs in 5 s through the engine over the poll delivery path:
   no ordering regressions, ack buffer drains, ambiguous-rate stays zero.
   (WSS push path descoped with A3; if WSS is ever revived, add its burst
