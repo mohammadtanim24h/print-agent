@@ -128,10 +128,28 @@ export function createStatusPoller(deps: StatusPollerDeps): StatusPoller {
   }
 
   function tick(): void {
-    for (const p of deps.printers.list()) {
-      if (statusPollingEnabled(p)) pollOne(p.printerId, p);
+    try {
+      const live = new Set<string>();
+      for (const p of deps.printers.list()) {
+        live.add(p.printerId);
+        if (statusPollingEnabled(p)) pollOne(p.printerId, p);
+      }
+      // A removed printer's stale status must not stay readable via get()
+      // for a TTL window; drop its entry this cycle (inFlight defensively,
+      // same rule).
+      for (const id of cache.keys()) {
+        if (!live.has(id)) cache.delete(id);
+      }
+      for (const id of inFlight) {
+        if (!live.has(id)) inFlight.delete(id);
+      }
+    } catch (err) {
+      // Same posture as the job engine's scheduleSafely: a failing store or
+      // transport seam must not kill the loop uncaught inside a timer context.
+      log(`status poller: cycle failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      rearm();
     }
-    rearm();
   }
 
   function rearm(): void {

@@ -281,4 +281,37 @@ describe('createStatusPoller', () => {
     expect(fake.count()).toBe(1); // one immediate cycle, one timer
     poller.stop();
   });
+
+  it('prunes cache entries for printers removed from the store', async () => {
+    const printers = await makeStore('auto');
+    const profile = printers.list()[0];
+    if (profile === undefined) throw new Error('unreachable: test printer missing');
+    const fake = fakeRegistry(() => Promise.resolve([0x12, 0x00] as const));
+    const timer = manualSchedule();
+    const poller = createStatusPoller({ printers, registry: fake.registry, schedule: timer.schedule });
+
+    poller.start();
+    await drained();
+    expect(poller.get(profile.printerId)).toBe('ok');
+
+    expect(await printers.remove(profile.printerId)).toBe(true);
+    await timer.tick();
+    await drained();
+    expect(poller.get(profile.printerId)).toBe('unknown');
+    poller.stop();
+  });
+
+  it('a plain (non-TransportError) rejection caches unknown, not offline', async () => {
+    const printers = await makeStore('auto');
+    const profile = printers.list()[0];
+    if (profile === undefined) throw new Error('unreachable: test printer missing');
+    const fake = fakeRegistry(() => Promise.reject(new Error('boom')));
+    const timer = manualSchedule();
+    const poller = createStatusPoller({ printers, registry: fake.registry, schedule: timer.schedule });
+
+    poller.start();
+    await drained();
+    expect(poller.get(profile.printerId)).toBe('unknown');
+    poller.stop();
+  });
 });
