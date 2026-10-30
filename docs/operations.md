@@ -170,6 +170,23 @@ re-run `pnpm release` (it would skip a version): push manually with
 `git push origin main vX.Y.Z`, or undo locally (`git tag -d vX.Y.Z` +
 `git reset --hard HEAD~1`) and retry.
 
+### Release-train smoke records
+
+- **2026-10-30 (pre-0.1.2 smoke of current main, post-A1/A2/polling):**
+  - CI green on `main` (run 41011166433). Note: runners are pinned to
+    `windows-2022` — `windows-latest` moved to a VS2026 image that the
+    node-gyp bundled with pnpm cannot detect, breaking the
+    `print-agent-spooler-raw` install script (fixed in 764cc74).
+  - Local NSIS package of current main built clean
+    (`dist-release/PrintAgent-Setup-0.1.1.exe`, unsigned per ADR-14).
+  - No-listen smoke on the packaged exe: **PASS** (4 processes, zero LISTEN
+    sockets, AC-4).
+  - Open on this train: item 4 (production API URL still the placeholder —
+    blocks cutting the tagged release), item 8 (spooler RAW capture run —
+    needs an elevated shell), the NSIS install/upgrade smoke on Win10 19045 +
+    Win11 23H2, and the functional pairing → poll → test print → revoke
+    pass (blocked on a staging backend).
+
 ## 7. Support data retention
 
 - Agent local logs: 14 days rolling, PII-redacted (threat T7).

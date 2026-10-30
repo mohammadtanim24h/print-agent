@@ -90,8 +90,17 @@ the acceptance evidence required before ticking.
 
 ### B2. Windows release smoke train
 
-- **Status:** open — v0.1.1 predates A1 (config apply), A2 (spooler
-  transport) and the polling-first / 3 s cadence changes (A3 descope).
+- **Status:** partially closed (2026-10-30). CI green on `main` (run
+  41011166433) after pinning runners to `windows-2022` — `windows-latest`
+  moved to a VS2026 image that the node-gyp bundled with pnpm cannot detect,
+  breaking the `print-agent-spooler-raw` CI build (764cc74). Local NSIS
+  package of current main built clean; no-listen smoke on the packaged exe
+  PASSED (operations.md §6 smoke records). Still open: NSIS install/upgrade
+  smoke on Win10 19045 + Win11 23H2; the functional pairing → poll → test
+  print (tcp_raw + spooler_raw) → revoke wipe pass (blocked on a staging
+  backend); ops §6 item 8 spooler capture run (needs elevation); ops §6
+  item 4 — the production API URL is still the placeholder, which blocks
+  cutting the tagged release this train would smoke.
 - **What:** package the current main (electron-builder NSIS, unsigned manual
   distribution per ADR-14), install/upgrade smoke on Win10 19045 and Win11;
   verify pairing → cloud poll → test print (tcp_raw + spooler_raw) → revoke
