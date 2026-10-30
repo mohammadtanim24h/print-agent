@@ -3,6 +3,7 @@ import { renderDoc } from '../render/render';
 import { renderProfileFromPrinterConfig } from '../render/profile';
 import type { PrinterStore } from '../printers/store';
 import type { TransportRegistry } from '../transport/registry';
+import type { PrinterStatus } from '../transport/types';
 import { StoreError } from '../local-store/errors';
 import {
   isTerminal,
@@ -42,6 +43,8 @@ export interface JobEngineDeps {
   /** Replaceable timer for deterministic tests; default setTimeout. */
   readonly schedule?: (fn: () => void, delayMs: number) => void;
   readonly limits?: Partial<EngineLimits>;
+  /** C1: best-effort cached printer status for acks; omitted → always 'unknown'. */
+  readonly printerStatus?: (printerId: string) => PrinterStatus;
 }
 
 export interface JobEngine {
@@ -83,6 +86,8 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
     });
   const { store, printers, acks } = deps;
   const transports = deps.transports;
+  const statusFor: (printerId: string) => PrinterStatus =
+    deps.printerStatus ?? ((): PrinterStatus => 'unknown');
 
   /** Per-printer FIFO of queued job ids (priority-ordered). */
   const pending = new Map<string, string[]>();
@@ -99,7 +104,7 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
     const ack: JobAck = {
       jobId: row.id,
       status,
-      printerStatus: 'unknown',
+      printerStatus: statusFor(row.printerId),
       printed: false,
       attempt: Math.max(row.attempts, 1),
       at: new Date(now()).toISOString(),
@@ -113,7 +118,7 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
     return {
       jobId: job.jobId,
       status: 'rejected',
-      printerStatus: 'unknown',
+      printerStatus: statusFor(job.printerId),
       printed: false,
       attempt: 1,
       at: new Date(now()).toISOString(),
@@ -126,7 +131,7 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
     return {
       jobId: row.id,
       status,
-      printerStatus: 'unknown',
+      printerStatus: statusFor(row.printerId),
       printed: false,
       attempt: Math.max(row.attempts, 1),
       at: new Date(now()).toISOString(),
@@ -139,7 +144,7 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
     const plain = (status: AckStatus): JobAck => ({
       jobId: row.id,
       status,
-      printerStatus: 'unknown',
+      printerStatus: statusFor(row.printerId),
       printed: false,
       attempt: Math.max(row.attempts, 1),
       at: new Date(now()).toISOString(),

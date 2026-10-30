@@ -71,3 +71,30 @@ describe('engine execution', () => {
     }
   });
 });
+
+describe('engine acks — printer status (C1)', () => {
+  it('acks carry the injected cached status at ack-build time', async () => {
+    const transports = new FakeTransportRegistry();
+    const h = await makeHarness({ transports, printerStatus: () => 'paper_low' });
+    try {
+      h.engine.submit(makeJob(h.printerId));
+      await drained();
+      expect(h.acks.length).toBeGreaterThan(0);
+      for (const a of h.acks) expect(a.printerStatus).toBe('paper_low');
+    } finally {
+      h.dispose();
+    }
+  });
+
+  it('without the injection acks stay unknown (back-compat)', async () => {
+    const transports = new FakeTransportRegistry();
+    const h = await makeHarness({ transports });
+    try {
+      h.engine.submit(makeJob(h.printerId));
+      await drained();
+      for (const a of h.acks) expect(a.printerStatus).toBe('unknown');
+    } finally {
+      h.dispose();
+    }
+  });
+});

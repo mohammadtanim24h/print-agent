@@ -4,6 +4,7 @@ import { createSqliteJobStore } from '../../src/main/local-store/job-store';
 import type { JobStore } from '../../src/main/local-store/job-store';
 import { createPrinterStore } from '../../src/main/printers/store';
 import type { TransportRegistry } from '../../src/main/transport/registry';
+import type { PrinterStatus } from '../../src/main/transport/types';
 import { createJobEngine } from '../../src/main/jobs/engine';
 import type { JobEngine } from '../../src/main/jobs/engine';
 import type { EngineLimits, JobAck, PrintJobInput } from '../../src/main/jobs/types';
@@ -38,6 +39,8 @@ export interface HarnessOptions {
   readonly printerCount?: number;
   /** Test hook for fault injection (e.g. a store whose insert throws). */
   readonly wrapStore?: (base: JobStore) => JobStore;
+  /** C1 seam: cached printer status source for acks (default: always 'unknown'). */
+  readonly printerStatus?: (printerId: string) => PrinterStatus;
 }
 
 let printerCounter = 0;
@@ -85,6 +88,7 @@ export async function makeHarness(options: HarnessOptions = {}): Promise<Harness
     now,
     schedule,
     limits: options.limits ?? {},
+    ...(options.printerStatus !== undefined ? { printerStatus: options.printerStatus } : {}),
   });
   return {
     engine,
