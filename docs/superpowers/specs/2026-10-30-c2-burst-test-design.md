@@ -57,7 +57,11 @@ in `agent-runtime.test.ts` (only used there).
   (same pattern as the existing "a polled signed job becomes an engine row"
   test).
 - **Config:** `makeConfig(1, { printers: [printerA, printerB] })` — two
-  `tcp_raw` printers, `status_polling: 'off'`.
+  `tcp_raw` printers with the harness-default `status_polling: 'auto'`
+  (production default; hermetic here since the fake printer transport's
+  `healthCheck` resolves instantly). Amended from the original `'off'` at
+  final review — running the C1 status poller concurrently with the burst
+  drain is the more production-realistic scenario.
 - **Jobs:** 10 signed envelopes via `makeSignedEnvelope`, unique `job_id`s,
   alternating `printer_id` (A/B), payload line embedding the per-printer
   sequence number (e.g. `JOB-A-1`…`JOB-A-5`) for order decoding.
