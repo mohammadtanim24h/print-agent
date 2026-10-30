@@ -171,7 +171,7 @@ the acceptance evidence required before ticking.
 | USB transport | ADR-4, R-VAL-5 | v1.1 scope |
 | WSS proxy support | — | Polling fallback covers proxied networks; revisit on pilot feedback |
 | Reconnect/dial counters in diagnostics UI | — | Nice-to-have observability; no contract surface yet |
-| Concurrent-write hardening for `writeAtomic` | settings-fs.ts fixed `.tmp` path | Bounded, recoverable (failed rename logged; next apply self-heals); revisit before pilot if concurrent-writer count grows |
+| Concurrent-write hardening for `writeAtomic` | settings-fs.ts fixed `.tmp` path | Done (2026-10-30) — per-path write queue + unique tmp names + crash-orphan sweep + EPERM/EBUSY rename retry; evidence `tests/settings-fs.test.ts`, spec `docs/superpowers/specs/2026-10-30-writeatomic-hardening-design.md` |
 
 ---
 

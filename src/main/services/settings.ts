@@ -7,7 +7,12 @@ import { AppSettingsSchema, type AppSettings } from '../../shared/ipc-contract';
  */
 export interface SettingsFileAdapter {
   read(path: string): Promise<string | null>;
-  /** tmp-file + rename under the hood; either old or new content survives crashes. */
+  /**
+   * tmp-file + rename under the hood; either old or new content survives
+   * crashes. Concurrent writes to the same path serialize in call order —
+   * the last-issued write wins (settings-fs.ts queue + unique tmp names).
+   * Callers must address each file by one canonical path string.
+   */
   writeAtomic(path: string, contents: string): Promise<void>;
 }
 

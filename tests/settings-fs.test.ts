@@ -105,4 +105,13 @@ describe('node settings adapter writeAtomic (concurrent-write hardening)', () =>
     await adapter.writeAtomic(path, '{"ok":1}');
     expect(readdirSync(dir).sort()).toEqual(['mine.json', 'other.json.xyz.tmp']);
   });
+
+  it('exhausts retryable rename attempts, propagates the error, cleans its tmp', async () => {
+    const path = join(dir, 'exhaust.json');
+    const adapter = createNodeSettingsAdapter({
+      rename: () => Promise.reject(Object.assign(new Error('held by scanner'), { code: 'EBUSY' })),
+    });
+    await expect(adapter.writeAtomic(path, '{"x":1}')).rejects.toThrow('held by scanner');
+    expect(readdirSync(dir).filter((f) => f.endsWith('.tmp'))).toEqual([]);
+  });
 });
