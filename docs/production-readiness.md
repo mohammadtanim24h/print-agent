@@ -52,14 +52,15 @@ the acceptance evidence required before ticking.
 - **Status:** descoped (2026-10-30). A WebSocket endpoint cannot run in
   php-fpm request workers — it requires a long-running daemon plus a
   WS-upgrade proxy, new deployment infrastructure the Laravel side declined.
-  Polling at the amended ~4 s cadence (agent default since 2026-10-30,
-  `poller.ts`) yields worst-case job latency ≈ 4 s — imperceptible for
-  counter receipts, and there was no sub-second delivery requirement.
-  ~30 req/min/device against the 120/min rate limit at 1–3 agents per
-  single-restaurant deployment is negligible load. The agent ships the full
-  WSS client dormant and adopts the socket automatically if the server ever
-  implements it; spec and acceptance criteria (§1, §6 WSS rows) retained
-  there for that eventuality. Nothing left to do on either side for v1.
+  Polling at the amended ~3 s cadence (agent default, `poller.ts`) yields
+  worst-case job latency ≈ 3 s — imperceptible for counter receipts, and
+  there was no sub-second delivery requirement. ~40 req/min/device against
+  the 120/min rate limit at 1–3 agents per single-restaurant deployment is
+  negligible load. The agent is **polling-first**: the runtime constructs no
+  WSS channel and never dials `wss://`; the ADR-15 client stays in-tree
+  unwired (revival = server endpoint + re-wiring the agent's channel). Spec
+  and acceptance criteria (§1, §6 WSS rows) retained there for that
+  eventuality. Nothing left to do on either side for v1.
 - **What (retained for a future revival):** implement
   `wss://<host>/agent/v1/ws` per `docs/api-contract.md` §1 as amended
   2026-10-30: token auth on upgrade (401 on bad token), close `4401` for auth

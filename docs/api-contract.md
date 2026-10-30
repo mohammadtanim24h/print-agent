@@ -12,10 +12,11 @@ rejected, not ignored, within `data` payloads (envelope may gain additive fields
   **Amended 2026-10-30: server-side WSS is DEFERRED — REST polling is the v1 delivery
   path** (§7 amendment). A WebSocket endpoint cannot run in php-fpm request workers
   (it requires a long-running daemon + WS-upgrade proxy), and polling at the amended
-  ~4 s cadence gives counter-imperceptible delivery latency at this fleet's scale
-  (single-restaurant deployments, 1–3 agents). The agent ships the full WSS client
-  (ADR-15) and uses it automatically if the server ever implements the endpoint —
-  no agent change or protocol change is needed then. The §6 WSS matrix rows remain
+  ~3 s cadence gives counter-imperceptible delivery latency at this fleet's scale
+  (single-restaurant deployments, 1–3 agents). The agent is **polling-first**: it
+  constructs no socket and never dials `wss://`. The WSS client (ADR-15) remains
+  in-tree, unwired; reviving WSS = implementing the server endpoint per §1/§6 and
+  re-wiring the agent's channel (no protocol change). The §6 WSS matrix rows remain
   the acceptance checklist for that future work. Contract details below are retained
   normative for that eventuality. The agent connects after pairing, sends §3.2
   heartbeats, and receives §2/§3.5/§4 envelopes. **Acks stay on REST (§3.3):** no WSS
@@ -153,10 +154,10 @@ Missed heartbeats (≥ 3) mark the agent `offline` server-side.
 **§7 note 7 supersedes the miss counter:** offline = no heartbeat for > 90 s
 (`last_seen_at` staleness).
 **Amended 2026-10-30 (polling mode):** with WSS deferred, polling-mode agents
-run the job poll every **~4 s ± 10 % jitter** and piggyback the §3.2 heartbeat
-on each cycle via `POST /heartbeat` (`connection: "poll"`) — ~30 req/min per
+run the job poll every **~3 s ± 10 % jitter** and piggyback the §3.2 heartbeat
+on each cycle via `POST /heartbeat` (`connection: "poll"`) — ~40 req/min per
 device total, within the §7.1 rate limit. The > 90 s staleness rule is
-unchanged (a 4 s cadence only makes it sharper). WSS-connected agents keep the
+unchanged (a 3 s cadence only makes it sharper). WSS-connected agents keep the
 ~30 s socket heartbeat cadence.
 
 ### 3.3 REST endpoints (fallback + control plane)
@@ -298,11 +299,11 @@ replace `POST /heartbeat` while the socket is healthy.
 **2026-10-30 amendment (supersedes the 2026-10-27 amendment):** server-side WSS is
 **deferred** — a socket endpoint cannot run in php-fpm (long-running daemon + proxy
 required) and was descoped as unjustified infra for this fleet. **REST polling is
-the v1 delivery path**, now at a ~4 s ± 10 % healthy cadence (§3.2 amendment;
-worst-case job latency ≈ 4 s, ~30 req/min/device vs the 120/min §7.1 limit). The
-agent retains its full WSS client (dormant; §1 semantics unchanged for a future
-server implementation). `POST /heartbeat` and the pull-claim (§7 note 6) remain
-the operative server surface.
+the v1 delivery path**, now at a ~3 s ± 10 % healthy cadence (§3.2 amendment;
+worst-case job latency ≈ 3 s, ~40 req/min/device vs the 120/min §7.1 limit). The
+agent is polling-first — its WSS client (ADR-15) stays in-tree unwired; §1
+semantics are unchanged for a future server implementation. `POST /heartbeat`
+and the pull-claim (§7 note 6) remain the operative server surface.
 
 1. **Restaurant identity** — deployments are single-restaurant. A stable
    `restaurant_uid` (UUIDv7, server-minted on the singleton `restaurant_settings`

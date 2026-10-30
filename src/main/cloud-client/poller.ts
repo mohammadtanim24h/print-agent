@@ -60,13 +60,13 @@ export interface PollingClientDeps {
 
 /**
  * Polling is the v1 delivery path (WSS deferred server-side — api-contract §7,
- * amended 2026-10-30). ~4 s keeps worst-case job latency imperceptible at the
- * counter while each cycle carries a piggybacked heartbeat: 2 req / ~4 s ≈
- * 30 req/min per device, well inside the 120 req/min device rate limit
+ * amended 2026-10-30). ~3 s keeps worst-case job latency imperceptible at the
+ * counter while each cycle carries a piggybacked heartbeat: 2 req / ~3 s ≈
+ * 40 req/min per device, well inside the 120 req/min device rate limit
  * (contract §7.1). Single-restaurant deployments hold 1–3 agents, so the
  * server-side cost of the shorter cadence is negligible.
  */
-const DEFAULT_POLL_INTERVAL_MS = 4_000;
+const DEFAULT_POLL_INTERVAL_MS = 3_000;
 const DEFAULT_SAFETY_POLL_INTERVAL_MS = 5 * 60_000;
 const DEFAULT_REFRESH_COOLDOWN_MS = 30_000;
 const MAX_BACKOFF_MS = 10 * 60_000;

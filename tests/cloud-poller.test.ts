@@ -644,12 +644,12 @@ describe('acks and heartbeat', () => {
     }
   });
 
-  it('default cadence is ~4 s (v1 polling transport — §7 amendment 2026-10-30)', async () => {
+  it('default cadence is ~3 s (v1 polling transport — §7 amendment 2026-10-30)', async () => {
     // No explicit pollIntervalMs: the composition root relies on the default.
     for (const [randomValue, expected] of [
-      [0, 3_600],
-      [0.5, 4_000],
-      [1, 4_400],
+      [0, 2_700],
+      [0.5, 3_000],
+      [1, 3_300],
     ] as const) {
       const scheduler = new ManualScheduler();
       const secrets = createSafeStorageSecretStore(new MemoryKvAdapter(), new FakeSafeStorage());

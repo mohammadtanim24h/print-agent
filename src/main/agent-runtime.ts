@@ -2,7 +2,6 @@ import { hostname, release, type } from 'node:os';
 import { statSync } from 'node:fs';
 import { createPollingCloudClient } from './cloud-client/poller';
 import { createHttpTransport } from './cloud-client/http-transport';
-import { createWssChannel, deriveWssUrl } from './cloud-client/ws-channel';
 import {
   createSafeStorageSecretStore,
   type IdentitySecrets,
@@ -19,7 +18,6 @@ import type {
   CloudClient,
   ConnectionState,
   HeartbeatSample,
-  WssChannelLike,
 } from './cloud-client/types';
 import { createJobEngine, type JobEngine } from './jobs/engine';
 import type { AckSink } from './jobs/types';
@@ -74,7 +72,6 @@ export interface RuntimeDeps {
   readonly cloud: {
     readonly baseUrl: string;
     readonly pollIntervalMs?: number;
-    readonly safetyPollIntervalMs?: number;
   };
   /** Test seams; defaults are the real implementations. */
   readonly env?: {
@@ -86,8 +83,6 @@ export interface RuntimeDeps {
     readonly spoolerBridgeOverride?: SpoolerBridge;
     /** Test seam: file adapter for the printers store / identity kv (default: node fs). */
     readonly adapterOverride?: SettingsFileAdapter;
-    /** Test seam: replaces the default real WSS channel. */
-    readonly channelOverride?: WssChannelLike;
     readonly now?: () => number;
     /** Returns a cancel function (poller/ack-buffer seam); the engine's void-returning seam is adapted. */
     readonly schedule?: (fn: () => void, delayMs: number) => () => void;
@@ -211,29 +206,11 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
     },
   });
 
-  // Outbound-only WSS push channel (contract §1); the poller keeps REST as the
-  // safety net. readIdentity/heartbeatSample are hoisted function declarations —
-  // the closures only fire at dial/heartbeat time, after construction.
-  const channel: WssChannelLike =
-    deps.env?.channelOverride ??
-    createWssChannel({
-      url: deriveWssUrl(deps.cloud.baseUrl),
-      agentVersion: deps.agentVersion,
-      getAuth: () => {
-        const identity = readIdentity();
-        return identity === null
-          ? null
-          : { deviceId: identity.deviceId, deviceToken: identity.deviceToken };
-      },
-      heartbeatSample: () => heartbeatSample(),
-      log: (message) => {
-        log.info(message);
-      },
-      now,
-      schedule,
-      random,
-    });
-
+  // Polling-first: REST polling at the healthy cadence is the v1 delivery
+  // path (api-contract §7, amended 2026-10-30). The WSS push channel stays
+  // unwired — the client is created with no `channel`, so the agent never
+  // dials `wss://` and the heartbeat piggybacks every poll cycle. Reviving
+  // WSS = constructing a channel here and passing it to the poller (§1).
   client = createPollingCloudClient({
     transport,
     secrets,
@@ -244,12 +221,8 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
     now,
     schedule,
     random,
-    channel,
     ...(deps.cloud.pollIntervalMs !== undefined
       ? { pollIntervalMs: deps.cloud.pollIntervalMs }
-      : {}),
-    ...(deps.cloud.safetyPollIntervalMs !== undefined
-      ? { safetyPollIntervalMs: deps.cloud.safetyPollIntervalMs }
       : {}),
     heartbeatSample: () => heartbeatSample(),
     onRevoked: () => {
@@ -302,7 +275,9 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
     applyChain = applyChain
       .then(() => runApply(config, generation))
       .catch((err: unknown) => {
-        log.error(`runtime: config v${String(config.config_version)} apply failed: ${describeErr(err)}`);
+        log.error(
+          `runtime: config v${String(config.config_version)} apply failed: ${describeErr(err)}`,
+        );
       });
   }
 

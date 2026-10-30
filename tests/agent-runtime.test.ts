@@ -30,8 +30,6 @@ import { TransportError } from '../src/main/transport/errors';
 import { memoryAdapter } from './helpers/memory-adapter';
 import { makeDraft } from './helpers/printers';
 import { makeDoc } from './helpers/render';
-import { FakeChannel } from './helpers/cloud';
-import type { WssChannelLike } from '../src/main/cloud-client/types';
 
 /**
  * AgentRuntime tests: fake transport + kv + safeStorage over an in-memory
@@ -279,16 +277,8 @@ afterEach(async () => {
   }
 });
 
-/** Inert channel: runtime tests exercise poll/engine behavior, not sockets. */
-function noopChannel(): WssChannelLike {
-  return {
-    on: () => {},
-    isConnected: () => false,
-    start: () => {},
-    stop: () => {},
-    notifyAuthChanged: () => {},
-  };
-}
+/** Inert marker removed: the runtime is polling-first (api-contract §7,
+ *  amended 2026-10-30) and constructs no WSS channel at all. */
 
 async function makeRuntime(
   overrides: {
@@ -299,7 +289,6 @@ async function makeRuntime(
     kv?: SecretKv;
     safeStorage?: SafeStorageLike;
     log?: Logger;
-    channel?: FakeChannel;
     spoolerBridge?: SpoolerBridge;
   } = {},
 ): Promise<RuntimeHarness> {
@@ -333,7 +322,6 @@ async function makeRuntime(
     kvOverride: overrides.kv ?? fakeKv(),
     transportsOverride: overrides.transports ?? stubTransports(),
     adapterOverride: memoryAdapter(),
-    channelOverride: overrides.channel ?? noopChannel(),
     schedule,
     ...(overrides.fetchOverride !== undefined ? { fetchOverride: overrides.fetchOverride } : {}),
     ...(overrides.spoolerBridge !== undefined
@@ -730,7 +718,9 @@ describe('AgentRuntime config application (FR-16)', () => {
     await runtime.pair(PAIRING_CODE);
     const local = await runtime.printers.add(makeDraft({ name: 'Local-Front' }));
 
-    transport.queuedJobs.push(makeCloudConfig(1, [makeCloudPrinterConfig(1), makeCloudPrinterConfig(2)]));
+    transport.queuedJobs.push(
+      makeCloudConfig(1, [makeCloudPrinterConfig(1), makeCloudPrinterConfig(2)]),
+    );
     await vi.waitFor(() => {
       expect(runtime.printers.list().filter((p) => p.config.source === 'cloud')).toHaveLength(2);
     });
@@ -754,9 +744,7 @@ describe('AgentRuntime config application (FR-16)', () => {
     });
 
     transport.queuedJobs.push(
-      makeCloudConfig(2, [
-        makeCloudPrinterConfig(1, { name: 'Cloud-1-renamed', station: 'bar' }),
-      ]),
+      makeCloudConfig(2, [makeCloudPrinterConfig(1, { name: 'Cloud-1-renamed', station: 'bar' })]),
     );
     await vi.waitFor(() => {
       expect(runtime.printers.list().map((p) => p.config.name)).toEqual(['Cloud-1-renamed']);
@@ -868,10 +856,12 @@ describe('AgentRuntime config application (FR-16)', () => {
     await vi.waitFor(() => {
       expect(runtime.printers.list().filter((p) => p.config.source === 'cloud')).toHaveLength(2);
     });
-    expect(runtime.printers.list().map((p) => p.config.name).sort()).toEqual([
-      'Cloud-1',
-      'Cloud-2',
-    ]);
+    expect(
+      runtime.printers
+        .list()
+        .map((p) => p.config.name)
+        .sort(),
+    ).toEqual(['Cloud-1', 'Cloud-2']);
     expect(settings.get().appliedConfigVersion).toBe(2);
   });
 
@@ -891,10 +881,10 @@ describe('AgentRuntime config application (FR-16)', () => {
     // mid-drain window is closed by the wipe's double-drain and is not
     // directly arrangeable with the fake transport's microtask-timed
     // promises.
-    transport.queuedJobs.push(
-      makeCloudConfig(2, [makeCloudPrinterConfig(2)]),
-      { type: 'revoke', reason: 'device revoked by operator' },
-    );
+    transport.queuedJobs.push(makeCloudConfig(2, [makeCloudPrinterConfig(2)]), {
+      type: 'revoke',
+      reason: 'device revoked by operator',
+    });
     await vi.waitFor(async () => {
       expect((await runtime.snapshot()).connection).toBe('revoked');
     });
@@ -939,19 +929,17 @@ describe('AgentRuntime config application (FR-16)', () => {
   });
 });
 
-describe('AgentRuntime WSS wiring', () => {
-  it('passes the injected channel through to the cloud client', async () => {
-    const channel = new FakeChannel();
-    const { runtime } = await makeRuntime({ channel });
+describe('AgentRuntime polling-first delivery (§7 amendment 2026-10-30)', () => {
+  it('runs REST cycles with the piggybacked heartbeat — no channel involved', async () => {
+    const { runtime, transport } = await makeRuntime();
     runtime.start();
-    // The client (and thus the channel) only starts once an identity exists —
-    // pairing is the trigger for the first dial.
     await runtime.pair(PAIRING_CODE);
+    // Poll cycles carry §3.2 heartbeats directly over REST (no WSS channel is
+    // constructed by the runtime, so nothing ever dials `wss://`).
     await vi.waitFor(() => {
-      expect(channel.starts).toBe(1);
+      expect(transport.heartbeats.length).toBeGreaterThanOrEqual(1);
     });
     await runtime.stop();
-    expect(channel.stops).toBeGreaterThanOrEqual(1);
   });
 });
 
