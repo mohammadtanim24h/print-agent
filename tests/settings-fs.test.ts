@@ -1,4 +1,4 @@
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -37,5 +37,13 @@ describe('node settings adapter writeAtomic (concurrent-write hardening)', () =>
     expect(readFileSync(a, 'utf8')).toBe('"A2"');
     expect(readFileSync(b, 'utf8')).toBe('"B2"');
     expect(readdirSync(dir).sort()).toEqual(['a.json', 'b.json']);
+  });
+
+  it('sweeps crash-orphan tmp siblings on the first write to a path', async () => {
+    const path = join(dir, 'printers.json');
+    writeFileSync(`${path}.deadbeef.tmp`, 'orphan');
+    const adapter = createNodeSettingsAdapter();
+    await adapter.writeAtomic(path, '{"ok":true}');
+    expect(readdirSync(dir)).toEqual(['printers.json']);
   });
 });
