@@ -13,6 +13,12 @@ export interface SettingsFsDeps {
   randomUUID: () => string;
 }
 
+const RENAME_ATTEMPTS = 3;
+const RENAME_BACKOFF_MS = 25;
+
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
 export function createNodeSettingsAdapter(deps: Partial<SettingsFsDeps> = {}): SettingsFileAdapter {
   const io = { readFile, writeFile, rename, unlink, readdir, randomUUID, ...deps };
   // Per-path FIFO of in-flight writes: same-path writes serialize in call
@@ -20,9 +26,10 @@ export function createNodeSettingsAdapter(deps: Partial<SettingsFsDeps> = {}): S
   const queues = new Map<string, Promise<void>>();
   const swept = new Set<string>();
 
-  // Crash mid-write can orphan `${path}.${uuid}.tmp` siblings. This process is
-  // the only legitimate writer (queue above + Electron single-instance), so on
-  // the first write to a path any pre-existing sibling tmp is an orphan.
+  // Crash mid-write can orphan `${path}.${uuid}.tmp` siblings. The queue above
+  // makes this adapter instance the only writer to the path (each production
+  // file is owned by exactly one adapter instance), so on the first write to a
+  // path any pre-existing sibling tmp is an orphan.
   async function sweepOrphans(path: string): Promise<void> {
     if (swept.has(path)) return;
     swept.add(path);
@@ -40,8 +47,27 @@ export function createNodeSettingsAdapter(deps: Partial<SettingsFsDeps> = {}): S
 
   async function writeOnce(path: string, contents: string): Promise<void> {
     const tmp = `${path}.${io.randomUUID()}.tmp`;
-    await io.writeFile(tmp, contents, 'utf8');
-    await io.rename(tmp, path);
+    try {
+      await io.writeFile(tmp, contents, 'utf8');
+      for (let attempt = 1; attempt <= RENAME_ATTEMPTS; attempt += 1) {
+        try {
+          await io.rename(tmp, path);
+          return;
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException).code;
+          // Windows: AV/indexer scanners transiently hold the destination handle.
+          if ((code !== 'EPERM' && code !== 'EBUSY') || attempt === RENAME_ATTEMPTS) {
+            throw error;
+          }
+          await sleep(RENAME_BACKOFF_MS);
+        }
+      }
+    } catch (error) {
+      // Self-cleanup; never masks the original error. If the tmp was never
+      // created the unlink ENOENTs and is swallowed.
+      await io.unlink(tmp).catch(() => undefined);
+      throw error;
+    }
   }
 
   return {
