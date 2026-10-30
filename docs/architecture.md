@@ -95,13 +95,20 @@ encodability policy, raster fallback design, diagnostic summary contract).
 
 ### 3.4 `transport-registry` + transports
 
-- `Transport` interface: `open()`, `write(bytes)`, `status?()` (best-effort DLE EOT),
-  `close()`, `healthCheck()`. `write()` resolves on kernel/driver acceptance — this is
-  by definition "sent to printer", never "physically printed".
+- `Transport` interface: `open()`, `write(bytes)`, `status?()` (best-effort DLE EOT probe
+  on a dedicated ephemeral connection — raw `[printerByte, paperByte]`; implemented by
+  `tcp-raw` only), `close()`, `healthCheck()`. `write()` resolves on kernel/driver
+  acceptance — this is by definition "sent to printer", never "physically printed".
 - `tcp-raw`: Node `net` to `<ip>:9100`, connect timeout + write timeout.
 - `spooler-raw`: N-API shim to Win32 spooler with RAW datatype; pairs with a shared
   ESC/POS driver (e.g. Epson TM-series driver or the generic ESC/POS driver shipped by
   the printer vendor — vendor drivers are free downloads, not paid middleware).
+- `printers/status-poller.ts` (C1): background DLE EOT poller (~30 s) with a TTL cache;
+  per-printer gate `statusPolling === 'auto'` **and** `tcp_raw` transport (R-VAL-3 —
+  default off until hardware validation). Connect-class probe failures report
+  `offline`; silent/tardy answers report `unknown` (never offline). Feeds the
+  heartbeat `printers[].health` (api-contract §3.2) and ack `printer_status`.
+  spooler_raw printers always report `unknown` (one-way pipe).
 - `usb`: `usb` 3.x, claim printer-class interface (v1.1).
 - `mock`: in-memory buffer for unit tests; `escpos-emulator` serves as the integration
   virtual printer.

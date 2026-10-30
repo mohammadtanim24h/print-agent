@@ -83,7 +83,13 @@ updated whenever a dependency is added or bumped.
    OEM firmware; pick per-model defaults.
 3. **R-VAL-3 DLE EOT reality check:** which fleet models actually answer status polls
    (and under ASB config); determines whether `printer_status` can ever graduate from
-   "unknown".
+   "unknown". Agent side implemented (C1): tcp_raw-only, per-printer gate
+   `status_polling: "auto"`, default off — validation flips models on via config.
+   Validation must cover: a poll attempted while a job is printing (many ESC/POS
+   printers accept only one TCP connection — expect connect refusal, reported as
+   `offline`), and a model that accepts the connection then resets on the DLE EOT
+   write (reported as `offline` via `disconnected` — confirm that is the honest
+   label for such firmware).
 4. **R-VAL-4 Spooler RAW end-to-end:** vendor driver install, datatype "RAW"
    passthrough byte-exactness, driver buffering/reprint-on-reboot behavior (duplicate
    risk T4), behavior under driver "pause printer".

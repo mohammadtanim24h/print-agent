@@ -31,7 +31,7 @@ export type AckStatus = (typeof ACK_STATUSES)[number];
 export interface JobAck {
   readonly jobId: string;
   readonly status: AckStatus;
-  readonly printerStatus: PrinterStatus; // always 'unknown' until DLE EOT lands (R-VAL-3)
+  readonly printerStatus: PrinterStatus; // best-effort cached status (C1 poller); 'unknown' unless the printer opts in
   readonly printed: false; // security rule 8: no code path may claim a physical print
   readonly attempt: number;
   readonly at: string; // RFC 3339 UTC

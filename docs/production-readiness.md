@@ -115,8 +115,15 @@ the acceptance evidence required before ticking.
 
 ### C1. Printer status polling in heartbeats (R-VAL-3 dependent)
 
-- **Status:** open — `heartbeatSample()` reports `health: 'unknown'` for
-  every printer.
+- **Status:** agent implemented (2026-10-30) — `status()` DLE EOT probe on an
+  ephemeral socket in `tcp-raw`, `printers/status-poller.ts` (TTL cache, ~30 s,
+  `statusPolling === 'auto'` + tcp_raw gate default off), runtime heartbeat/ack
+  wiring. Evidence: `tests/status-poller.test.ts` (parser + fuzz + poller),
+  `tests/tcp-raw.test.ts` (probe), `tests/agent-runtime.test.ts` ("printer status
+  polling (C1)"). Still open: the emulator- or hardware-level status assertion
+  (emulator not yet in the tree — hermetic mock-socket integration is the current
+  CI-able equivalent) and the R-VAL-3 fleet validation in B1 that decides which
+  models get flipped to `auto`.
 - **What:** best-effort DLE EOT / ASB status poll per printer feeding the
   §3.2 heartbeat `printers[].health` and the ack `printer_status` field.
   Hardware-gated: only enable per model after B1/R-VAL-3 confirms which
