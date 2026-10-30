@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from 'vitest';
-import { TransportError } from '../src/main/transport/errors';
 import { createTcpRawTransport } from '../src/main/transport/tcp-raw';
 import { mockSocketFactory, type MockSockets } from './helpers/mock-socket';
 
@@ -449,7 +448,7 @@ describe('tcp-raw transport — status probe (DLE EOT, C1)', () => {
     await expect(transport.status()).resolves.toEqual([0x12, 0x00]);
   });
 
-  it('socket error mid-probe rejects with a classified transport error', async () => {
+  it('socket error mid-probe rejects with disconnected (not a connect code)', async () => {
     const sockets = mockSocketFactory((sock) => {
       const write = sock.write.bind(sock);
       sock.write = (data, cb) => {
@@ -461,6 +460,14 @@ describe('tcp-raw transport — status probe (DLE EOT, C1)', () => {
       sock.connect(); // after the override — see scriptedStatusSocket
     });
     const transport = makeStatusTransport(sockets);
-    await expect(transport.status()).rejects.toBeInstanceOf(TransportError);
+    await expect(transport.status()).rejects.toMatchObject({ code: 'disconnected' });
+  });
+
+  it('coalesces both answer bytes arriving in a single chunk', async () => {
+    // Respond to the first poll write with the whole two-byte answer; stay
+    // silent for the second (the probe resolves before it is ever written).
+    const sockets = scriptedStatusSocket([Buffer.from([0x12, 0x00]), 'never']);
+    const transport = makeStatusTransport(sockets);
+    await expect(transport.status()).resolves.toEqual([0x12, 0x00]);
   });
 });

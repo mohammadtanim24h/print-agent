@@ -188,13 +188,21 @@ export function createTcpRawTransport(options: TcpRawTransportOptions): PrinterT
 
   /** One status probe: ephemeral connect → DLE EOT 1 → byte → DLE EOT 2 →
    *  byte → destroy. Connect-phase failures surface with the connect codes;
-   *  a silent/garbage printer surfaces as 'status_failed' (the poller maps
-   *  that to 'unknown' — never to 'offline', R-VAL-3). */
-  const status = (): Promise<readonly [number, number]> =>
-    new Promise((resolve, reject) => {
+   *  a silent/tardy printer surfaces as 'status_failed' (the poller maps that
+   *  to 'unknown' — never to 'offline', R-VAL-3). Arriving bytes are accepted
+   *  as-is: whatever answers within two bytes resolves successfully, and
+   *  interpretation (not framing validation) lives in the status-poller. */
+  const status = (): Promise<readonly [number, number]> => {
+    if (isIP(host) === 0) {
+      return Promise.reject(
+        new TransportError('dns_unsupported', `${target}: host must be an IPv4/IPv6 literal`),
+      );
+    }
+    return new Promise((resolve, reject) => {
       const sock = socketFactory({ host, port });
       const bytes: number[] = [];
       let settled = false;
+      let connected = false; // distinguishes connect-phase from mid-probe errors
       let timer: ReturnType<typeof setTimeout> | null = null;
 
       const finish = (
@@ -219,6 +227,7 @@ export function createTcpRawTransport(options: TcpRawTransportOptions): PrinterT
       }, statusTimeoutMs);
 
       sock.on('connect', () => {
+        connected = true;
         sock.write(DLE_EOT_PRINTER_STATUS, (err) => {
           if (settled) return;
           if (err !== null) {
@@ -232,7 +241,13 @@ export function createTcpRawTransport(options: TcpRawTransportOptions): PrinterT
         });
       });
       sock.on('error', (err) => {
-        finish(classifyConnectError(err, target));
+        // Post-connect errors (e.g. ECONNRESET mid-probe) must not masquerade
+        // as connect codes — only the connect phase uses classifyConnectError.
+        finish(
+          connected
+            ? new TransportError('disconnected', `${target}: ${err.message}`, { cause: err })
+            : classifyConnectError(err, target),
+        );
       });
       sock.on('close', () => {
         finish(new TransportError('disconnected', `${target}: closed during status probe`));
@@ -247,6 +262,7 @@ export function createTcpRawTransport(options: TcpRawTransportOptions): PrinterT
         }
       });
     });
+  };
 
   const healthCheck = async (): Promise<void> => {
     await open();
