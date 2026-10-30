@@ -49,16 +49,26 @@ the acceptance evidence required before ticking.
 
 ### A3. Server-side WSS endpoint (servepro-api — cross-team)
 
-- **Status:** open on the Laravel side; agent side is done and degrades to
-  polling until this lands.
-- **What:** implement `wss://<host>/agent/v1/ws` per `docs/api-contract.md`
-  §1 as amended 2026-10-27: token auth on upgrade (401 on bad token), close
-  `4401` for auth failures, claim-on-send job delivery mirroring the
-  pull-claim lease (§7 note 6), ingest §3.2 heartbeats with
-  `connection: "wss"`, respond to ws pings (RFC 6455 default), push
-  revoke/config envelopes.
-- **Closes with:** Laravel feature tests mirroring the §6 WSS matrix rows;
-  a live agent (dev build) holding a socket > 24 h against staging.
+- **Status:** descoped (2026-10-30). A WebSocket endpoint cannot run in
+  php-fpm request workers — it requires a long-running daemon plus a
+  WS-upgrade proxy, new deployment infrastructure the Laravel side declined.
+  Polling at the amended ~4 s cadence (agent default since 2026-10-30,
+  `poller.ts`) yields worst-case job latency ≈ 4 s — imperceptible for
+  counter receipts, and there was no sub-second delivery requirement.
+  ~30 req/min/device against the 120/min rate limit at 1–3 agents per
+  single-restaurant deployment is negligible load. The agent ships the full
+  WSS client dormant and adopts the socket automatically if the server ever
+  implements it; spec and acceptance criteria (§1, §6 WSS rows) retained
+  there for that eventuality. Nothing left to do on either side for v1.
+- **What (retained for a future revival):** implement
+  `wss://<host>/agent/v1/ws` per `docs/api-contract.md` §1 as amended
+  2026-10-30: token auth on upgrade (401 on bad token), close `4401` for auth
+  failures, claim-on-send job delivery mirroring the pull-claim lease (§7
+  note 6), ingest §3.2 heartbeats with `connection: "wss"`, respond to ws
+  pings (RFC 6455 default), push revoke/config envelopes.
+- **Closes with (if revived):** Laravel feature tests mirroring the §6 WSS
+  matrix rows; a live agent (dev build) holding a socket > 24 h against
+  staging.
 
 ---
 
@@ -73,7 +83,7 @@ the acceptance evidence required before ticking.
   R-VAL-7 autoreconnect, R-VAL-8 paper-out/cover-open mid-stream,
   R-VAL-9 cash drawer, R-VAL-10 logo pipeline. Produce the per-model
   config preset catalog.
-- **Depends on:** A2 for R-VAL-4; A3 for realistic burst conditions (R-VAL-6).
+- **Depends on:** A2 for R-VAL-4.
 - **Closes with:** results recorded in `printer-compatibility.md` §6 with
   pass/fail per model; presets shipped in config defaults.
 
@@ -107,10 +117,11 @@ the acceptance evidence required before ticking.
 ### C2. Load burst test (R-VAL-6)
 
 - **Status:** open.
-- **What:** 10 jobs in 5 s through the engine over both delivery paths
-  (WSS push and poll batch): no ordering regressions, ack buffer drains,
-  no socket starvation, ambiguous-rate stays zero.
-- **Depends on:** A3 for the WSS path under load (or scripted frames in CI).
+- **What:** 10 jobs in 5 s through the engine over the poll delivery path:
+  no ordering regressions, ack buffer drains, ambiguous-rate stays zero.
+  (WSS push path descoped with A3; if WSS is ever revived, add its burst
+  leg then.)
+- **Depends on:** nothing.
 - **Closes with:** CI-able burst test green + a recorded run against staging.
 
 ### C3. Staged pilot with monitoring
@@ -120,7 +131,7 @@ the acceptance evidence required before ticking.
   online-staleness alerts, ack result distribution (`applied|duplicate|
   stale|not_found|rejected`), ambiguous-job rate, WSS reconnect churn.
   Define abort/rollback criteria before starting.
-- **Depends on:** A1–A3, B1, B2, C1, C2.
+- **Depends on:** A1, A2, B1, B2, C1, C2.
 - **Closes with:** PRD §8 success metrics met during the pilot window.
 
 ---
@@ -140,4 +151,5 @@ the acceptance evidence required before ticking.
 
 ## Suggested order
 
-A3 → B2 → B1 → C1 → C2 → C3.
+B2 → B1 → C1 → C2 → C3. (A3 descoped 2026-10-30 — polling is the v1 delivery
+path; see A3 for the rationale and revival criteria.)

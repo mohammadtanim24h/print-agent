@@ -643,6 +643,31 @@ describe('acks and heartbeat', () => {
       client.stop();
     }
   });
+
+  it('default cadence is ~4 s (v1 polling transport — §7 amendment 2026-10-30)', async () => {
+    // No explicit pollIntervalMs: the composition root relies on the default.
+    for (const [randomValue, expected] of [
+      [0, 3_600],
+      [0.5, 4_000],
+      [1, 4_400],
+    ] as const) {
+      const scheduler = new ManualScheduler();
+      const secrets = createSafeStorageSecretStore(new MemoryKvAdapter(), new FakeSafeStorage());
+      secrets.save(makeSecrets());
+      const client = createPollingCloudClient({
+        transport: new FakeTransport({}),
+        secrets,
+        agentVersion: '0.1.0',
+        schedule: scheduler.schedule,
+        random: () => randomValue,
+      });
+      client.start();
+      await scheduler.runNext();
+      await settle();
+      expect(scheduler.nextDelay()).toBe(expected);
+      client.stop();
+    }
+  });
 });
 
 describe('device_revoked error.code (§7 note 8)', () => {

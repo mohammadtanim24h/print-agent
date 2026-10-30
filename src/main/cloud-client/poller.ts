@@ -23,7 +23,8 @@ import type { IdentitySecrets, SecretStore } from './secret-store';
  *
  * Loop semantics:
  * - `start()` runs the first cycle immediately to recover pending work after
- *   (re)connect; healthy cadence is `pollIntervalMs` (contract §3.2 cadence).
+ *   (re)connect; healthy cadence is `pollIntervalMs` (contract §3.2, amended
+ *   2026-10-30: polling is the v1 delivery path — WSS is deferred server-side).
  * - Failures back off exponentially with jitter; success resets the backoff.
  * - A 401/403 triggers a single token refresh (single-flight, cooldown-
  *   limited) and at most one retried request. Refresh refusal ⇒ `revoked`
@@ -57,7 +58,15 @@ export interface PollingClientDeps {
   readonly onRevoked?: (reason: string) => void;
 }
 
-const DEFAULT_POLL_INTERVAL_MS = 30_000;
+/**
+ * Polling is the v1 delivery path (WSS deferred server-side — api-contract §7,
+ * amended 2026-10-30). ~4 s keeps worst-case job latency imperceptible at the
+ * counter while each cycle carries a piggybacked heartbeat: 2 req / ~4 s ≈
+ * 30 req/min per device, well inside the 120 req/min device rate limit
+ * (contract §7.1). Single-restaurant deployments hold 1–3 agents, so the
+ * server-side cost of the shorter cadence is negligible.
+ */
+const DEFAULT_POLL_INTERVAL_MS = 4_000;
 const DEFAULT_SAFETY_POLL_INTERVAL_MS = 5 * 60_000;
 const DEFAULT_REFRESH_COOLDOWN_MS = 30_000;
 const MAX_BACKOFF_MS = 10 * 60_000;
@@ -188,11 +197,11 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
     for (const listener of listeners.state) listener(next);
   }
 
-  /** Healthy cadence: pollIntervalMs ± 10 % jitter (§7: heartbeats "every
-   *  ~30 s ± jitter"; the 90 s offline window must never be raced by a
-   *  synchronized fleet). While the WSS channel is connected, REST polls drop
-   *  to the safety cadence — the socket is the delivery path, polls only
-   *  paper over a silently dead connection.
+  /** Healthy cadence: pollIntervalMs ± 10 % jitter (§3.2, amended 2026-10-30:
+   *  the ~4 s poll carries the §3.2 heartbeat; jitter keeps a synchronized
+   *  fleet from racing the server-side offline window). While the WSS channel
+   *  is connected, REST polls drop to the safety cadence — the socket is the
+   *  delivery path, polls only paper over a silently dead connection.
    *
    *  Invariant: connectivity is sampled at schedule time; the channel state
    *  handlers' `scheduleCycle(0)` guarantees the delay is re-derived at every
