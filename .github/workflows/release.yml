@@ -13,7 +13,10 @@ concurrency:
 
 jobs:
   release:
-    runs-on: windows-latest
+    # pinned: windows-latest (2025 image) ships VS2026, which the node-gyp
+    # bundled with pnpm cannot detect — breaks the print-agent-spooler-raw
+    # addon build. Keep in sync with ci.yml.
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4

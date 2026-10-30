@@ -15,7 +15,11 @@ permissions:
 jobs:
   gate:
     name: deps · lint · typecheck · test
-    runs-on: windows-latest
+    # pinned: windows-latest (2025 image) ships VS2026, which the node-gyp
+    # bundled with pnpm cannot detect (VS-finder maxbuffer crash) — breaks the
+    # print-agent-spooler-raw addon build. Revisit when pnpm bundles a
+    # VS2026-aware node-gyp.
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -37,7 +41,7 @@ jobs:
   smoke:
     name: build · fuses · no-listen (AC-4)
     needs: gate
-    runs-on: windows-latest
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
