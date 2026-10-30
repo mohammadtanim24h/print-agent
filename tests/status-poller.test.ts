@@ -17,6 +17,7 @@ describe('parseDleEotStatus', () => {
     ['paper-out + near-end → paper_out wins', 0x00, 0x09, 'paper_out'],
     ['near-end bits (0x07) → paper_low', 0x00, 0x01, 'paper_low'],
     ['paper_out beats cover_open on severity', 0x04, 0x38, 'paper_out'],
+    ['cover_open beats paper_low on severity', 0x04, 0x01, 'cover_open'],
     ['all zero → ok', 0x00, 0x00, 'ok'],
   ])('%s', (_name, printerByte, paperByte, expected) => {
     expect(parseDleEotStatus(printerByte, paperByte)).toBe(expected);

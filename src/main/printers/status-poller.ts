@@ -15,6 +15,9 @@ const PRINTER_ERROR_BIT = 0x20;
 const PAPER_NEAR_END_MASK = 0x07;
 /** DLE EOT 2 bits 3–5: roll paper end (any sensor). */
 const PAPER_OUT_MASK = 0x38;
+// DLE EOT 1 bit 0 (0x01, "offline") is deliberately unmapped: reachability is
+// the poller's connect/probe-timeout job, and real-fleet bit-0 behavior is
+// exactly what R-VAL-3 must confirm.
 
 /** Severity precedence: paper_out > cover_open > paper_low > ok; the error
  *  bit beats everything. */
