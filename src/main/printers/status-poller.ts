@@ -1,4 +1,8 @@
+import { TransportError, type TransportErrorCode } from '../transport/errors';
 import type { PrinterStatus } from '../transport/types';
+import type { TransportRegistry } from '../transport/registry';
+import type { PrinterProfile } from './profile';
+import type { PrinterStore } from './store';
 
 /**
  * DLE EOT response → health mapping (production-readiness C1, R-VAL-3).
@@ -27,4 +31,130 @@ export function parseDleEotStatus(printerByte: number, paperByte: number): Print
   if ((printerByte & COVER_OPEN_BIT) !== 0) return 'cover_open';
   if ((paperByte & PAPER_NEAR_END_MASK) !== 0) return 'paper_low';
   return 'ok';
+}
+
+export const DEFAULT_STATUS_INTERVAL_MS = 30_000;
+export const DEFAULT_STATUS_TTL_MS = 90_000;
+
+/** Connect-class failures mean the printer is unreachable → 'offline'.
+ *  Response-class failures ('status_failed') and anything unexpected map to
+ *  'unknown' — a model that silently ignores DLE EOT is never declared
+ *  offline (R-VAL-3's core uncertainty). */
+const OFFLINE_CODES: ReadonlySet<TransportErrorCode> = new Set([
+  'connect_refused',
+  'connect_timeout',
+  'host_unreachable',
+  'disconnected',
+  'not_open',
+  'printer_not_found',
+  'dns_unsupported',
+]);
+
+/** Effective R-VAL-3 gate: explicit opt-in on a transport that has a return
+ *  channel. spooler_raw is a one-way pipe and never polls. */
+export function statusPollingEnabled(profile: PrinterProfile): boolean {
+  return profile.statusPolling === 'auto' && profile.transport.kind === 'tcp_raw';
+}
+
+export interface StatusPollerDeps {
+  readonly printers: PrinterStore;
+  readonly registry: TransportRegistry;
+  readonly intervalMs?: number;
+  readonly ttlMs?: number;
+  readonly now?: () => number;
+  /** Returns a cancel function (same seam as the runtime/poller). */
+  readonly schedule?: (fn: () => void, delayMs: number) => () => void;
+  readonly log?: (message: string) => void;
+}
+
+export interface StatusPoller {
+  /** Idempotent. Runs the first cycle immediately, then re-arms on the timer. */
+  start(): void;
+  /** Idempotent. In-flight probes settle into the cache but no new cycle is armed. */
+  stop(): void;
+  /** Sync read for the heartbeat/ack path; expired or never-polled → 'unknown'. */
+  get(printerId: string): PrinterStatus;
+}
+
+interface CacheEntry {
+  status: PrinterStatus;
+  at: number;
+}
+
+export function createStatusPoller(deps: StatusPollerDeps): StatusPoller {
+  const now = deps.now ?? Date.now;
+  const intervalMs = deps.intervalMs ?? DEFAULT_STATUS_INTERVAL_MS;
+  const ttlMs = deps.ttlMs ?? DEFAULT_STATUS_TTL_MS;
+  const schedule =
+    deps.schedule ??
+    ((fn: () => void, delayMs: number): (() => void) => {
+      const t = setTimeout(fn, delayMs);
+      return () => {
+        clearTimeout(t);
+      };
+    });
+  const log = deps.log ?? ((): void => {});
+  const cache = new Map<string, CacheEntry>();
+  const inFlight = new Set<string>();
+  let cancelTimer: (() => void) | null = null;
+  let stopped = true;
+
+  function pollOne(printerId: string, profile: PrinterProfile): void {
+    if (inFlight.has(printerId)) return; // serialize per printer
+    inFlight.add(printerId);
+    const transport = deps.registry.forPrinter(profile);
+    // Bind the optional method up front (unbound-method lint); spooler_raw
+    // transports leave `status` undefined — nothing to probe there.
+    const probe = transport.status?.bind(transport);
+    if (probe === undefined) {
+      inFlight.delete(printerId);
+      return;
+    }
+    void Promise.resolve()
+      .then(() => probe())
+      .then(
+        ([printerByte, paperByte]) => {
+          cache.set(printerId, { status: parseDleEotStatus(printerByte, paperByte), at: now() });
+        },
+        (err: unknown) => {
+          const offline = err instanceof TransportError && OFFLINE_CODES.has(err.code);
+          cache.set(printerId, { status: offline ? 'offline' : 'unknown', at: now() });
+          log(`status poll failed for ${printerId}: ${err instanceof Error ? err.message : String(err)}`);
+        },
+      )
+      .finally(() => {
+        inFlight.delete(printerId);
+      });
+  }
+
+  function tick(): void {
+    for (const p of deps.printers.list()) {
+      if (statusPollingEnabled(p)) pollOne(p.printerId, p);
+    }
+    rearm();
+  }
+
+  function rearm(): void {
+    if (stopped) return;
+    cancelTimer?.();
+    cancelTimer = schedule(tick, intervalMs);
+  }
+
+  return {
+    start() {
+      if (!stopped) return;
+      stopped = false;
+      tick();
+    },
+    stop() {
+      stopped = true;
+      cancelTimer?.();
+      cancelTimer = null;
+    },
+    get(printerId) {
+      const entry = cache.get(printerId);
+      if (entry === undefined || now() - entry.at > ttlMs) return 'unknown';
+      return entry.status;
+    },
+  };
 }
