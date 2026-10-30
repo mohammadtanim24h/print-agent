@@ -8,6 +8,7 @@ export type TransportErrorCode =
   | /** spooler_raw only: OpenPrinterW found no such printer on this machine. */ 'printer_not_found'
   | 'write_timeout'
   | 'write_failed'
+  | /** status probe: no/garbage answer within the probe timeout (C1). */ 'status_failed'
   | 'disconnected'
   | 'not_open';
 

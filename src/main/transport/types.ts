@@ -16,7 +16,9 @@ export interface PrinterTransport {
   close(): Promise<void>;
   /** Cheap connect(+close) probe; rejects with TransportError on failure. */
   healthCheck(): Promise<void>;
-  /** Reserved for best-effort DLE EOT status (R-VAL-3). Not implemented by
-   *  tcp-raw in v1 — leave undefined. */
-  status?(): Promise<PrinterStatus>;
+  /** Best-effort DLE EOT probe (R-VAL-3): raw `[printerByte, paperByte]` from
+   *  a dedicated ephemeral connection. Response interpretation lives in the
+   *  status-poller module, not here. Implementations without a return channel
+   *  (spooler_raw) leave this undefined. */
+  status?(): Promise<readonly [printer: number, paper: number]>;
 }

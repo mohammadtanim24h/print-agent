@@ -5,6 +5,7 @@ import type { PrinterTransport } from './types';
 
 export const DEFAULT_CONNECT_TIMEOUT_MS = 3_000;
 export const DEFAULT_WRITE_TIMEOUT_MS = 5_000;
+export const DEFAULT_STATUS_TIMEOUT_MS = 2_000;
 
 export interface TcpRawTransportOptions {
   host: string;
@@ -12,6 +13,8 @@ export interface TcpRawTransportOptions {
   socketFactory: SocketFactory;
   connectTimeoutMs?: number;
   writeTimeoutMs?: number;
+  /** Whole-probe budget for status(): connect + both DLE EOT answers. */
+  statusTimeoutMs?: number;
 }
 
 function classifyConnectError(err: NodeJS.ErrnoException, target: string): TransportError {
@@ -28,6 +31,12 @@ function classifyWriteError(err: Error): TransportError {
   return new TransportError('write_failed', err.message, { cause: err });
 }
 
+/** DLE EOT realtime status transmission (ESC/POS R&P). Probes run on their own
+ *  ephemeral connection: poll bytes never interleave with job writes and the
+ *  job path's writeTail ordering is untouched. */
+const DLE_EOT_PRINTER_STATUS = new Uint8Array([0x10, 0x04, 0x01]);
+const DLE_EOT_PAPER_SENSOR = new Uint8Array([0x10, 0x04, 0x02]);
+
 /**
  * Outbound TCP raw transport (architecture §3.4): Node `net` to <ip>:9100.
  * Fire-and-forget — a resolved `write()` means kernel acceptance, never a
@@ -39,6 +48,7 @@ export function createTcpRawTransport(options: TcpRawTransportOptions): PrinterT
   const { host, port, socketFactory } = options;
   const connectTimeoutMs = options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
   const writeTimeoutMs = options.writeTimeoutMs ?? DEFAULT_WRITE_TIMEOUT_MS;
+  const statusTimeoutMs = options.statusTimeoutMs ?? DEFAULT_STATUS_TIMEOUT_MS;
   const target = `${host}:${String(port)}`;
 
   let socket: TransportSocket | null = null; // connected
@@ -176,10 +186,72 @@ export function createTcpRawTransport(options: TcpRawTransportOptions): PrinterT
     });
   };
 
+  /** One status probe: ephemeral connect → DLE EOT 1 → byte → DLE EOT 2 →
+   *  byte → destroy. Connect-phase failures surface with the connect codes;
+   *  a silent/garbage printer surfaces as 'status_failed' (the poller maps
+   *  that to 'unknown' — never to 'offline', R-VAL-3). */
+  const status = (): Promise<readonly [number, number]> =>
+    new Promise((resolve, reject) => {
+      const sock = socketFactory({ host, port });
+      const bytes: number[] = [];
+      let settled = false;
+      let timer: ReturnType<typeof setTimeout> | null = null;
+
+      const finish = (
+        error: TransportError | null,
+        result?: readonly [number, number],
+      ): void => {
+        if (settled) return;
+        settled = true;
+        if (timer !== null) clearTimeout(timer);
+        sock.destroy();
+        if (error !== null) reject(error);
+        else resolve(result as readonly [number, number]);
+      };
+
+      timer = setTimeout(() => {
+        finish(
+          new TransportError(
+            'status_failed',
+            `${target}: status probe timed out after ${String(statusTimeoutMs)}ms`,
+          ),
+        );
+      }, statusTimeoutMs);
+
+      sock.on('connect', () => {
+        sock.write(DLE_EOT_PRINTER_STATUS, (err) => {
+          if (settled) return;
+          if (err !== null) {
+            finish(classifyWriteError(err));
+            return;
+          }
+          sock.write(DLE_EOT_PAPER_SENSOR, (err2) => {
+            if (settled) return;
+            if (err2 !== null) finish(classifyWriteError(err2));
+          });
+        });
+      });
+      sock.on('error', (err) => {
+        finish(classifyConnectError(err, target));
+      });
+      sock.on('close', () => {
+        finish(new TransportError('disconnected', `${target}: closed during status probe`));
+      });
+      sock.on('data', (chunk: Uint8Array) => {
+        for (const byte of chunk) {
+          bytes.push(byte);
+          if (bytes.length === 2) {
+            finish(null, [bytes[0] as number, bytes[1] as number]);
+            return;
+          }
+        }
+      });
+    });
+
   const healthCheck = async (): Promise<void> => {
     await open();
     await close();
   };
 
-  return { open, write, close, healthCheck };
+  return { open, write, close, healthCheck, status };
 }

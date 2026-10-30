@@ -11,6 +11,9 @@ export interface TransportSocket {
   on(event: 'connect', listener: () => void): unknown;
   on(event: 'error', listener: (err: Error) => void): unknown;
   on(event: 'close', listener: (hadError: boolean) => void): unknown;
+  /** Inbound bytes (DLE EOT status responses). Job writes are
+   *  fire-and-forget and never read; only status() consumes data events. */
+  on(event: 'data', listener: (chunk: Uint8Array) => void): unknown;
 }
 
 export type SocketFactory = (endpoint: {

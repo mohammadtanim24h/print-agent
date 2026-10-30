@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { TransportError } from '../src/main/transport/errors';
 import { createTcpRawTransport } from '../src/main/transport/tcp-raw';
 import { mockSocketFactory, type MockSockets } from './helpers/mock-socket';
 
@@ -350,5 +351,116 @@ describe('tcp-raw transport — healthCheck', () => {
     });
     const transport = makeTransport(sockets);
     await expect(transport.healthCheck()).rejects.toMatchObject({ code: 'connect_refused' });
+  });
+});
+
+/** Status-probe script: answers each poll write with the next queued byte via
+ *  the socket's data event (MockSocket is an EventEmitter). The write override
+ *  is installed before connect(): the transport writes synchronously inside
+ *  the 'connect' emit, so the override must already be in place to answer. */
+function scriptedStatusSocket(
+  responses: Array<Buffer | 'never'>,
+): MockSockets {
+  return mockSocketFactory((sock) => {
+    const queue = [...responses];
+    const write = sock.write.bind(sock);
+    sock.write = (data, cb) => {
+      write(data, cb);
+      const next = queue.shift();
+      if (next === 'never') return; // stay silent
+      if (next !== undefined) queueMicrotask(() => sock.emit('data', next));
+    };
+    sock.connect();
+  });
+}
+
+describe('tcp-raw transport — status probe (DLE EOT, C1)', () => {
+  const HOST = '192.168.1.50';
+
+  function makeStatusTransport(
+    sockets: MockSockets,
+    statusTimeoutMs = 500,
+  ) {
+    const transport = createTcpRawTransport({
+      host: HOST,
+      port: 9100,
+      socketFactory: sockets.factory,
+      statusTimeoutMs,
+    });
+    const status = transport.status?.bind(transport);
+    if (status === undefined) throw new Error('tcp-raw must implement status()');
+    // Narrow the optional interface member: these tests exercise status().
+    return { ...transport, status };
+  }
+
+  it('sends DLE EOT 1 + 2 on an ephemeral socket and returns the two response bytes', async () => {
+    const sockets = scriptedStatusSocket([Buffer.from([0x12]), Buffer.from([0x00])]);
+    const transport = makeStatusTransport(sockets);
+
+    await expect(transport.status()).resolves.toEqual([0x12, 0x00]);
+
+    expect(sockets.last()?.written).toEqual([
+      Buffer.from([0x10, 0x04, 0x01]),
+      Buffer.from([0x10, 0x04, 0x02]),
+    ]);
+    expect(sockets.last()?.destroyed).toBe(true);
+  });
+
+  it('never touches the job socket — probes open their own connection', async () => {
+    const sockets = scriptedStatusSocket([Buffer.from([0x12]), Buffer.from([0x00])]);
+    const transport = makeStatusTransport(sockets);
+    await transport.open(); // job connection is open
+    const jobSockets = sockets.sockets.length;
+
+    await transport.status();
+
+    expect(sockets.sockets.length).toBe(jobSockets + 1); // probe = separate socket
+    await transport.close();
+    expect(sockets.sockets.at(-1)?.destroyed).toBe(true); // probe already destroyed
+  });
+
+  it('connect refusal rejects with the connect code (poller maps it to offline)', async () => {
+    const sockets = mockSocketFactory((sock) => {
+      sock.refuse();
+    });
+    const transport = makeStatusTransport(sockets);
+    await expect(transport.status()).rejects.toMatchObject({ code: 'connect_refused' });
+  });
+
+  it('no answer within the timeout rejects with status_failed', async () => {
+    const sockets = scriptedStatusSocket(['never', 'never']);
+    const transport = makeStatusTransport(sockets, 20);
+    await expect(transport.status()).rejects.toMatchObject({ code: 'status_failed' });
+  });
+
+  it('trickled bytes (one per chunk) accumulate into the two-byte answer', async () => {
+    const sockets = mockSocketFactory((sock) => {
+      const write = sock.write.bind(sock);
+      let nth = 0;
+      sock.write = (data, cb) => {
+        write(data, cb);
+        nth += 1;
+        const byte = nth === 1 ? 0x12 : 0x00;
+        queueMicrotask(() => sock.emit('data', Buffer.from([byte])));
+      };
+      sock.connect(); // after the override — see scriptedStatusSocket
+    });
+    const transport = makeStatusTransport(sockets);
+    await expect(transport.status()).resolves.toEqual([0x12, 0x00]);
+  });
+
+  it('socket error mid-probe rejects with a classified transport error', async () => {
+    const sockets = mockSocketFactory((sock) => {
+      const write = sock.write.bind(sock);
+      sock.write = (data, cb) => {
+        write(data, cb);
+        queueMicrotask(() => {
+          sock.failWithCode('ECONNRESET');
+        });
+      };
+      sock.connect(); // after the override — see scriptedStatusSocket
+    });
+    const transport = makeStatusTransport(sockets);
+    await expect(transport.status()).rejects.toBeInstanceOf(TransportError);
   });
 });
