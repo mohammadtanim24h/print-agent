@@ -148,7 +148,7 @@ describe('profile schema: source tag + cloud-sourced fields', () => {
       paperWidthMm: 80,
       printableDots: 576,
       charsPerLine: 48,
-      capabilities: { cut: true, qrCode: false, barcode128: false, statusPolling: false, cashDrawer: false },
+      capabilities: { cut: true, qrCode: false, barcode128: false, statusPolling: false },
       transport: { kind: 'tcp_raw', host: '192.168.1.50', port: 9100 },
     };
     const parsed = PrinterProfileSchema.parse(legacy);

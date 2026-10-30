@@ -3,7 +3,7 @@ import type { PrinterProfile } from '../printers/profile';
 /**
  * Layout + capability inputs for the renderer. This is deliberately a
  * renderer-local view: the stored printer profile carries transport/config
- * concerns (endpoints, status polling, cash drawer) that never leak into
+ * concerns (endpoints, status polling) that never leak into
  * ESC/POS generation. Per-printer physical values are never derived from
  * paper width (printer-compatibility.md; spec §4).
  */

@@ -111,7 +111,6 @@ export const PrinterCapabilitiesSchema = z.strictObject({
   qrCode: z.boolean(),
   barcode128: z.boolean(),
   statusPolling: z.boolean(),
-  cashDrawer: z.boolean(),
 });
 export type PrinterCapabilities = z.output<typeof PrinterCapabilitiesSchema>;
 

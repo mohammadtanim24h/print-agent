@@ -41,7 +41,6 @@ describe('renderProfileFromPrinterConfig', () => {
           qrCode: true,
           barcode128: true,
           statusPolling: false,
-          cashDrawer: false,
         },
       }),
     );

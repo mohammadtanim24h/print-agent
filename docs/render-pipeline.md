@@ -125,7 +125,7 @@ Warnings are a closed string-literal union — eight tokens:
 | `qr_skipped_invalid` | Footer QR data empty or not printable ASCII after sanitization |
 | `barcode_skipped_unsupported` | Footer barcode data present, `capabilities.barcode128 = false` |
 | `barcode_skipped_invalid` | Footer barcode data empty or not printable ASCII |
-| `logo_skipped_no_asset_store` | `logo_asset_id` present; asset pipeline deferred (R-VAL-10) |
+| `logo_skipped_no_asset_store` | `logo_asset_id` present; asset pipeline deferred (R-VAL-9) |
 | `qr_skipped_kitchen` | Footer QR data present on a kitchen/bar/station ticket (deliberately not rendered) |
 | `barcode_skipped_kitchen` | Footer barcode data present on a kitchen/bar/station ticket (deliberately not rendered) |
 

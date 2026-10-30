@@ -61,7 +61,6 @@ function toProfile(pc: PrinterConfig): PrinterProfile | { readonly error: string
       qrCode: true,
       barcode128: true,
       statusPolling: pc.status_polling === 'auto',
-      cashDrawer: false,
     },
     transport,
     station: pc.station,

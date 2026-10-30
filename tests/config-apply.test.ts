@@ -20,7 +20,7 @@ describe('mapCloudPrinters', () => {
     expect(p.printableDots).toBe(576);
     expect(p.charsPerLine).toBe(48);
     expect(p.capabilities).toEqual({
-      cut: true, qrCode: true, barcode128: true, statusPolling: true, cashDrawer: false,
+      cut: true, qrCode: true, barcode128: true, statusPolling: true,
     });
     expect(p.transport).toEqual({ kind: 'tcp_raw', host: '192.168.1.87', port: 9100 });
     // Cloud-only fields preserved for FR-14 / C1.

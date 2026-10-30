@@ -75,14 +75,14 @@ the acceptance evidence required before ticking.
 
 ## B. Blocking — validation (no new code, real evidence)
 
-### B1. Hardware validation matrix (P9) — R-VAL-1…10
+### B1. Hardware validation matrix (P9) — R-VAL-1…9
 
 - **Status:** all open — `docs/printer-compatibility.md` §6.
 - **What:** physical fleet pass/fail per item: R-VAL-1 codepage round-trip,
   R-VAL-2 cut variants, R-VAL-3 DLE EOT status, R-VAL-4 spooler RAW,
   R-VAL-5 USB (v1.1 — may stay deferred), R-VAL-6 throughput burst,
   R-VAL-7 autoreconnect, R-VAL-8 paper-out/cover-open mid-stream,
-  R-VAL-9 cash drawer, R-VAL-10 logo pipeline. Produce the per-model
+  R-VAL-9 logo pipeline. Produce the per-model
   config preset catalog.
 - **Depends on:** A2 for R-VAL-4.
 - **Closes with:** results recorded in `printer-compatibility.md` §6 with
@@ -169,7 +169,6 @@ the acceptance evidence required before ticking.
 | ---- | --------- | ---- |
 | `/diagnostics` log-bundle upload | api-contract §7 note 4 | Blocked on support tooling existing; additive endpoint later |
 | USB transport | ADR-4, R-VAL-5 | v1.1 scope |
-| Cash drawer pulse | R-VAL-9 | Verify during B1 hardware access |
 | WSS proxy support | — | Polling fallback covers proxied networks; revisit on pilot feedback |
 | Reconnect/dial counters in diagnostics UI | — | Nice-to-have observability; no contract surface yet |
 | Concurrent-write hardening for `writeAtomic` | settings-fs.ts fixed `.tmp` path | Bounded, recoverable (failed rename logged; next apply self-heals); revisit before pilot if concurrent-writer count grows |

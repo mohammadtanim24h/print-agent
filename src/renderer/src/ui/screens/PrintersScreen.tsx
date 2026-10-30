@@ -34,7 +34,6 @@ const emptyDraft: PrinterDraft = {
     qrCode: true,
     barcode128: false,
     statusPolling: false,
-    cashDrawer: false,
   },
   transport: { kind: 'tcp_raw', host: '', port: 9100 },
 };
@@ -51,7 +50,6 @@ const CAPABILITIES: ReadonlyArray<{ readonly key: keyof Capabilities; readonly l
   { key: 'qrCode', label: 'QR code' },
   { key: 'barcode128', label: 'Code128' },
   { key: 'statusPolling', label: 'Status polling' },
-  { key: 'cashDrawer', label: 'Cash drawer' },
 ];
 
 /** Keeps the previous value when a number input is momentarily empty/invalid.

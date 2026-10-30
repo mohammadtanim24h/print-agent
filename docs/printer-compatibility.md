@@ -20,7 +20,6 @@ OEM units — the dominant fleet in target markets.
 | Emphasis             | `ESC E n`, `GS ! n`                   | bold / double-height / double-size               |
 | Alignment            | `ESC a n`                             | left/center/right                                |
 | Feed / cut           | `ESC d n`, `GS V n`                   | partial cut default; `none` option               |
-| Pulse (cash drawer)  | `ESC p m t1 t2`                       | shipped, flagged untested-against-hardware       |
 | QR                   | `GS ( k`                              | model 2; data ≤ 512 B validated                  |
 | Barcode (CODE128)    | `GS ( B` / `GS h w k`                 | optional footer                                  |
 | Bit image (logo)     | `GS v 0` (raster) or NV logo `GS ( L` | NV logo preferred if uploaded; raster fallback   |
@@ -101,8 +100,7 @@ updated whenever a dependency is added or bumped.
    silent drop; validate retry policy produces at-most-once-per-attempt.
 8. **R-VAL-8 Paper-out / cover-open mid-stream:** bytes lost with TCP success —
    confirms that "sent ≠ printed" wording is required in operator UI.
-9. **R-VAL-9 Cash drawer pulse:** untested command; verify per popular drawers.
-10. **R-VAL-10 Logo pipeline:** NV upload vs raster path fidelity + speed on low-end
+9. **R-VAL-9 Logo pipeline:** NV upload vs raster path fidelity + speed on low-end
     58mm-vs-80mm configurations.
 
 Exit criteria for the hardware phase: a matrix (model × transport × sample documents)

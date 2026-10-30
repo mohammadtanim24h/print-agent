@@ -43,7 +43,6 @@ function profile(input: {
         qrCode: true,
         barcode128: false,
         statusPolling: false,
-        cashDrawer: false,
       },
       transport: { kind: 'tcp_raw', host: input.host, port: input.port },
       source: 'local',

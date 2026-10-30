@@ -106,9 +106,9 @@ describe('PrintersScreen', () => {
     expect(within(dialog).getByDisplayValue('384')).toBeInTheDocument();
     expect(within(dialog).getByDisplayValue('32')).toBeInTheDocument();
 
-    // Capabilities: five checkboxes, toggled individually.
+    // Capabilities: four checkboxes, toggled individually.
     const checkboxes = within(dialog).getAllByRole('checkbox');
-    expect(checkboxes).toHaveLength(5);
+    expect(checkboxes).toHaveLength(4);
     expect(within(dialog).getByRole('checkbox', { name: /auto cut/i })).toBeChecked();
     await user.click(within(dialog).getByRole('checkbox', { name: /auto cut/i }));
     expect(within(dialog).getByRole('checkbox', { name: /auto cut/i })).not.toBeChecked();
@@ -148,7 +148,6 @@ describe('PrintersScreen', () => {
     expect(within(dialog).getByDisplayValue('576')).toBeInTheDocument(); // dots
     expect(within(dialog).getByDisplayValue('48')).toBeInTheDocument(); // chars/line
     expect(within(dialog).getByRole('checkbox', { name: /auto cut/i })).toBeChecked();
-    expect(within(dialog).getByRole('checkbox', { name: /cash drawer/i })).not.toBeChecked();
     expect(within(dialog).getByPlaceholderText('192.168.1.87')).toHaveValue('192.168.1.87');
   });
 
@@ -212,7 +211,7 @@ describe('PrintersScreen', () => {
       paperWidthMm: 80,
       printableDots: 576,
       charsPerLine: 48,
-      capabilities: { cut: true, qrCode: true, barcode128: false, statusPolling: false, cashDrawer: false },
+      capabilities: { cut: true, qrCode: true, barcode128: false, statusPolling: false },
       transport: { kind: 'spooler_raw', windowsPrinterName: 'Star TSP143 (STR-001)' },
     });
     renderWithService(<PrintersScreen />, fresh);

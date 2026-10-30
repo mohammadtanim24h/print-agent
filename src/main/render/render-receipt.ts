@@ -36,7 +36,7 @@ export function renderReceipt(doc: DocV1, ctx: RenderContext): void {
     writeText(ctx, `Tax ID: ${sanitizeText(doc.header.tax_id).text}`, 'center', 'none');
   }
   if (doc.header.logo_asset_id !== undefined) {
-    ctx.summary.warnings.push('logo_skipped_no_asset_store'); // asset pipeline deferred (R-VAL-10)
+    ctx.summary.warnings.push('logo_skipped_no_asset_store'); // asset pipeline deferred (R-VAL-9)
   }
   separator(ctx);
 

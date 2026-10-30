@@ -28,7 +28,7 @@ and drives 80mm ESC/POS thermal printers directly.
 - macOS / Linux builds (Windows x64 only initially; architecture must not preclude them)
 - Document types other than kitchen tickets and customer receipts (bar/station tickets are
   a config-driven extension of the same schema, designed for but not shipped in v1)
-- Printer firmware management, cash-drawer control beyond the standard ESC/POS kick command
+- Printer firmware management and cash-drawer control (no drawer kick command in the agent)
 - Mobile printing from Flutter directly to printers (Flutter clients print _via the SaaS_,
   which routes jobs to this agent)
 - Label printers (ZPL/EPL), A4 documents, cloud print services
@@ -140,5 +140,4 @@ and drives 80mm ESC/POS thermal printers directly.
 | ------------------------------------------------------------------ | ------------------------------------------------------------------------------- |
 | Do target printers support DLE EOT status polling?                 | Treat `printer_ack` as best-effort; do not gate on it                           |
 | ESC/POS codepage for non-ASCII (restaurant names in local script)? | UTF-8-capable codepage where supported; ASCII-safe fallback; per-printer config |
-| Cash drawer kick needed at launch?                                 | Include the standard ESC/POS pulse command, untested against hardware           |
 | Flutter clients printing directly to LAN printers?                 | Out of scope; route via SaaS → agent                                            |
