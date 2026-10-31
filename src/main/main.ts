@@ -96,6 +96,13 @@ async function start(): Promise<void> {
   // value on the release checklist before shipping.
   const API_BASE_URL =
     process.env['PRINT_AGENT_API_URL'] ?? 'https://print-api.example-saas.test';
+  // Dev-only escape hatch for a local Laravel backend over plain http.
+  // Double-guarded: this !app.isPackaged gate plus the transport's own
+  // NODE_ENV=production refusal (http-transport.ts) keep it out of the field.
+  const ALLOW_INSECURE_HTTP = !app.isPackaged && process.env['PRINT_AGENT_ALLOW_HTTP'] === '1';
+  if (ALLOW_INSECURE_HTTP) {
+    log.warn('PRINT_AGENT_ALLOW_HTTP=1 — using plain http; dev machines only');
+  }
 
   const runtime = await createAgentRuntime({
     db,
@@ -109,7 +116,10 @@ async function start(): Promise<void> {
     agentVersion: app.getVersion(),
     deviceName: hostname(),
     safeStorage,
-    cloud: { baseUrl: API_BASE_URL },
+    cloud: {
+      baseUrl: API_BASE_URL,
+      ...(ALLOW_INSECURE_HTTP ? { allowInsecureHttp: true } : {}),
+    },
   });
   // Crash recovery + first poll cycle; no-op while unpaired.
   runtime.start();

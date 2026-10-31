@@ -73,6 +73,8 @@ export interface RuntimeDeps {
   readonly cloud: {
     readonly baseUrl: string;
     readonly pollIntervalMs?: number;
+    /** Dev-only: permits http:// base URLs for a local backend (main.ts gates it on !app.isPackaged). */
+    readonly allowInsecureHttp?: boolean;
   };
   /** Test seams; defaults are the real implementations. */
   readonly env?: {
@@ -158,7 +160,11 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
   const secrets: SecretStore = createSafeStorageSecretStore(kv, deps.safeStorage);
   const transport =
     deps.env?.transportOverride ??
-    createHttpTransport({ baseUrl: deps.cloud.baseUrl, agentVersion: deps.agentVersion });
+    createHttpTransport({
+      baseUrl: deps.cloud.baseUrl,
+      agentVersion: deps.agentVersion,
+      ...(deps.cloud.allowInsecureHttp === true ? { allowInsecureHttp: true } : {}),
+    });
   const jobStore = createSqliteJobStore(deps.db);
   const printers: PrinterStore = await createPrinterStore({
     filePath: deps.paths.printersFile,
