@@ -28,7 +28,9 @@ describe('engine intake', () => {
       expect(ack.status).toBe('rejected');
       expect(ack.error?.code).toBe('unknown_printer');
       expect(h.engine.getJob('job-1')).toBeNull();
-      expect(h.acks).toHaveLength(0);
+      // The pull is the claim: intake rejections MUST be submitted.
+      expect(h.acks).toHaveLength(1);
+      expect(h.acks[0]).toMatchObject({ jobId: 'job-1', status: 'rejected' });
     } finally {
       h.dispose();
     }
@@ -80,7 +82,8 @@ describe('engine intake', () => {
         expect(ack.error?.message).toBe('copies must be an integer between 1 and 4');
         expect(h.engine.getJob('job-1')).toBeNull(); // not persisted
       }
-      expect(h.acks).toHaveLength(0);
+      // The pull is the claim: intake rejections MUST be submitted.
+      expect(h.acks).toHaveLength(2);
     } finally {
       h.dispose();
     }
@@ -96,7 +99,8 @@ describe('engine intake', () => {
         expect(ack.error?.message).toBe('priority must be an integer between 1 and 9');
         expect(h.engine.getJob('job-1')).toBeNull(); // not persisted
       }
-      expect(h.acks).toHaveLength(0);
+      // The pull is the claim: intake rejections MUST be submitted.
+      expect(h.acks).toHaveLength(2);
     } finally {
       h.dispose();
     }
@@ -122,7 +126,7 @@ describe('engine intake', () => {
       expect(ack.error?.code).toBe('invalid_doc');
       expect(ack.error?.message).toBe('payload exceeds the 32 KiB cap');
       expect(h.engine.getJob('job-1')).toBeNull(); // not persisted
-      expect(h.acks).toHaveLength(0);
+      expect(h.acks).toHaveLength(1);
     } finally {
       h.dispose();
     }

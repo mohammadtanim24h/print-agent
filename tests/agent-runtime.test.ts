@@ -511,6 +511,25 @@ describe('AgentRuntime config application (FR-16)', () => {
     expect(transport.configFetches).toBeGreaterThanOrEqual(1);
   });
 
+  it('repolls GET /config periodically while started (config-change propagation)', async () => {
+    // The pull path carries config_update envelopes only if the server emits
+    // them; without a recurring refresh a dashboard-side printer change would
+    // never reach a running agent (live-backend E2E finding, 2026-10-31).
+    const { runtime, transport } = await makeRuntime();
+    runtime.start();
+    await runtime.pair(PAIRING_CODE);
+    const afterPair = transport.configFetches;
+    // The harness clamps every scheduled delay to 5 ms, so the 60 s refresh
+    // interval fires immediately — at least two more fetches must follow.
+    await vi.waitFor(() => {
+      expect(transport.configFetches).toBeGreaterThanOrEqual(afterPair + 2);
+    });
+    await runtime.stop();
+    const afterStop = transport.configFetches;
+    await new Promise((r) => setTimeout(r, 30));
+    expect(transport.configFetches).toBe(afterStop); // no refresh after stop
+  });
+
   it('start() re-applies a persisted config that was saved but never applied', async () => {
     const { runtime, db, transport } = await makeRuntime();
     runtime.start();

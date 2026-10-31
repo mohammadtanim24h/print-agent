@@ -242,7 +242,16 @@ d('live backend E2E', () => {
     for (;;) {
       const value = await probe();
       if (value !== undefined) return value;
-      if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+      if (Date.now() > deadline) {
+        // Evidence dump: the agent's own view when a wait fails.
+        log(`agent jobs at timeout: ${JSON.stringify(runtime.jobs.list())}`);
+        log(
+          `agent recent logs: ${JSON.stringify(
+            runtime.diagnostics.recentLogs().slice(-15).map((l) => `${l.level} ${l.message}`),
+          )}`,
+        );
+        throw new Error(`timed out waiting for ${what}`);
+      }
       await new Promise((r) => setTimeout(r, 500));
     }
   }
@@ -293,9 +302,9 @@ d('live backend E2E', () => {
       )}`,
     );
 
-    // Config stream: the agent polls GET /config each cycle; a created printer
-    // bumps config_version so the next cycle must apply it.
-    await until('cloud printer in agent printer store', 30_000, async () => {
+    // Config stream: the agent's 60 s periodic refresh must pick up the new
+    // printer (config_version bump); allow two refresh intervals + margin.
+    await until('cloud printer in agent printer store', 150_000, async () => {
       const list = runtime.printers.list();
       const found = list.find((p) => p.config.printerId === cloudPrinterId);
       if (found === undefined) {

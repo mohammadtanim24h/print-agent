@@ -342,6 +342,31 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
   // ---- lifecycle -----------------------------------------------------------
 
   let started = false;
+  /** Recurring GET /config while paired: without it a dashboard-side printer
+   *  change never reaches a running agent — the pull-based poll only carries
+   *  config_update envelopes if the server emits them (it does not in v1),
+   *  and jobs for not-yet-known printers are rejected at intake. */
+  const CONFIG_REFRESH_INTERVAL_MS = 60_000;
+  let cancelConfigRefresh: (() => void) | null = null;
+  function armConfigRefresh(): void {
+    if (cancelConfigRefresh !== null) return;
+    const schedule =
+      deps.env?.schedule ??
+      ((fn: () => void, delayMs: number): (() => void) => {
+        const t = setTimeout(fn, delayMs);
+        return () => {
+          clearTimeout(t);
+        };
+      });
+    const tick = (): void => {
+      cancelConfigRefresh = null;
+      if (!started) return;
+      fetchConfigOnce();
+      armConfigRefresh();
+    };
+    cancelConfigRefresh = schedule(tick, CONFIG_REFRESH_INTERVAL_MS);
+  }
+
   function start(): void {
     if (started) return;
     started = true;
@@ -371,6 +396,7 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
         }
         client.start();
         fetchConfigOnce();
+        armConfigRefresh();
       }
     } catch (err) {
       log.error('runtime: cloud client start failed — presenting as unpaired', err);
@@ -380,6 +406,8 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
   async function stop(): Promise<void> {
     if (!started) return;
     started = false;
+    cancelConfigRefresh?.();
+    cancelConfigRefresh = null;
     client.stop();
     statusPoller.stop();
     await ackBuffer.stop(); // best-effort final flush; never blocks on a dead network
@@ -447,6 +475,7 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
       await deps.settings.set({ pairedAt });
       statusPoller.start(); // idempotent: covers a runtime that booted unpaired
       fetchConfigOnce(); // fire-and-forget; the fleet also arrives via poll/push
+      armConfigRefresh(); // idempotent; pairs a runtime whose start() already ran unpaired
       return { ok: true, identity: toAgentIdentity(identity, pairedAt) };
     } catch (err) {
       if (err instanceof CloudError) return mapPairFailure(err);

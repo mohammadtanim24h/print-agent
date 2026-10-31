@@ -115,7 +115,7 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
   }
 
   function rejectAck(job: PrintJobInput, code: string, message: string): JobAck {
-    return {
+    const ack: JobAck = {
       jobId: job.jobId,
       status: 'rejected',
       printerStatus: statusFor(job.printerId),
@@ -124,6 +124,11 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
       at: new Date(now()).toISOString(),
       error: { code, message },
     };
+    // Pre-insert rejections have no stored row, so emit() never runs for them —
+    // submit here or the rejection never reaches the server (the pull is the
+    // claim: an unacked rejection strands the lease until it auto-fails).
+    acks.submit(ack);
+    return ack;
   }
 
   function ackFromStoredError(row: JobRow, status: AckStatus): JobAck {
