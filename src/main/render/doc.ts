@@ -43,7 +43,8 @@ export const DocV1Schema = z.strictObject({
   meta: z.strictObject({
     title: bytes(24),
     order_ref: bytes(24),
-    created_at: z.iso.datetime(),
+    // RFC 3339 UTC — offset form accepted alongside `Z` (see cloud schemas).
+    created_at: z.iso.datetime({ offset: true }),
     server_name: bytes(32).optional(),
     table: bytes(16).optional(),
   }),

@@ -382,7 +382,7 @@ and the pull-claim (§7 note 6) remain the operative server surface.
       "expires_at": "2026-10-24T10:10:00+00:00",
       "payload": { /* §2 document model v1 — server-built snapshot */ }
     },
-    "sig": "base64(ed25519 detached signature over canonical_json(job))"
+    "sig": "base64url(ed25519 detached signature over canonical_json(job))"
   }],
   "next_cursor": "2026-10-24T10:00:00.000000+00:00"
 }

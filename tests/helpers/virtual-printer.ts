@@ -12,7 +12,7 @@ export interface VirtualPrinter {
   close(): Promise<void>;
 }
 
-export function startVirtualPrinter(): Promise<VirtualPrinter> {
+export function startVirtualPrinter(host: string = '127.0.0.1'): Promise<VirtualPrinter> {
   const chunks: Buffer[] = [];
   let resolve!: (bytes: Uint8Array) => void;
   const received = new Promise<Uint8Array>((res) => {
@@ -29,7 +29,7 @@ export function startVirtualPrinter(): Promise<VirtualPrinter> {
     socket.on('close', finish);
   });
   return new Promise((resolveServer) => {
-    server.listen(0, '127.0.0.1', () => {
+    server.listen(0, host, () => {
       const address = server.address();
       const port = typeof address === 'object' && address !== null ? address.port : 0;
       resolveServer({

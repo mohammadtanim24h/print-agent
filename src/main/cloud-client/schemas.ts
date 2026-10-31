@@ -56,8 +56,10 @@ export const PrintJobSchema = z.strictObject({
   copies: z.number().int().min(1).max(4),
   doc_type: z.enum(DOC_TYPES),
   doc_version: z.number().int().min(1).max(99),
-  issued_at: z.iso.datetime(),
-  expires_at: z.iso.datetime(),
+  // RFC 3339 UTC (§1) — accept both the `Z` form and `+00:00` offsets; the
+  // Laravel backend serializes model dates with the offset form.
+  issued_at: z.iso.datetime({ offset: true }),
+  expires_at: z.iso.datetime({ offset: true }),
   payload: DocV1Schema,
 });
 
