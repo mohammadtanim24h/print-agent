@@ -264,7 +264,7 @@ async function makeRuntime(
     safeStorage?: SafeStorageLike;
     log?: Logger;
     spoolerBridge?: SpoolerBridge;
-    onSnapshotChanged?: (reason: 'connection' | 'pairing') => void;
+    onSnapshotChanged?: (reason: SnapshotChangeReason) => void;
   } = {},
 ): Promise<RuntimeHarness> {
   const db = openDatabase({ file: null });

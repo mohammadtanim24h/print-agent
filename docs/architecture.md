@@ -136,8 +136,9 @@ encodability policy, raster fallback design, diagnostic summary contract).
   in the preload/main boundary. The renderer can: show status, run pairing, trigger test
   print, view queue. It cannot: touch filesystem, network, or printers directly.
 - Main → renderer **push signals** (`PushEvent` in `shared/ipc-contract.ts`): on
-  connection-state transitions and after pair/unpair (including a server-side
-  revoke), the runtime notifies main via its `onSnapshotChanged` dep and main
+  connection-state transitions, after pair/unpair (including a server-side
+  revoke), and after a cloud config apply (dashboard-side printer changes), the
+  runtime notifies main via its `onSnapshotChanged` dep and main
   sends `push:snapshot-changed` to the window — an in-process signal, no socket.
   The preload validates the payload against `PushSchemas` before invoking the
   listener; the renderer answers the signal by re-fetching `agent:snapshot`, so

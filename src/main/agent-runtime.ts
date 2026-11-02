@@ -355,6 +355,10 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
         appliedConfigRestaurantUid: uid,
       });
     }
+    // The store just changed behind the UI's back (dashboard-side printer
+    // rename/add/remove); tick the renderer so screens refetch without a
+    // remount. Regressions and rejects above return early — nothing changed.
+    deps.onSnapshotChanged?.('config');
   }
 
   /** One-shot GET /config (initial fleet for a fresh pair, catch-up at

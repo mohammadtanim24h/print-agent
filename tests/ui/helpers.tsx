@@ -204,7 +204,9 @@ class FakeAgentService implements AgentService {
     });
   }
 
-  onSnapshotChanged(listener: (reason: 'connection' | 'pairing') => void): () => void {
+  onSnapshotChanged(
+    listener: (reason: 'connection' | 'pairing' | 'config') => void,
+  ): () => void {
     this.snapshotListeners = [...this.snapshotListeners, listener];
     return () => {
       this.snapshotListeners = this.snapshotListeners.filter((l) => l !== listener);

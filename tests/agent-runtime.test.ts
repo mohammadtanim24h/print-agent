@@ -173,7 +173,7 @@ describe('AgentRuntime lifecycle', () => {
   });
 
   it('pushes a snapshot-changed signal on pair and unpair (renderer refresh cue)', async () => {
-    const reasons: Array<'connection' | 'pairing'> = [];
+    const reasons: Array<'connection' | 'pairing' | 'config'> = [];
     const { runtime } = await makeRuntime({
       onSnapshotChanged: (reason) => {
         reasons.push(reason);
@@ -480,6 +480,24 @@ describe('AgentRuntime config application (FR-16)', () => {
     expect(updated.config.source).toBe('cloud');
     // Still exactly one printer: update-in-place, not create+stale.
     expect(runtime.printers.list()).toHaveLength(1);
+  });
+
+  it('pushes a snapshot-changed signal when a config applies (renderer refresh cue)', async () => {
+    // Dashboard-side printer rename arrives via the config path; without this
+    // signal the Printers screen shows the stale name until remount.
+    const reasons: string[] = [];
+    const { runtime, transport } = await makeRuntime({
+      onSnapshotChanged: (reason) => {
+        reasons.push(reason);
+      },
+    });
+    runtime.start();
+    await runtime.pair(PAIRING_CODE);
+    transport.queuedJobs.push(makeCloudConfig(1, [makeCloudPrinterConfig(1)]));
+    await vi.waitFor(() => {
+      expect(runtime.printers.list()).toHaveLength(1);
+    });
+    expect(reasons).toContain('config');
   });
 
   it('ignores a config_version regression end-to-end (contract §6)', async () => {

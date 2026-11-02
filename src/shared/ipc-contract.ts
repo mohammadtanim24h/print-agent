@@ -81,12 +81,13 @@ export type RequestOf<C extends Channel> = z.output<(typeof RequestSchemas)[C]>;
  * listener ever runs (CLAUDE.md rule 3 applies to both IPC directions).
  */
 export const PushEvent = {
-  /** Emitted on connection-state transitions and after pair/unpair. */
+  /** Emitted on connection-state transitions, after pair/unpair, and after a
+   *  cloud config apply (dashboard-side printer changes). */
   SnapshotChanged: 'push:snapshot-changed',
 } as const;
 export type PushEvent = (typeof PushEvent)[keyof typeof PushEvent];
 
-export const SNAPSHOT_CHANGE_REASONS = ['connection', 'pairing'] as const;
+export const SNAPSHOT_CHANGE_REASONS = ['connection', 'pairing', 'config'] as const;
 export type SnapshotChangeReason = (typeof SNAPSHOT_CHANGE_REASONS)[number];
 
 export const PushSchemas = {

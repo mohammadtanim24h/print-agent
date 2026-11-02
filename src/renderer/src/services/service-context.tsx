@@ -26,7 +26,7 @@ const SnapshotTickContext = createContext(0);
  * a counter. Screens pass this into their `useAsync` deps so every surface —
  * not just the screen being viewed or mounted last — refetches when the agent
  * state changes behind the UI's back (connection transitions, pair/unpair,
- * server-side revoke).
+ * server-side revoke, cloud config applies).
  */
 export function SnapshotRefreshProvider(props: { children: ReactNode }): React.JSX.Element {
   const service = useService();
