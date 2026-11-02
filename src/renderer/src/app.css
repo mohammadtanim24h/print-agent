@@ -269,31 +269,6 @@ body {
   font-size: 11px;
 }
 
-.theme-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  margin-top: 6px;
-  padding: 6px 8px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: none;
-  color: var(--muted);
-  font: inherit;
-  font-size: 12px;
-  font-weight: 500;
-  text-align: left;
-  cursor: pointer;
-  transition:
-    background 120ms ease,
-    color 120ms ease;
-}
-
-.theme-toggle:hover {
-  background: var(--panel-2);
-  color: var(--ink);
-}
-
 .content {
   flex: 1;
   min-width: 0;

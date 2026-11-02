@@ -4,12 +4,10 @@ import {
   GearIcon,
   GaugeIcon,
   ListIcon,
-  MoonIcon,
   PlugIcon,
   PrinterIcon,
   PulseIcon,
   ReceiptIcon,
-  SunIcon,
 } from './ui/icons';
 import { Timestamp } from './ui/primitives';
 import type { ScreenId } from './ui/screens/OverviewScreen';
@@ -107,16 +105,6 @@ export function App(): React.JSX.Element {
           ) : (
             <span className="sidebar-device">Not paired</span>
           )}
-          <button
-            type="button"
-            className="theme-toggle"
-            onClick={() => {
-              changeTheme(theme === 'dark' ? 'light' : 'dark');
-            }}
-          >
-            {theme === 'dark' ? <SunIcon size={14} /> : <MoonIcon size={14} />}
-            <span>{theme === 'dark' ? 'Light mode' : 'Dark mode'}</span>
-          </button>
         </div>
       </nav>
 

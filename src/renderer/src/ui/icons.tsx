@@ -227,20 +227,3 @@ export function PlayIcon(props: IconProps): React.JSX.Element {
     </svg>
   );
 }
-
-export function SunIcon(props: IconProps): React.JSX.Element {
-  return (
-    <svg {...svgProps(props)}>
-      <circle cx="8" cy="8" r="3" />
-      <path d="M8 1.4v1.7M8 12.9v1.7M1.4 8h1.7M12.9 8h1.7M3.4 3.4l1.2 1.2M11.4 11.4l1.2 1.2M12.6 3.4l-1.2 1.2M4.6 11.4l-1.2 1.2" />
-    </svg>
-  );
-}
-
-export function MoonIcon(props: IconProps): React.JSX.Element {
-  return (
-    <svg {...svgProps(props)}>
-      <path d="M13.4 9.6A5.8 5.8 0 016.4 2.6a5.8 5.8 0 107 7z" />
-    </svg>
-  );
-}
