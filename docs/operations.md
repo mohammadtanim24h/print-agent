@@ -190,9 +190,19 @@ re-run `pnpm release` (it would skip a version): push manually with
     (now honored on packaged builds for exactly this checklist step).
   - Revoke wipe on the packaged build: **PASS** (dashboard revoke → local
     identity/printers/jobs wiped, revoked screen).
+  - Spooler RAW functional leg: **PASS** — `PrintAgentCapture` created on a
+    Standard TCP/IP port (`CAPTURE_9100` → a loopback-adjacent listener on
+    `192.168.0.160:9100`); a POS order job through the packaged app delivered
+    **424 byte-exact ESC/POS bytes** (RAW datatype passthrough, starts
+    `ESC @`) and the server job reached `completed` (attempts 1). This is the
+    byte-exact spooler capture evidence for the transport (R-VAL-4's capture
+    half; real-hardware pass/fail stays with B1). Note: the file-port
+    registry trick in `setup-capture-printer.ps1` did not enumerate on this
+    box — the script now stages the `Generic / Text Only` driver
+    (`prnge001.inf` is not pre-staged on stock 19045) and supports a
+    `-CaptureHost` TCP-capture mode, which is what this run used.
   - Open on this train: item 4 (production API URL placeholder — blocks the
-    tagged release), item 8 (spooler RAW capture run — elevated shell), the
-    Win11 23H2 install/upgrade leg, and the spooler_raw functional leg.
+    tagged release) and the Win11 23H2 install/upgrade leg.
   - Dev-app functional pass vs the same backend was recorded 2026-10-31 (see
     the local-backend E2E notes); this train repeated it on the installed
     binary.
