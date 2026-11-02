@@ -38,8 +38,10 @@ the acceptance evidence required before ticking.
   `tests/spooler-raw.test.ts` (fake bridge), `tests/spooler-native.test.ts`,
   registry/schema/config-apply/IPC/UI tests, and the opt-in file-port capture
   `tests/spooler-raw-capture.test.ts` (`scripts/setup-capture-printer.ps1`).
-  Byte-exact-vs-real-hardware evidence remains open as R-VAL-4 (B1); P7's
-  "driver inventory" deliverable also stays with B1.
+  Byte-exact capture evidence recorded 2026-11-02 (operations.md §6): a POS
+  job through the packaged app delivered 424 byte-exact ESC/POS bytes via a
+  Standard TCP/IP capture port. Byte-exact-vs-real-hardware evidence remains
+  open as R-VAL-4 (B1); P7's "driver inventory" deliverable also stays with B1.
 - **What:** N-API/FFI shim or `node-thermal-printer` spooler path sending RAW
   datatype to a named Windows printer (`windows_printer_name`), per ADR-4.
   File-port capture tests (ADR-10) instead of driver-dependent assertions.
@@ -90,24 +92,27 @@ the acceptance evidence required before ticking.
 
 ### B2. Windows release smoke train
 
-- **Status:** partially closed (2026-10-30). CI green on `main` (run
-  41011166433) after pinning runners to `windows-2022` — `windows-latest`
-  moved to a VS2026 image that the node-gyp bundled with pnpm cannot detect,
-  breaking the `print-agent-spooler-raw` CI build (764cc74). Local NSIS
-  package of current main built clean; no-listen smoke on the packaged exe
-  PASSED (operations.md §6 smoke records). Still open: NSIS install/upgrade
-  smoke on Win10 19045 + Win11 23H2; the functional pairing → poll → test
-  print (tcp_raw + spooler_raw) → revoke wipe pass (blocked on a staging
-  backend); ops §6 item 8 spooler capture run (needs elevation); ops §6
-  item 4 — the production API URL is still the placeholder, which blocks
-  cutting the tagged release this train would smoke.
+- **Status:** Win10 19045 leg closed (2026-11-02, operations.md §6). NSIS
+  install smoke (per-user assisted wizard), upgrade smoke 0.1.1 → 0.1.2 with
+  `%APPDATA%\Print Agent` userData preserved, no-listen smoke on both the
+  unpacked and installed builds (AC-4), and the full packaged functional pass
+  against the live local Laravel backend: pairing → online → cloud config
+  apply → POS order job → render → **tcp_raw and spooler_raw** prints (ESC/POS
+  captured byte-exact on both transports) → ack chain to `completed` → revoke
+  wipe. The "blocked on a staging backend" note is resolved for functional
+  evidence: the local servepro-api checkout served as the live backend (6
+  cross-repo contract bugs found and fixed both sides — see operations.md §6
+  and the 2026-10-31/11-02 smoke records). Still open: the **Win11 23H2
+  install/upgrade leg** (needs a Win11 box/VM) and **ops §6 item 4 — the
+  production API URL is still the placeholder**, which blocks cutting the
+  tagged release this train would smoke.
 - **What:** package the current main (electron-builder NSIS, unsigned manual
   distribution per ADR-14), install/upgrade smoke on Win10 19045 and Win11;
   verify pairing → cloud poll → test print (tcp_raw + spooler_raw) → revoke
   wipe. Run the ops §6 checklist and the no-listen smoke on the packaged
   build.
 - **Closes with:** checklist results recorded in `docs/operations.md` §6 for
-  this release train.
+  this release train (Win10 leg recorded 2026-11-02; Win11 leg outstanding).
 
 ---
 
@@ -140,9 +145,11 @@ the acceptance evidence required before ticking.
   printers (5+5), asserting per-printer FIFO order (decoded ESC/POS output),
   full ack drain (accepted + completed for every burst job id), zero
   ambiguous/failed/rejected, and queue depth back to 0. Shared runtime
-  harness extracted to `tests/helpers/runtime-harness.ts`. Still open: the
-  recorded run against staging — blocked on the staging backend (same
-  blocker as B2).
+  harness extracted to `tests/helpers/runtime-harness.ts`. A single-job
+  end-to-end run against the live local backend was recorded 2026-10-31/11-02
+  (B2 smoke records); the recorded **burst** run against staging remains
+  open — no staging environment exists yet (runnable sooner against the
+  local backend if the team accepts that evidence).
 - **What:** 10 jobs in 5 s through the engine over the poll delivery path:
   no ordering regressions, ack buffer drains, ambiguous-rate stays zero.
   (WSS push path descoped with A3; if WSS is ever revived, add its burst
