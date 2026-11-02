@@ -172,6 +172,21 @@ describe('AgentRuntime lifecycle', () => {
     expect((await runtime.snapshot()).connection).toBe('unpaired');
   });
 
+  it('pushes a snapshot-changed signal on pair and unpair (renderer refresh cue)', async () => {
+    const reasons: Array<'connection' | 'pairing'> = [];
+    const { runtime } = await makeRuntime({
+      onSnapshotChanged: (reason) => {
+        reasons.push(reason);
+      },
+    });
+    runtime.start();
+    await runtime.pair(PAIRING_CODE);
+    await runtime.unpair();
+    // Startup also produces 'connection' transitions (connecting → offline …);
+    // the deterministic pairing cues are exactly these two.
+    expect(reasons.filter((r) => r === 'pairing')).toEqual(['pairing', 'pairing']);
+  });
+
   it('presents as unpaired instead of crashing when the stored identity cannot be decrypted', async () => {
     // DPAPI decrypt failure after a Windows credential reset: secrets.load()
     // throws CloudError('secure_storage_unavailable') — start() must not
@@ -692,9 +707,7 @@ describe('AgentRuntime system printers (A2)', () => {
 /** Factory so a rejected probe creates a FRESH rejected promise per call — a
  *  single shared rejected promise would trip vitest's unhandled-rejection
  *  detection before the poller ever attaches its handler. */
-function statusTransports(
-  answer: () => Promise<readonly [number, number]>,
-): TransportRegistry {
+function statusTransports(answer: () => Promise<readonly [number, number]>): TransportRegistry {
   return {
     forPrinter: () => ({
       open: () => Promise.resolve(),

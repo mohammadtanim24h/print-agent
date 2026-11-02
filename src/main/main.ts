@@ -1,4 +1,4 @@
-import { app, ipcMain, protocol, safeStorage } from 'electron';
+import { app, ipcMain, protocol, safeStorage, type BrowserWindow } from 'electron';
 import electronLog from 'electron-log/main';
 import { readFile } from 'node:fs/promises';
 import net from 'node:net';
@@ -6,6 +6,7 @@ import { hostname } from 'node:os';
 import { join } from 'node:path';
 import {
   Channel,
+  PushEvent,
   RequestSchemas,
   type AppSettings,
   type SettingsUpdatePayload,
@@ -94,8 +95,7 @@ async function start(): Promise<void> {
 
   // TODO(release): the Laravel team owns the production API URL — confirm this
   // value on the release checklist before shipping.
-  const API_BASE_URL =
-    process.env['PRINT_AGENT_API_URL'] ?? 'https://print-api.example-saas.test';
+  const API_BASE_URL = process.env['PRINT_AGENT_API_URL'] ?? 'https://print-api.example-saas.test';
   // Escape hatch for a local/staging Laravel backend over plain http. Opt-in
   // via env on ANY build (dev or packaged) — smoke-testing an installed build
   // against a local backend is a release-checklist step. NEVER set
@@ -106,6 +106,11 @@ async function start(): Promise<void> {
   if (ALLOW_INSECURE_HTTP) {
     log.warn('PRINT_AGENT_ALLOW_HTTP=1 — transport downgraded to plain http; local testing only');
   }
+
+  // Assigned after createMainWindow below; the runtime may emit before the
+  // window exists (first poll cycle) — those signals are dropped, which is
+  // fine: the renderer fetches a fresh snapshot when it loads.
+  let mainWindow: BrowserWindow | null = null;
 
   const runtime = await createAgentRuntime({
     db,
@@ -123,6 +128,11 @@ async function start(): Promise<void> {
       baseUrl: API_BASE_URL,
       ...(ALLOW_INSECURE_HTTP ? { allowInsecureHttp: true } : {}),
     },
+    onSnapshotChanged: (reason) => {
+      if (mainWindow !== null && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(PushEvent.SnapshotChanged, { reason });
+      }
+    },
   });
   // Crash recovery + first poll cycle; no-op while unpaired.
   runtime.start();
@@ -132,6 +142,7 @@ async function start(): Promise<void> {
     // Dev workflow always shows the window; production honors the setting.
     startMinimized: settings.get().startMinimized && devServerUrl === undefined,
   });
+  mainWindow = window;
 
   const tray: TrayController = createTray({
     app,

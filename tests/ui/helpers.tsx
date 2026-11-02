@@ -1,6 +1,9 @@
 import { render } from '@testing-library/react';
 import type { ReactElement } from 'react';
-import { ServiceProvider } from '../../src/renderer/src/services/service-context';
+import {
+  ServiceProvider,
+  SnapshotRefreshProvider,
+} from '../../src/renderer/src/services/service-context';
 import type { AgentService } from '../../src/renderer/src/services/agent-service';
 import type {
   AgentIdentity,
@@ -105,6 +108,7 @@ class FakeAgentService implements AgentService {
     logLevel: 'info',
   };
   private reprintCounter = 0;
+  private snapshotListeners: ReadonlyArray<(reason: 'connection' | 'pairing') => void> = [];
 
   private seedJobs(): JobRecord[] {
     const t = Date.now();
@@ -169,12 +173,7 @@ class FakeAgentService implements AgentService {
   }
 
   getSnapshot(): Promise<AgentSnapshot> {
-    const terminal = new Set<JobRecord['status']>([
-      'completed',
-      'failed',
-      'ambiguous',
-      'rejected',
-    ]);
+    const terminal = new Set<JobRecord['status']>(['completed', 'failed', 'ambiguous', 'rejected']);
     const nonTerminal = new Set<JobRecord['status']>([
       'accepted',
       'rendered',
@@ -203,6 +202,20 @@ class FakeAgentService implements AgentService {
       ambiguousJobs: this.jobs.filter((j) => j.status === 'ambiguous').length,
       lastActivityAt: lastActivity ?? null,
     });
+  }
+
+  onSnapshotChanged(listener: (reason: 'connection' | 'pairing') => void): () => void {
+    this.snapshotListeners = [...this.snapshotListeners, listener];
+    return () => {
+      this.snapshotListeners = this.snapshotListeners.filter((l) => l !== listener);
+    };
+  }
+
+  /** Test seam: fires the push the real main process sends on state changes. */
+  emitSnapshotChanged(reason: 'connection' | 'pairing' = 'connection'): void {
+    for (const listener of this.snapshotListeners) {
+      listener(reason);
+    }
   }
 
   async pairWithCode(code: string): Promise<PairResult> {
@@ -444,8 +457,15 @@ class FakeAgentService implements AgentService {
   }
 }
 
+/** Test seam exposed by the fake (not part of AgentService). */
+export interface FakeServiceExtras {
+  emitSnapshotChanged(reason?: 'connection' | 'pairing'): void;
+}
+
 /** Deterministic in-memory service with selected methods overridden. */
-export function makeService(overrides: Partial<AgentService> = {}): AgentService {
+export function makeService(
+  overrides: Partial<AgentService> = {},
+): AgentService & FakeServiceExtras {
   const base = new FakeAgentService();
   return Object.assign(base, overrides);
 }
@@ -454,5 +474,9 @@ export function renderWithService(
   ui: ReactElement,
   service: AgentService,
 ): ReturnType<typeof render> {
-  return render(<ServiceProvider service={service}>{ui}</ServiceProvider>);
+  return render(
+    <ServiceProvider service={service}>
+      <SnapshotRefreshProvider>{ui}</SnapshotRefreshProvider>
+    </ServiceProvider>,
+  );
 }

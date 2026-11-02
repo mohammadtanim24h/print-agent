@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { useAsync, useService } from '../../services/service-context';
+import { useAsync, useService, useSnapshotTick } from '../../services/service-context';
 import type { JobRecord } from '../../services/types';
 import { Card, EmptyState, ErrorBanner, LoadingBlock, Timestamp } from '../primitives';
 import { JOB_STATUS_META, JobStatusPill } from '../status';
@@ -35,7 +35,8 @@ function matchesFilter(job: JobRecord, filter: StatusFilter): boolean {
 
 export function JobHistoryScreen(): React.JSX.Element {
   const service = useService();
-  const jobsState = useAsync(() => service.getJobs(), [service]);
+  const tick = useSnapshotTick();
+  const jobsState = useAsync(() => service.getJobs(), [service, tick]);
   const [filter, setFilter] = useState<StatusFilter>('all');
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   const [actionNote, setActionNote] = useState<string | null>(null);

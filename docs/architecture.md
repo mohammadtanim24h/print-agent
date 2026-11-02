@@ -135,6 +135,13 @@ encodability policy, raster fallback design, diagnostic summary contract).
 - Typed, per-channel whitelisted API over `contextBridge`; every message zod-validated
   in the preload/main boundary. The renderer can: show status, run pairing, trigger test
   print, view queue. It cannot: touch filesystem, network, or printers directly.
+- Main → renderer **push signals** (`PushEvent` in `shared/ipc-contract.ts`): on
+  connection-state transitions and after pair/unpair (including a server-side
+  revoke), the runtime notifies main via its `onSnapshotChanged` dep and main
+  sends `push:snapshot-changed` to the window — an in-process signal, no socket.
+  The preload validates the payload against `PushSchemas` before invoking the
+  listener; the renderer answers the signal by re-fetching `agent:snapshot`, so
+  the sidebar identity and status stay fresh without polling.
 
 ### 3.9 `renderer` (UI)
 

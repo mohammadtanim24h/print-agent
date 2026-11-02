@@ -1,7 +1,7 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { App } from './App';
-import { ServiceProvider } from './services/service-context';
+import { ServiceProvider, SnapshotRefreshProvider } from './services/service-context';
 import { createProductionService } from './services/production-service';
 import './app.css';
 
@@ -14,7 +14,9 @@ if (root === null) {
 createRoot(root).render(
   <StrictMode>
     <ServiceProvider service={createProductionService()}>
-      <App />
+      <SnapshotRefreshProvider>
+        <App />
+      </SnapshotRefreshProvider>
     </ServiceProvider>
   </StrictMode>,
 );

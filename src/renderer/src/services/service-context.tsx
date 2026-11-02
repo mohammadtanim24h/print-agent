@@ -19,6 +19,30 @@ export function useService(): AgentService {
   return service;
 }
 
+const SnapshotTickContext = createContext(0);
+
+/**
+ * Subscribes once to the main-process snapshot-changed push and exposes it as
+ * a counter. Screens pass this into their `useAsync` deps so every surface —
+ * not just the screen being viewed or mounted last — refetches when the agent
+ * state changes behind the UI's back (connection transitions, pair/unpair,
+ * server-side revoke).
+ */
+export function SnapshotRefreshProvider(props: { children: ReactNode }): React.JSX.Element {
+  const service = useService();
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    return service.onSnapshotChanged(() => {
+      setTick((t) => t + 1);
+    });
+  }, [service]);
+  return <SnapshotTickContext.Provider value={tick}>{props.children}</SnapshotTickContext.Provider>;
+}
+
+export function useSnapshotTick(): number {
+  return useContext(SnapshotTickContext);
+}
+
 export interface AsyncState<T> {
   readonly data: T | null;
   readonly loading: boolean;

@@ -1,9 +1,12 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import {
   Channel,
+  PushEvent,
+  PushSchemas,
   type AgentInfo,
   type AppSettings,
   type SettingsUpdatePayload,
+  type SnapshotChangeReason,
 } from '../shared/ipc-contract';
 import type {
   AgentSnapshot,
@@ -51,11 +54,25 @@ const api = {
   retryJob: (jobId: string): Promise<JobRecord> => ipcRenderer.invoke(Channel.JobsRetry, { jobId }),
   reprintJob: (jobId: string): Promise<JobRecord> =>
     ipcRenderer.invoke(Channel.JobsReprint, { jobId }),
-  getDiagnostics: (): Promise<DiagnosticsReport> =>
-    ipcRenderer.invoke(Channel.DiagnosticsReport),
+  getDiagnostics: (): Promise<DiagnosticsReport> => ipcRenderer.invoke(Channel.DiagnosticsReport),
   runConnectivityChecks: (): Promise<readonly ConnectivityCheck[]> =>
     ipcRenderer.invoke(Channel.DiagnosticsChecks),
   getRecentLogs: (): Promise<readonly LogLine[]> => ipcRenderer.invoke(Channel.LogsRecent),
+  /** Main → renderer signal: the snapshot changed (connection transition,
+   *  pair/unpair). Payload is zod-validated here so a malformed main-side
+   *  push can never reach renderer code; returns an unsubscribe function. */
+  onSnapshotChanged: (listener: (reason: SnapshotChangeReason) => void): (() => void) => {
+    const wrapped = (_event: Electron.IpcRendererEvent, payload: unknown): void => {
+      const parsed = PushSchemas[PushEvent.SnapshotChanged].safeParse(payload);
+      if (parsed.success) {
+        listener(parsed.data.reason);
+      }
+    };
+    ipcRenderer.on(PushEvent.SnapshotChanged, wrapped);
+    return () => {
+      ipcRenderer.removeListener(PushEvent.SnapshotChanged, wrapped);
+    };
+  },
 };
 
 contextBridge.exposeInMainWorld('printAgent', api);

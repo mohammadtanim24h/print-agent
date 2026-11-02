@@ -73,10 +73,36 @@ export const RequestSchemas = {
 
 export type RequestOf<C extends Channel> = z.output<(typeof RequestSchemas)[C]>;
 
+/**
+ * Main → renderer push events (webContents.send). These are signals only:
+ * the renderer re-fetches state through the request channels above, so no
+ * payload data needs to cross the boundary beyond the bounded reason enum.
+ * The preload validates every push payload against PushSchemas before the
+ * listener ever runs (CLAUDE.md rule 3 applies to both IPC directions).
+ */
+export const PushEvent = {
+  /** Emitted on connection-state transitions and after pair/unpair. */
+  SnapshotChanged: 'push:snapshot-changed',
+} as const;
+export type PushEvent = (typeof PushEvent)[keyof typeof PushEvent];
+
+export const SNAPSHOT_CHANGE_REASONS = ['connection', 'pairing'] as const;
+export type SnapshotChangeReason = (typeof SNAPSHOT_CHANGE_REASONS)[number];
+
+export const PushSchemas = {
+  [PushEvent.SnapshotChanged]: z.strictObject({ reason: z.enum(SNAPSHOT_CHANGE_REASONS) }),
+} as const satisfies Record<PushEvent, z.ZodType>;
+
 /** Derived from the schema — main.ts and preload must not re-declare it. */
 export type SettingsUpdatePayload = RequestOf<(typeof Channel)['SettingsUpdate']>;
 
-export const CONNECTION_STATES = ['unpaired', 'connecting', 'online', 'offline', 'revoked'] as const;
+export const CONNECTION_STATES = [
+  'unpaired',
+  'connecting',
+  'online',
+  'offline',
+  'revoked',
+] as const;
 
 export const AgentInfoSchema = z.strictObject({
   name: z.string(),

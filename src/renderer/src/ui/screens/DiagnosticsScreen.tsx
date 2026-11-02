@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useAsync, useService } from '../../services/service-context';
+import { useAsync, useService, useSnapshotTick } from '../../services/service-context';
 import type {
   CheckStatus,
   ConnectivityCheck,
@@ -56,13 +56,14 @@ interface DiagnosticsBundle {
 
 export function DiagnosticsScreen(): React.JSX.Element {
   const service = useService();
+  const tick = useSnapshotTick();
   const dataState = useAsync<DiagnosticsBundle>(
     () =>
       Promise.all([service.getDiagnostics(), service.getRecentLogs()]).then(([report, logs]) => ({
         report,
         logs: [...logs],
       })),
-    [service],
+    [service, tick],
   );
 
   const [checks, setChecks] = useState<readonly ConnectivityCheck[] | null>(null);

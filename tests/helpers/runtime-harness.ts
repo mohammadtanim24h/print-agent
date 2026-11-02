@@ -142,7 +142,10 @@ export function fakeCloudTransport(): FakeCloudTransport {
   return impl;
 }
 
-export function makeCloudPrinterConfig(n: number, overrides: Partial<PrinterConfig> = {}): PrinterConfig {
+export function makeCloudPrinterConfig(
+  n: number,
+  overrides: Partial<PrinterConfig> = {},
+): PrinterConfig {
   return {
     printer_id: makeUuid(100 + n),
     name: `Cloud-${String(n)}`,
@@ -251,6 +254,7 @@ async function makeRuntime(
     safeStorage?: SafeStorageLike;
     log?: Logger;
     spoolerBridge?: SpoolerBridge;
+    onSnapshotChanged?: (reason: 'connection' | 'pairing') => void;
   } = {},
 ): Promise<RuntimeHarness> {
   const db = openDatabase({ file: null });
@@ -302,6 +306,9 @@ async function makeRuntime(
       identityKvFile: ':memory-identity-kv',
     },
     cloud: { baseUrl: 'https://api.test', pollIntervalMs: 20 },
+    ...(overrides.onSnapshotChanged !== undefined
+      ? { onSnapshotChanged: overrides.onSnapshotChanged }
+      : {}),
     env,
   });
   runtimes.push(runtime);

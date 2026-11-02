@@ -37,6 +37,7 @@ import type { SqliteDatabase } from './local-store/db';
 import { createAckBuffer, type AckBuffer } from './ack-buffer';
 import { createJsonFileKv } from './secret-kv';
 import { mapPairFailure, toJobRecord, toPrinterInfo } from './view-model';
+import type { SnapshotChangeReason } from '../shared/ipc-contract';
 import type {
   AgentSnapshot,
   ConnectivityCheck,
@@ -76,6 +77,10 @@ export interface RuntimeDeps {
     /** Dev-only: permits http:// base URLs for a local backend (main.ts gates it on !app.isPackaged). */
     readonly allowInsecureHttp?: boolean;
   };
+  /** Notified whenever the snapshot's content may have changed (connection-state
+   *  transition, pair, unpair). main.ts forwards this to the renderer as a
+   *  `push:snapshot-changed` signal so the UI re-fetches instead of polling. */
+  readonly onSnapshotChanged?: (reason: SnapshotChangeReason) => void;
   /** Test seams; defaults are the real implementations. */
   readonly env?: {
     readonly transportOverride?: AgentTransport;
@@ -257,7 +262,9 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
     // Acks retained while offline drain the moment we are back online —
     // never wait out the buffer's delay timer after a reconnect.
     if (next === 'online' && state !== 'online') ackBuffer.flushNow();
+    const changed = next !== state;
     state = next;
+    if (changed) deps.onSnapshotChanged?.('connection');
   });
 
   // Validated + scope/-signature-checked by the poller — no re-validation here.
@@ -476,6 +483,7 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
       statusPoller.start(); // idempotent: covers a runtime that booted unpaired
       fetchConfigOnce(); // fire-and-forget; the fleet also arrives via poll/push
       armConfigRefresh(); // idempotent; pairs a runtime whose start() already ran unpaired
+      deps.onSnapshotChanged?.('pairing');
       return { ok: true, identity: toAgentIdentity(identity, pairedAt) };
     } catch (err) {
       if (err instanceof CloudError) return mapPairFailure(err);
@@ -486,6 +494,7 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
   async function unpair(): Promise<void> {
     await wipeLocalState();
     state = 'unpaired'; // the stopped client keeps its last state; the runtime reports the truth
+    deps.onSnapshotChanged?.('pairing');
   }
 
   // ---- snapshot ------------------------------------------------------------

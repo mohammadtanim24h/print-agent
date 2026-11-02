@@ -3,6 +3,8 @@ import {
   AgentInfoSchema,
   AppSettingsSchema,
   Channel,
+  PushEvent,
+  PushSchemas,
   RequestSchemas,
 } from '../src/shared/ipc-contract';
 import { createIpcRouter, IpcUnknownChannelError } from '../src/main/ipc/register';
@@ -213,8 +215,12 @@ describe('wiring-phase channels', () => {
   it('validates the pairing code per api-contract §3.4 (8 alnum chars)', () => {
     expect(RequestSchemas[Channel.PairWithCode].safeParse({ code: '7QJ2K9XD' }).success).toBe(true);
     expect(RequestSchemas[Channel.PairWithCode].safeParse({ code: '7QJ2K9X' }).success).toBe(false);
-    expect(RequestSchemas[Channel.PairWithCode].safeParse({ code: '7QJ2K9XD1' }).success).toBe(false);
-    expect(RequestSchemas[Channel.PairWithCode].safeParse({ code: '7QJ2K9X!' }).success).toBe(false);
+    expect(RequestSchemas[Channel.PairWithCode].safeParse({ code: '7QJ2K9XD1' }).success).toBe(
+      false,
+    );
+    expect(RequestSchemas[Channel.PairWithCode].safeParse({ code: '7QJ2K9X!' }).success).toBe(
+      false,
+    );
     expect(
       RequestSchemas[Channel.PairWithCode].safeParse({ code: '7QJ2K9XD', extra: 1 }).success,
     ).toBe(false);
@@ -223,15 +229,26 @@ describe('wiring-phase channels', () => {
   it('bounds printer/job id payloads and rejects unknown fields', () => {
     const uuid = '11111111-1111-4111-8111-111111111111';
     expect(RequestSchemas[Channel.PrintersTest].safeParse({ printerId: uuid }).success).toBe(true);
-    expect(RequestSchemas[Channel.PrintersTest].safeParse({ printerId: 'nope' }).success).toBe(false);
+    expect(RequestSchemas[Channel.PrintersTest].safeParse({ printerId: 'nope' }).success).toBe(
+      false,
+    );
     expect(RequestSchemas[Channel.JobsRetry].safeParse({ jobId: uuid }).success).toBe(true);
   });
 
   it('widens AgentInfo connectionState to the cloud union', () => {
     for (const s of ['unpaired', 'connecting', 'online', 'offline', 'revoked'] as const) {
-      expect(AgentInfoSchema.safeParse({ name: 'print-agent', version: '0.1.0', connectionState: s }).success).toBe(true);
+      expect(
+        AgentInfoSchema.safeParse({ name: 'print-agent', version: '0.1.0', connectionState: s })
+          .success,
+      ).toBe(true);
     }
-    expect(AgentInfoSchema.safeParse({ name: 'print-agent', version: '0.1.0', connectionState: 'disabled' }).success).toBe(false);
+    expect(
+      AgentInfoSchema.safeParse({
+        name: 'print-agent',
+        version: '0.1.0',
+        connectionState: 'disabled',
+      }).success,
+    ).toBe(false);
   });
 
   it('extends AppSettings with startMinimized and logLevel (defaults for old files)', () => {
@@ -240,7 +257,9 @@ describe('wiring-phase channels', () => {
     expect(parsed.startMinimized).toBe(true);
     expect(parsed.logLevel).toBe('info');
     expect(parsed.pairedAt).toBeNull();
-    expect(AppSettingsSchema.safeParse({ launchAtLogin: false, logLevel: 'verbose' }).success).toBe(false);
+    expect(AppSettingsSchema.safeParse({ launchAtLogin: false, logLevel: 'verbose' }).success).toBe(
+      false,
+    );
   });
 
   it('registers the settings:update channel for startMinimized/logLevel patches', () => {
@@ -262,9 +281,9 @@ describe('wiring-phase channels', () => {
   });
 
   it('settings:update rejects unknown fields, wrong types and bad levels', () => {
-    expect(
-      RequestSchemas[Channel.SettingsUpdate].safeParse({ launchAtLogin: true }).success,
-    ).toBe(false);
+    expect(RequestSchemas[Channel.SettingsUpdate].safeParse({ launchAtLogin: true }).success).toBe(
+      false,
+    );
     expect(
       RequestSchemas[Channel.SettingsUpdate].safeParse({ startMinimized: 'yes' }).success,
     ).toBe(false);
@@ -274,5 +293,21 @@ describe('wiring-phase channels', () => {
     expect(
       RequestSchemas[Channel.SettingsUpdate].safeParse({ startMinimized: true, extra: 1 }).success,
     ).toBe(false);
+  });
+
+  it('push events have a strict schema with a bounded reason enum', () => {
+    expect(PushSchemas[PushEvent.SnapshotChanged].safeParse({ reason: 'connection' }).success).toBe(
+      true,
+    );
+    expect(PushSchemas[PushEvent.SnapshotChanged].safeParse({ reason: 'pairing' }).success).toBe(
+      true,
+    );
+    expect(PushSchemas[PushEvent.SnapshotChanged].safeParse({ reason: 'other' }).success).toBe(
+      false,
+    );
+    expect(
+      PushSchemas[PushEvent.SnapshotChanged].safeParse({ reason: 'pairing', extra: 1 }).success,
+    ).toBe(false);
+    expect(PushSchemas[PushEvent.SnapshotChanged].safeParse(undefined).success).toBe(false);
   });
 });

@@ -1,14 +1,12 @@
 import { useState } from 'react';
-import { useAsync, useService } from '../../services/service-context';
-import type { PrinterDraft, PrinterInfo, PrinterProfile, TestPrintResult } from '../../services/types';
-import {
-  Card,
-  EmptyState,
-  ErrorBanner,
-  Field,
-  LoadingBlock,
-  Timestamp,
-} from '../primitives';
+import { useAsync, useService, useSnapshotTick } from '../../services/service-context';
+import type {
+  PrinterDraft,
+  PrinterInfo,
+  PrinterProfile,
+  TestPrintResult,
+} from '../../services/types';
+import { Card, EmptyState, ErrorBanner, Field, LoadingBlock, Timestamp } from '../primitives';
 import { PrinterHealthPill } from '../status';
 import { ConfirmDialog } from '../ConfirmDialog';
 import { PlusIcon, PrinterIcon } from '../icons';
@@ -40,7 +38,12 @@ const emptyDraft: PrinterDraft = {
 
 /** Sensible starting points per paper width. They only prefill the form —
  *  the real per-printer values stay editable (profile.ts: never derived). */
-const PAPER_DEFAULTS: Readonly<Record<PrinterProfile['paperWidthMm'], { readonly printableDots: number; readonly charsPerLine: number }>> = {
+const PAPER_DEFAULTS: Readonly<
+  Record<
+    PrinterProfile['paperWidthMm'],
+    { readonly printableDots: number; readonly charsPerLine: number }
+  >
+> = {
   80: { printableDots: 576, charsPerLine: 48 },
   58: { printableDots: 384, charsPerLine: 32 },
 };
@@ -69,7 +72,8 @@ export function transportLabel(transport: PrinterProfile['transport']): string {
 
 export function PrintersScreen(): React.JSX.Element {
   const service = useService();
-  const printersState = useAsync(() => service.getPrinters(), [service]);
+  const tick = useSnapshotTick();
+  const printersState = useAsync(() => service.getPrinters(), [service, tick]);
 
   const [form, setForm] = useState<{
     readonly mode: 'add' | 'edit';

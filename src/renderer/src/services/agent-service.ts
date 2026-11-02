@@ -19,6 +19,13 @@ import type {
 export interface AgentService {
   getSnapshot(): Promise<AgentSnapshot>;
 
+  /**
+   * Main-process push: the snapshot changed (connection-state transition,
+   * pair/unpair — including a server-side revoke). The listener should
+   * re-fetch via getSnapshot. Returns an unsubscribe function.
+   */
+  onSnapshotChanged(listener: (reason: 'connection' | 'pairing') => void): () => void;
+
   pairWithCode(code: string): Promise<PairResult>;
   /** Wipes pairing credentials, queued jobs and cached printers (PRD FR-4). */
   unpair(): Promise<void>;

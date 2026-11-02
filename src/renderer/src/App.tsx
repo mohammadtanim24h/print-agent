@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useAsync, useService } from './services/service-context';
+import { useAsync, useService, useSnapshotTick } from './services/service-context';
 import {
   GearIcon,
   GaugeIcon,
@@ -45,9 +45,10 @@ function readStoredTheme(): Theme {
 
 export function App(): React.JSX.Element {
   const service = useService();
+  const tick = useSnapshotTick();
   const [screen, setScreen] = useState<ScreenId>('overview');
   const [theme, setTheme] = useState<Theme>(readStoredTheme);
-  const snapshotState = useAsync(() => service.getSnapshot(), [service]);
+  const snapshotState = useAsync(() => service.getSnapshot(), [service, tick]);
   const identity = snapshotState.data?.identity ?? null;
 
   useEffect(() => {

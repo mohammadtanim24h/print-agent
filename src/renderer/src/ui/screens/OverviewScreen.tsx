@@ -1,13 +1,6 @@
-import { useService, useAsync } from '../../services/service-context';
+import { useService, useAsync, useSnapshotTick } from '../../services/service-context';
 import type { AgentSnapshot, JobRecord, PrinterInfo } from '../../services/types';
-import {
-  Card,
-  EmptyState,
-  ErrorBanner,
-  KeyVal,
-  LoadingBlock,
-  Timestamp,
-} from '../primitives';
+import { Card, EmptyState, ErrorBanner, KeyVal, LoadingBlock, Timestamp } from '../primitives';
 import { ConnectionPill, JobStatusPill, PrinterHealthPill } from '../status';
 import { PlugIcon, ReceiptIcon, WarnTriangleIcon } from '../icons';
 
@@ -23,12 +16,13 @@ export function OverviewScreen(props: {
   readonly onNavigate: (screen: ScreenId) => void;
 }): React.JSX.Element {
   const service = useService();
+  const tick = useSnapshotTick();
   const state = useAsync<OverviewData>(
     () =>
       Promise.all([service.getSnapshot(), service.getPrinters(), service.getJobs()]).then(
         ([snapshot, printers, jobs]) => ({ snapshot, printers: [...printers], jobs: [...jobs] }),
       ),
-    [service],
+    [service, tick],
   );
 
   if (state.loading) {

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useAsync, useService } from '../../services/service-context';
+import { useAsync, useService, useSnapshotTick } from '../../services/service-context';
 import type { LogLevel, UiSettings } from '../../services/types';
 import type { Theme } from '../../App';
 import { Card, ErrorBanner, Field, LoadingBlock } from '../primitives';
@@ -17,8 +17,9 @@ export function SettingsScreen(props: {
   readonly onThemeChange: (theme: Theme) => void;
 }): React.JSX.Element {
   const service = useService();
-  const settingsState = useAsync<UiSettings>(() => service.getSettings(), [service]);
-  const snapshotState = useAsync(() => service.getSnapshot(), [service]);
+  const tick = useSnapshotTick();
+  const settingsState = useAsync<UiSettings>(() => service.getSettings(), [service, tick]);
+  const snapshotState = useAsync(() => service.getSnapshot(), [service, tick]);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [savedNote, setSavedNote] = useState(false);

@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { useAsync, useService } from '../../services/service-context';
+import { useAsync, useService, useSnapshotTick } from '../../services/service-context';
 import type { AgentSnapshot, PairResult } from '../../services/types';
 import { Card, ErrorBanner, KeyVal, LoadingBlock, Timestamp } from '../primitives';
 import { ConnectionPill } from '../status';
@@ -9,7 +9,8 @@ const CODE_LENGTH = 8;
 
 export function SetupScreen(props: { readonly onPaired?: () => void }): React.JSX.Element {
   const service = useService();
-  const snapshotState = useAsync<AgentSnapshot>(() => service.getSnapshot(), [service]);
+  const tick = useSnapshotTick();
+  const snapshotState = useAsync<AgentSnapshot>(() => service.getSnapshot(), [service, tick]);
 
   const [code, setCode] = useState('');
   const [pairing, setPairing] = useState(false);
