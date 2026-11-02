@@ -314,7 +314,7 @@ describe('cloud event plumbing', () => {
     const { runtime, transport, db } = await makeRuntime();
     runtime.start();
     await runtime.pair(PAIRING_CODE);
-    transport.queuedJobs.push({ type: 'config_update', config_version: 7, printers: [] });
+    transport.queuedJobs.push(makeCloudConfig(7, []));
     await vi.waitFor(() => {
       const row = db.prepare('SELECT config_version FROM cloud_config').get();
       expect(row).toMatchObject({ config_version: 7 });
@@ -497,6 +497,31 @@ describe('AgentRuntime config application (FR-16)', () => {
     expect(runtime.printers.list().map((p) => p.config.name)).toEqual(['Cloud-1']);
   });
 
+  it('applies a lower config_version from a different restaurant_uid (backend reset/reseed)', async () => {
+    const { runtime, transport, settings } = await makeRuntime();
+    runtime.start();
+    await runtime.pair(PAIRING_CODE);
+    transport.queuedJobs.push(makeCloudConfig(9, [makeCloudPrinterConfig(1)]));
+    await vi.waitFor(() => {
+      expect(runtime.printers.list()).toHaveLength(1);
+    });
+    expect(settings.get().appliedConfigVersion).toBe(9);
+
+    // Backend DB reseeded (fresh restaurant_settings row) or the agent re-pointed
+    // at a fresh server: the counter restarts LOW under a new restaurant_uid.
+    // The monotonic guard must reset, not silently drop every later snapshot.
+    const reseededUid = '018f3c2e-0000-7000-8000-0000000000aa';
+    // The reseeded server serves this snapshot consistently (GET /config and
+    // the poll batch) — model both, the 60 s refresh keeps re-fetching.
+    transport.configResponse = makeCloudConfig(2, [makeCloudPrinterConfig(2)], reseededUid);
+    transport.queuedJobs.push(transport.configResponse);
+    await vi.waitFor(() => {
+      expect(runtime.printers.list().map((p) => p.config.name)).toEqual(['Cloud-2']);
+    });
+    expect(settings.get().appliedConfigVersion).toBe(2);
+    expect(settings.get().appliedConfigRestaurantUid).toBe(reseededUid);
+  });
+
   it('reject-all: a config with an unmappable printer mutates nothing and warns', async () => {
     const warn = vi.fn();
     const { runtime, transport } = await makeRuntime({
@@ -583,6 +608,7 @@ describe('AgentRuntime config application (FR-16)', () => {
 
     await runtime.unpair();
     expect(settings.get().appliedConfigVersion).toBe(-1);
+    expect(settings.get().appliedConfigRestaurantUid).toBeNull();
     expect(settings.get().pairedAt).toBeNull();
   });
 

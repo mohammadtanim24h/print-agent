@@ -121,6 +121,11 @@ export const AppSettingsSchema = z.strictObject({
    *  never sets it (main-only concern living in the shared schema because
    *  the settings file is one schema). */
   appliedConfigVersion: z.number().int().default(-1),
+  /** FR-16: restaurant_uid the appliedConfigVersion marker belongs to (from
+   *  the config snapshot, §4). null = none. config_version counters are
+   *  scoped per restaurant — a uid change means the backend's counter space
+   *  was reset (DB reseed / server switch), so the marker must not apply. */
+  appliedConfigRestaurantUid: z.string().nullable().default(null),
 });
 
 export type AgentInfo = z.output<typeof AgentInfoSchema>;

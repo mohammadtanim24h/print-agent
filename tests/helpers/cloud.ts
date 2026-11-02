@@ -129,6 +129,7 @@ export function makeConfig(
   return {
     type: 'config_update',
     config_version: configVersion,
+    restaurant_uid: RESTAURANT_ID,
     printers: [
       {
         printer_id: PRINTER_ID,

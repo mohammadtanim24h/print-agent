@@ -18,6 +18,7 @@ import {
   makeSignedEnvelope,
   makePairResponse,
   OTHER_TENANT_ID,
+  RESTAURANT_ID,
   settle,
   DEVICE_ID,
 } from './helpers/cloud';
@@ -473,6 +474,24 @@ describe('config sync', () => {
     await h.client.refreshConfig();
     expect(h.configs).toHaveLength(1);
     version = 6;
+    await h.client.refreshConfig();
+    expect(h.configs).toHaveLength(2);
+  });
+
+  it('a restaurant_uid change resets the in-memory regression guard', async () => {
+    // Backend reseeded mid-session: same low counter, new restaurant_uid must
+    // not be dropped as a regression by the poller before the runtime sees it.
+    let version = 5;
+    let uid = RESTAURANT_ID;
+    const h = makeHarness({
+      config: () => makeConfig(version, { restaurant_uid: uid }),
+    });
+    await startAndSettle(h);
+    await h.client.refreshConfig();
+    expect(h.configs).toHaveLength(1);
+
+    version = 2; // below the applied marker…
+    uid = '018f3c2e-0000-7000-8000-0000000000aa'; // …but a new counter space
     await h.client.refreshConfig();
     expect(h.configs).toHaveLength(2);
   });

@@ -119,6 +119,11 @@ export const ConfigUpdateSchema = z.looseObject({
   envelope_version: z.literal(ENVELOPE_VERSION).optional(),
   type: z.literal('config_update'),
   config_version: z.number().int().min(0).max(2_147_483_647),
+  /** Restaurant the snapshot belongs to — scopes the config_version counter.
+   *  Additive optional (contract §5.2): lets the agent detect a backend
+   *  reseed/server switch, where the counter restarts LOW. Agents scope the
+   *  monotonic apply guard (§6) by it. */
+  restaurant_uid: z.uuid().optional(),
   printers: z.array(PrinterConfigSchema).max(50),
 });
 

@@ -317,9 +317,27 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
     // synchronously before onRevoked fires the wipe. (An unpair-path apply
     // registered mid-drain can still pass this gate — the wipe's
     // double-drain closes that overlap instead.)
-    if (readIdentity() === null) return;
-    const marker = deps.settings.get().appliedConfigVersion;
-    if (config.config_version <= marker) return; // regression — ignore (§6)
+    const identity = readIdentity();
+    if (identity === null) return;
+    // §6's monotonic guard is scoped per restaurant (§4 restaurant_uid): a
+    // uid change means the backend's counter space was reset (DB reseed or
+    // the agent re-pointed at a fresh server) and the version is not
+    // comparable — reset the marker instead of dropping every snapshot
+    // forever. An old server that omits restaurant_uid maps to null and
+    // keeps the legacy (unscoped) behavior.
+    const settings = deps.settings.get();
+    const uid = config.restaurant_uid ?? null;
+    const sameCounterSpace = uid === settings.appliedConfigRestaurantUid;
+    const marker = sameCounterSpace ? settings.appliedConfigVersion : -1;
+    if (config.config_version <= marker) {
+      if (config.config_version < marker) {
+        log.warn(
+          `runtime: server config_version regressed below the applied marker ` +
+            `(v${String(config.config_version)} < v${String(marker)}) — ignoring`,
+        );
+      }
+      return; // regression — ignore (§6)
+    }
     configStore.save(config); // record of latest known config, even if apply fails
     const mapped = mapCloudPrinters(config);
     if (!mapped.ok) {
@@ -332,7 +350,10 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
     // fails, the store is unchanged (replaceCloud is atomic) and the marker
     // stays old, so start() re-applies this config.
     if (generation === wipeGeneration && readIdentity() !== null) {
-      await deps.settings.set({ appliedConfigVersion: config.config_version });
+      await deps.settings.set({
+        appliedConfigVersion: config.config_version,
+        appliedConfigRestaurantUid: uid,
+      });
     }
   }
 
@@ -438,7 +459,11 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
       jobStore.clearJobs();
       await printers.clear();
       configStore.clear();
-      await deps.settings.set({ pairedAt: null, appliedConfigVersion: -1 });
+      await deps.settings.set({
+        pairedAt: null,
+        appliedConfigVersion: -1,
+        appliedConfigRestaurantUid: null,
+      });
     } catch (err) {
       log.error(`runtime: local state wipe failed: ${describeErr(err)}`);
     }

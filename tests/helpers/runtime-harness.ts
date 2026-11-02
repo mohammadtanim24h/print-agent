@@ -90,6 +90,7 @@ export function fakeCloudTransport(): FakeCloudTransport {
     configResponse: {
       type: 'config_update',
       config_version: 0,
+      restaurant_uid: RESTAURANT_ID,
       printers: [],
     } as ConfigUpdate,
     configFetches: 0,
@@ -166,8 +167,17 @@ export function makeCloudPrinterConfig(
   };
 }
 
-export function makeCloudConfig(configVersion: number, printers: PrinterConfig[]): ConfigUpdate {
-  return { type: 'config_update', config_version: configVersion, printers };
+export function makeCloudConfig(
+  configVersion: number,
+  printers: PrinterConfig[],
+  restaurantUid: string = RESTAURANT_ID,
+): ConfigUpdate {
+  return {
+    type: 'config_update',
+    config_version: configVersion,
+    restaurant_uid: restaurantUid,
+    printers,
+  };
 }
 
 /** Printer transports that succeed instantly — hermetic, no real sockets. */

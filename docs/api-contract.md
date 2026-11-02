@@ -195,7 +195,8 @@ unchanged (a 3 s cadence only makes it sharper). WSS-connected agents keep the
   `"connection": "poll"`. Response: `204`. Not sent by WSS-connected agents;
   WSS agents keep §3.2 semantics unchanged.
 - `GET /config` response: the §4 config-update body
-  (`{ config_version, printers: [...] }`, with optional `envelope_version`).
+  (`{ config_version, restaurant_uid, printers: [...] }`, with optional
+  `envelope_version`).
 - `GET /server-keys` response:
   `{ "keys": [{ "kid": string≤64, "public_key": ed25519-raw-base64url, "active": bool }], }`
   ≤ 5 keys; the agent pins the `active` key returned at pairing and refreshes it
@@ -230,6 +231,12 @@ stolen tokens; revocation is also enforced server-side on every REST call.
 
 ```jsonc
 { "type": "config_update", "config_version": 41,
+  // UUIDv7 of the restaurant the snapshot belongs to — scopes the
+  // config_version counter. Additive optional (§5.2); the agent uses it to
+  // detect a backend reset (DB reseed / server switch) where the counter
+  // restarts LOW, and resets its monotonic apply guard instead of dropping
+  // every later snapshot. Servers MUST send it.
+  "restaurant_uid": "018f3c2e-...",
   "printers": [ {
     "printer_id": "018f...", "name": "Kitchen-1",
     "transport": { "kind": "tcp_raw", "host": "192.168.1.87", "port": 9100,
@@ -246,7 +253,10 @@ stolen tokens; revocation is also enforced server-side on every REST call.
 ```
 
 Agent applies atomically on `config_version` increase; acks `config.applied` or
-`config.rejected{error}`. Offline agents apply on reconnect.
+`config.rejected{error}`. Offline agents apply on reconnect. The increase is
+scoped per `restaurant_uid`: a snapshot whose `restaurant_uid` differs from the
+last applied one resets the agent's version marker (the counter space changed),
+so a reseeded/fresh backend is picked up instead of being silently ignored.
 
 Agent-side merge policy (v1): profiles are source-tagged `local`/`cloud`; a
 config_update manages only cloud-tagged entries (locally-added printers are
@@ -399,7 +409,7 @@ and the pull-claim (§7 note 6) remain the operative server surface.
 
 `POST /api/agent/v1/heartbeat` → 204 (empty body).
 `GET /api/agent/v1/config` → 200 `{ envelope_version, type: "config_update",
-config_version, printers: [...] }` (§4 printer shape).
+config_version, restaurant_uid, printers: [...] }` (§4 printer shape).
 `GET /api/agent/v1/server-keys` → 200 `{ keys: [{ kid, public_key, active }] }`.
 
 Error example (agent surface):

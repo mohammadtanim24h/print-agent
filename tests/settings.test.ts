@@ -29,6 +29,7 @@ describe('settings store', () => {
     logLevel: 'info',
     pairedAt: null,
     appliedConfigVersion: -1,
+    appliedConfigRestaurantUid: null,
   };
 
   it('loads defaults when no file exists', async () => {
@@ -87,13 +88,16 @@ describe('settings store', () => {
 describe('appliedConfigVersion', () => {
   it('defaults to -1 (nothing applied yet) and survives a round-trip parse', () => {
     expect(DEFAULT_SETTINGS.appliedConfigVersion).toBe(-1);
+    expect(DEFAULT_SETTINGS.appliedConfigRestaurantUid).toBeNull();
     const parsed = AppSettingsSchema.parse({ launchAtLogin: false });
     expect(parsed.appliedConfigVersion).toBe(-1);
     const bumped = AppSettingsSchema.parse({
       launchAtLogin: false,
       appliedConfigVersion: 41,
+      appliedConfigRestaurantUid: '018f3c2e-0000-7000-8000-000000000002',
     });
     expect(bumped.appliedConfigVersion).toBe(41);
+    expect(bumped.appliedConfigRestaurantUid).toBe('018f3c2e-0000-7000-8000-000000000002');
   });
 
   it('rejects a non-integer marker', () => {

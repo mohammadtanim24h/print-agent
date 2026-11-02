@@ -14,7 +14,13 @@ import {
   decodeEd25519PublicKey,
   generateDeviceKeyPair,
 } from '../src/main/cloud-client/envelope-sig';
-import { makeConfig, makeConfigRaw, makeSignedEnvelope, PRINTER_ID } from './helpers/cloud';
+import {
+  makeConfig,
+  makeConfigRaw,
+  makeSignedEnvelope,
+  PRINTER_ID,
+  RESTAURANT_ID,
+} from './helpers/cloud';
 
 describe('canonicalJson', () => {
   it('sorts keys recursively and emits no whitespace', () => {
@@ -94,7 +100,14 @@ describe('PrintJobEnvelopeSchema (contract §6 envelope matrix)', () => {
 
 describe('ConfigUpdateSchema', () => {
   it('accepts a valid config snapshot', () => {
-    expect(ConfigUpdateSchema.parse(makeConfig(41)).config_version).toBe(41);
+    const parsed = ConfigUpdateSchema.parse(makeConfig(41));
+    expect(parsed.config_version).toBe(41);
+    expect(parsed.restaurant_uid).toBe(RESTAURANT_ID);
+  });
+
+  it('rejects a malformed restaurant_uid', () => {
+    expect(ConfigUpdateSchema.safeParse(makeConfigRaw(2, { restaurant_uid: 'not-a-uuid' })).success)
+      .toBe(false);
   });
 
   it('rejects an invalid tcp transport address', () => {

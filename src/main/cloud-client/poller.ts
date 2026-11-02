@@ -181,6 +181,9 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
   let pendingImmediateCycle = false;
   let backoffAttempt = 0;
   let appliedConfigVersion = -1;
+  /** Counter space the in-memory version was observed under (§4): a uid
+   *  change (backend reseed / server switch) resets the regression guard. */
+  let appliedConfigUid: string | null = null;
   let lastRefreshAt = -Infinity;
   let refreshInFlight: Promise<void> | null = null;
   /**
@@ -494,7 +497,12 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
   }
 
   function handleConfig(config: ConfigUpdate): void {
-    if (config.config_version <= appliedConfigVersion) {
+    const uid = config.restaurant_uid ?? null;
+    if (uid !== appliedConfigUid) {
+      // New counter space — the version is not comparable with the marker.
+      appliedConfigUid = uid;
+      appliedConfigVersion = -1;
+    } else if (config.config_version <= appliedConfigVersion) {
       log('cloud: ignored config version regression');
       return;
     }
@@ -553,6 +561,7 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
       );
       cursor = '';
       appliedConfigVersion = -1;
+      appliedConfigUid = null;
       start();
       return paired;
     },
