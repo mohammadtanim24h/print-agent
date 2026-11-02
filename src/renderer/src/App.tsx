@@ -1,13 +1,15 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAsync, useService } from './services/service-context';
 import {
   GearIcon,
   GaugeIcon,
   ListIcon,
+  MoonIcon,
   PlugIcon,
   PrinterIcon,
   PulseIcon,
   ReceiptIcon,
+  SunIcon,
 } from './ui/icons';
 import { Timestamp } from './ui/primitives';
 import type { ScreenId } from './ui/screens/OverviewScreen';
@@ -31,11 +33,37 @@ const NAV: ReadonlyArray<{
   { id: 'diagnostics', label: 'Diagnostics', Icon: PulseIcon },
 ];
 
+export type Theme = 'dark' | 'light';
+
+const THEME_STORAGE_KEY = 'printagent.theme';
+
+function readStoredTheme(): Theme {
+  try {
+    return window.localStorage.getItem(THEME_STORAGE_KEY) === 'light' ? 'light' : 'dark';
+  } catch {
+    return 'dark';
+  }
+}
+
 export function App(): React.JSX.Element {
   const service = useService();
   const [screen, setScreen] = useState<ScreenId>('overview');
+  const [theme, setTheme] = useState<Theme>(readStoredTheme);
   const snapshotState = useAsync(() => service.getSnapshot(), [service]);
   const identity = snapshotState.data?.identity ?? null;
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    try {
+      window.localStorage.setItem(THEME_STORAGE_KEY, theme);
+    } catch {
+      // Persistence is best-effort; the in-session choice still applies.
+    }
+  }, [theme]);
+
+  const changeTheme = (next: Theme): void => {
+    setTheme(next);
+  };
 
   const navigate = (next: ScreenId): void => {
     setScreen(next);
@@ -79,6 +107,16 @@ export function App(): React.JSX.Element {
           ) : (
             <span className="sidebar-device">Not paired</span>
           )}
+          <button
+            type="button"
+            className="theme-toggle"
+            onClick={() => {
+              changeTheme(theme === 'dark' ? 'light' : 'dark');
+            }}
+          >
+            {theme === 'dark' ? <SunIcon size={14} /> : <MoonIcon size={14} />}
+            <span>{theme === 'dark' ? 'Light mode' : 'Dark mode'}</span>
+          </button>
         </div>
       </nav>
 
@@ -93,7 +131,9 @@ export function App(): React.JSX.Element {
         )}
         {screen === 'printers' && <PrintersScreen />}
         {screen === 'jobs' && <JobHistoryScreen />}
-        {screen === 'settings' && <SettingsScreen onNavigate={navigate} />}
+        {screen === 'settings' && (
+          <SettingsScreen onNavigate={navigate} theme={theme} onThemeChange={changeTheme} />
+        )}
         {screen === 'diagnostics' && <DiagnosticsScreen />}
         <footer className="content-foot">
           {snapshotState.data !== null && snapshotState.data.lastActivityAt !== null && (

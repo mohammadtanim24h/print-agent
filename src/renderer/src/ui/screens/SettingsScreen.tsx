@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useAsync, useService } from '../../services/service-context';
 import type { LogLevel, UiSettings } from '../../services/types';
+import type { Theme } from '../../App';
 import { Card, ErrorBanner, Field, LoadingBlock } from '../primitives';
 import { ConnectionPill } from '../status';
 
@@ -13,6 +14,8 @@ const LOG_LEVELS: ReadonlyArray<{ readonly value: LogLevel; readonly label: stri
 
 export function SettingsScreen(props: {
   readonly onNavigate: (screen: 'diagnostics') => void;
+  readonly theme: Theme;
+  readonly onThemeChange: (theme: Theme) => void;
 }): React.JSX.Element {
   const service = useService();
   const settingsState = useAsync<UiSettings>(() => service.getSettings(), [service]);
@@ -72,6 +75,30 @@ export function SettingsScreen(props: {
         />
       )}
 
+      <Card title="Appearance">
+        <div className="setting-row">
+          <div className="setting-text">
+            <span className="row-title">Dark theme</span>
+            <span className="row-sub">
+              Easier on the eyes in a dim kitchen. The choice is remembered on this PC.
+            </span>
+          </div>
+          <label className="switch">
+            <input
+              type="checkbox"
+              checked={props.theme === 'dark'}
+              onChange={(e) => {
+                props.onThemeChange(e.target.checked ? 'dark' : 'light');
+              }}
+            />
+            <span className="switch-track" aria-hidden="true" />
+            <span className="sr-only">
+              {props.theme === 'dark' ? 'Dark theme: on' : 'Dark theme: off'}
+            </span>
+          </label>
+        </div>
+      </Card>
+
       <Card title="Startup">
         <div className="setting-row">
           <div className="setting-text">
@@ -89,7 +116,7 @@ export function SettingsScreen(props: {
             />
             <span className="switch-track" aria-hidden="true" />
             <span className="sr-only">
-              {settings.launchAtLogin ? 'On — starts at login' : 'Off — starts manually'}
+              {settings.launchAtLogin ? 'Start when I log in: on' : 'Start when I log in: off'}
             </span>
           </label>
         </div>
@@ -109,7 +136,7 @@ export function SettingsScreen(props: {
             />
             <span className="switch-track" aria-hidden="true" />
             <span className="sr-only">
-              {settings.startMinimized ? 'On — starts minimized' : 'Off — opens the window'}
+              {settings.startMinimized ? 'Start minimized: on' : 'Start minimized: off'}
             </span>
           </label>
         </div>

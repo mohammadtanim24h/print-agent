@@ -174,11 +174,6 @@ export function SetupScreen(props: { readonly onPaired?: () => void }): React.JS
                 aria-invalid={failure !== null}
                 disabled={pairing}
               />
-              <span className="field-hint" id="pair-code-hint">
-                {CODE_LENGTH - code.length > 0
-                  ? `${String(CODE_LENGTH - code.length)} more character${CODE_LENGTH - code.length === 1 ? '' : 's'} to go`
-                  : 'Ready to pair'}
-              </span>
             </label>
             <button
               type="submit"
@@ -188,6 +183,11 @@ export function SetupScreen(props: { readonly onPaired?: () => void }): React.JS
               {pairing ? 'Pairing…' : 'Pair agent'}
             </button>
           </form>
+          <p className="field-hint pair-hint" id="pair-code-hint">
+            {CODE_LENGTH - code.length > 0
+              ? `${String(CODE_LENGTH - code.length)} more character${CODE_LENGTH - code.length === 1 ? '' : 's'} to go`
+              : 'Ready to pair'}
+          </p>
           {failure !== null && (
             <div className="banner banner-error" role="alert">
               <span className="banner-text">{failure}</span>

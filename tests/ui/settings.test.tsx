@@ -3,14 +3,40 @@ import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { SettingsScreen } from '../../src/renderer/src/ui/screens/SettingsScreen';
 import { makeService, renderWithService } from './helpers';
+import type { Theme } from '../../src/renderer/src/App';
+
+const defaultTheme: Theme = 'dark';
+
+function renderSettings(
+  serviceOverrides?: Parameters<typeof makeService>[0],
+  onThemeChange?: (theme: Theme) => void,
+): void {
+  renderWithService(
+    <SettingsScreen
+      onNavigate={() => undefined}
+      theme={defaultTheme}
+      onThemeChange={onThemeChange ?? (() => undefined)}
+    />,
+    makeService(serviceOverrides),
+  );
+}
 
 describe('SettingsScreen', () => {
-  it('renders startup, connection, logging and diagnostics sections', async () => {
-    renderWithService(<SettingsScreen onNavigate={() => undefined} />, makeService());
-    expect(await screen.findByText('Startup')).toBeInTheDocument();
+  it('renders appearance, startup, connection, logging and diagnostics sections', async () => {
+    renderSettings();
+    expect(await screen.findByText('Appearance')).toBeInTheDocument();
+    expect(screen.getByText('Startup')).toBeInTheDocument();
     expect(screen.getByText('Connection')).toBeInTheDocument();
     expect(screen.getByText('Logging')).toBeInTheDocument();
     expect(screen.getByText('Diagnostics')).toBeInTheDocument();
+  });
+
+  it('toggles the dark-theme switch through onThemeChange', async () => {
+    const user = userEvent.setup();
+    const onThemeChange = vi.fn();
+    renderSettings(undefined, onThemeChange);
+    await user.click(await screen.findByRole('checkbox', { name: /dark theme/i }));
+    expect(onThemeChange).toHaveBeenCalledWith('light');
   });
 
   it('applies the launch-at-login toggle through the service', async () => {
@@ -22,14 +48,11 @@ describe('SettingsScreen', () => {
         logLevel: 'info' as const,
       }),
     );
-    renderWithService(
-      <SettingsScreen onNavigate={() => undefined} />,
-      makeService({ updateSettings }),
-    );
+    renderSettings({ updateSettings });
     await screen.findByText('Startup');
     const switches = screen.getAllByRole('checkbox');
-    expect(switches).toHaveLength(2);
-    await user.click(switches[0] as HTMLElement);
+    expect(switches).toHaveLength(3);
+    await user.click(screen.getByRole('checkbox', { name: /when I log in/i }));
     await waitFor(() => {
       expect(updateSettings).toHaveBeenCalledWith({ launchAtLogin: true });
     });
@@ -41,10 +64,7 @@ describe('SettingsScreen', () => {
     const updateSettings = vi.fn(() =>
       Promise.resolve({ launchAtLogin: false, startMinimized: true, logLevel: 'warn' as const }),
     );
-    renderWithService(
-      <SettingsScreen onNavigate={() => undefined} />,
-      makeService({ updateSettings }),
-    );
+    renderSettings({ updateSettings });
     await user.selectOptions(await screen.findByRole('combobox'), 'warn');
     await waitFor(() => {
       expect(updateSettings).toHaveBeenCalledWith({ logLevel: 'warn' });
@@ -54,10 +74,16 @@ describe('SettingsScreen', () => {
   it('persists the start-minimized toggle through the service', async () => {
     const user = userEvent.setup();
     const service = makeService();
-    renderWithService(<SettingsScreen onNavigate={() => undefined} />, service);
+    renderWithService(
+      <SettingsScreen
+        onNavigate={() => undefined}
+        theme={defaultTheme}
+        onThemeChange={() => undefined}
+      />,
+      service,
+    );
     await screen.findByText('Startup');
-    const switches = screen.getAllByRole('checkbox');
-    await user.click(switches[1] as HTMLElement);
+    await user.click(screen.getByRole('checkbox', { name: /minimized/i }));
     await waitFor(async () => {
       await expect(service.getSettings()).resolves.toMatchObject({ startMinimized: false });
     });
@@ -65,14 +91,11 @@ describe('SettingsScreen', () => {
 
   it('shows an error banner when saving fails', async () => {
     const user = userEvent.setup();
-    renderWithService(
-      <SettingsScreen onNavigate={() => undefined} />,
-      makeService({
-        updateSettings: () => Promise.reject(new Error('disk full')),
-      }),
-    );
+    renderSettings({
+      updateSettings: () => Promise.reject(new Error('disk full')),
+    });
     await screen.findByText('Startup');
-    await user.click(screen.getAllByRole('checkbox')[0] as HTMLElement);
+    await user.click(screen.getByRole('checkbox', { name: /when I log in/i }));
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toContain('disk full');
   });
@@ -80,7 +103,14 @@ describe('SettingsScreen', () => {
   it('navigates to diagnostics', async () => {
     const user = userEvent.setup();
     const onNavigate = vi.fn();
-    renderWithService(<SettingsScreen onNavigate={onNavigate} />, makeService());
+    renderWithService(
+      <SettingsScreen
+        onNavigate={onNavigate}
+        theme={defaultTheme}
+        onThemeChange={() => undefined}
+      />,
+      makeService(),
+    );
     await user.click(await screen.findByRole('button', { name: /open diagnostics/i }));
     expect(onNavigate).toHaveBeenCalledWith('diagnostics');
   });
