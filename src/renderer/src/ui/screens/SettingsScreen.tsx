@@ -13,7 +13,6 @@ const LOG_LEVELS: ReadonlyArray<{ readonly value: LogLevel; readonly label: stri
 ];
 
 export function SettingsScreen(props: {
-  readonly onNavigate: (screen: 'diagnostics') => void;
   readonly theme: Theme;
   readonly onThemeChange: (theme: Theme) => void;
 }): React.JSX.Element {
@@ -177,21 +176,6 @@ export function SettingsScreen(props: {
             ))}
           </select>
         </Field>
-      </Card>
-
-      <Card title="Diagnostics">
-        <p className="row-sub">
-          Run connectivity checks, inspect sanitized logs and export a support bundle.
-        </p>
-        <button
-          type="button"
-          className="btn btn-ghost"
-          onClick={() => {
-            props.onNavigate('diagnostics');
-          }}
-        >
-          Open diagnostics
-        </button>
       </Card>
     </div>
   );

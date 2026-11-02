@@ -12,23 +12,18 @@ function renderSettings(
   onThemeChange?: (theme: Theme) => void,
 ): void {
   renderWithService(
-    <SettingsScreen
-      onNavigate={() => undefined}
-      theme={defaultTheme}
-      onThemeChange={onThemeChange ?? (() => undefined)}
-    />,
+    <SettingsScreen theme={defaultTheme} onThemeChange={onThemeChange ?? (() => undefined)} />,
     makeService(serviceOverrides),
   );
 }
 
 describe('SettingsScreen', () => {
-  it('renders appearance, startup, connection, logging and diagnostics sections', async () => {
+  it('renders appearance, startup, connection and logging sections', async () => {
     renderSettings();
     expect(await screen.findByText('Appearance')).toBeInTheDocument();
     expect(screen.getByText('Startup')).toBeInTheDocument();
     expect(screen.getByText('Connection')).toBeInTheDocument();
     expect(screen.getByText('Logging')).toBeInTheDocument();
-    expect(screen.getByText('Diagnostics')).toBeInTheDocument();
   });
 
   it('toggles the dark-theme switch through onThemeChange', async () => {
@@ -75,11 +70,7 @@ describe('SettingsScreen', () => {
     const user = userEvent.setup();
     const service = makeService();
     renderWithService(
-      <SettingsScreen
-        onNavigate={() => undefined}
-        theme={defaultTheme}
-        onThemeChange={() => undefined}
-      />,
+      <SettingsScreen theme={defaultTheme} onThemeChange={() => undefined} />,
       service,
     );
     await screen.findByText('Startup');
@@ -100,18 +91,10 @@ describe('SettingsScreen', () => {
     expect(alert.textContent).toContain('disk full');
   });
 
-  it('navigates to diagnostics', async () => {
-    const user = userEvent.setup();
-    const onNavigate = vi.fn();
-    renderWithService(
-      <SettingsScreen
-        onNavigate={onNavigate}
-        theme={defaultTheme}
-        onThemeChange={() => undefined}
-      />,
-      makeService(),
-    );
-    await user.click(await screen.findByRole('button', { name: /open diagnostics/i }));
-    expect(onNavigate).toHaveBeenCalledWith('diagnostics');
+  it('does not render a diagnostics card (diagnostics lives in the sidebar)', async () => {
+    renderSettings();
+    await screen.findByText('Appearance');
+    expect(screen.queryByText('Diagnostics')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /open diagnostics/i })).not.toBeInTheDocument();
   });
 });

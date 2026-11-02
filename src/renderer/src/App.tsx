@@ -131,9 +131,7 @@ export function App(): React.JSX.Element {
         )}
         {screen === 'printers' && <PrintersScreen />}
         {screen === 'jobs' && <JobHistoryScreen />}
-        {screen === 'settings' && (
-          <SettingsScreen onNavigate={navigate} theme={theme} onThemeChange={changeTheme} />
-        )}
+        {screen === 'settings' && <SettingsScreen theme={theme} onThemeChange={changeTheme} />}
         {screen === 'diagnostics' && <DiagnosticsScreen />}
         <footer className="content-foot">
           {snapshotState.data !== null && snapshotState.data.lastActivityAt !== null && (
