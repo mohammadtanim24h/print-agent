@@ -205,13 +205,19 @@ Settings screen:
   it only while reproducing a ticket.
 - **Launch at login**: also available from the tray menu.
 
-Environment overrides (development only — never set these on restaurant PCs):
+Environment overrides (local/testing only — never set these on restaurant PCs):
 
 - `PRINT_AGENT_API_URL` overrides the cloud API base URL, e.g.
   `PRINT_AGENT_API_URL=https://staging.example-saas.test pnpm dev`. The compiled
   default is the placeholder `https://print-api.example-saas.test` — **it must
   be replaced with the Laravel team's production URL before release**
-  (release checklist §6, item 4).
+  (release checklist §6, item 4). For the Laravel backend this must include the
+  `/api/agent/v1` path prefix (the transport appends `/pair`, `/jobs`, …
+  directly).
+- `PRINT_AGENT_ALLOW_HTTP=1` permits a plain-`http` base URL (local backend or
+  TLS-terminating proxy). Works on packaged builds too, so an installed build
+  can be smoke-tested against a local backend. Both env vars must come from a
+  controlled launcher, never from the machine's global environment.
 - `ELECTRON_RENDERER_URL` is set by `electron-vite dev` itself (renderer dev
   server); it also forces the window visible and widens the IPC sender guard to
   accept the dev-server origin.

@@ -96,12 +96,15 @@ async function start(): Promise<void> {
   // value on the release checklist before shipping.
   const API_BASE_URL =
     process.env['PRINT_AGENT_API_URL'] ?? 'https://print-api.example-saas.test';
-  // Dev-only escape hatch for a local Laravel backend over plain http.
-  // Double-guarded: this !app.isPackaged gate plus the transport's own
-  // NODE_ENV=production refusal (http-transport.ts) keep it out of the field.
-  const ALLOW_INSECURE_HTTP = !app.isPackaged && process.env['PRINT_AGENT_ALLOW_HTTP'] === '1';
+  // Escape hatch for a local/staging Laravel backend over plain http. Opt-in
+  // via env on ANY build (dev or packaged) — smoke-testing an installed build
+  // against a local backend is a release-checklist step. NEVER set
+  // PRINT_AGENT_ALLOW_HTTP on a restaurant PC: it downgrades the transport to
+  // plaintext, so both this flag and PRINT_AGENT_API_URL must come from a
+  // controlled launcher, never from the machine's global environment.
+  const ALLOW_INSECURE_HTTP = process.env['PRINT_AGENT_ALLOW_HTTP'] === '1';
   if (ALLOW_INSECURE_HTTP) {
-    log.warn('PRINT_AGENT_ALLOW_HTTP=1 — using plain http; dev machines only');
+    log.warn('PRINT_AGENT_ALLOW_HTTP=1 — transport downgraded to plain http; local testing only');
   }
 
   const runtime = await createAgentRuntime({
