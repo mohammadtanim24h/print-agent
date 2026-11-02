@@ -172,6 +172,31 @@ re-run `pnpm release` (it would skip a version): push manually with
 
 ### Release-train smoke records
 
+- **2026-11-02 (0.1.1 → 0.1.2 smoke train on Win10 19045, packaged functional
+  pass vs the local Laravel backend):**
+  - NSIS packages built clean (`PrintAgent-Setup-0.1.1.exe`, then 0.1.2 via a
+    temporary uncommitted version bump for the upgrade leg — unsigned, ADR-14).
+  - No-listen smoke: **PASS** on both `win-unpacked` and the installed exe
+    (4 processes, zero LISTEN sockets, AC-4).
+  - Install smoke (Win10 19045): **PASS** — assisted per-user wizard
+    (`perMachine: false`), installs to
+    `%LOCALAPPDATA%\Programs\Print Agent`.
+  - Upgrade smoke: **PASS** — 0.1.2 installs over 0.1.1; `%APPDATA%\Print
+    Agent` userData (settings, printers, identity kv, job db) preserved.
+  - Packaged functional pass vs `http://localhost:8000` (pairing → online →
+    cloud config apply → POS order job → render → tcp_raw print → ack chain →
+    server `completed`, attempts 1, ESC/POS captured byte-exact): **PASS**
+    using the `PRINT_AGENT_API_URL` + `PRINT_AGENT_ALLOW_HTTP=1` env override
+    (now honored on packaged builds for exactly this checklist step).
+  - Revoke wipe on the packaged build: **PASS** (dashboard revoke → local
+    identity/printers/jobs wiped, revoked screen).
+  - Open on this train: item 4 (production API URL placeholder — blocks the
+    tagged release), item 8 (spooler RAW capture run — elevated shell), the
+    Win11 23H2 install/upgrade leg, and the spooler_raw functional leg.
+  - Dev-app functional pass vs the same backend was recorded 2026-10-31 (see
+    the local-backend E2E notes); this train repeated it on the installed
+    binary.
+
 - **2026-10-30 (pre-0.1.2 smoke of current main, post-A1/A2/polling):**
   - CI green on `main` (run 41011166433). Note: runners are pinned to
     `windows-2022` — `windows-latest` moved to a VS2026 image that the
@@ -195,7 +220,7 @@ re-run `pnpm release` (it would skip a version): push manually with
 
 ## 8. Configuration & environment
 
-Settings live in `%APPDATA%/print-agent/settings.json`, edited via the agent
+Settings live in `%APPDATA%/Print Agent/settings.json`, edited via the agent
 Settings screen:
 
 - **Start minimized to tray** (default: on). Honored in packaged builds only —
