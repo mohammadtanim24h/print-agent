@@ -6,7 +6,7 @@ ESC/POS byte stream** — without physical hardware. Two routes:
 | Route | What it covers | Effort |
 |---|---|---|
 | **A. Automated E2E harness** | Pairing → online → config apply → job → render → tcp_raw send → acks → backend `completed`, all in one `vitest` run | Low (env vars + `php artisan serve`) |
-| **B. Manual, real Electron app** | Same chain driven through the actual installed/dev app UI, with a standalone emulator listening on :9100 | Medium (manual pairing + dashboard clicks) |
+| **B. Manual, real Electron app** | Same chain driven through the actual installed/dev app UI, with the `escpos-emulator` package listening on :9100 | Medium (manual pairing + dashboard clicks) |
 
 Both use the same principle: the agent's `tcp_raw` transport just opens a TCP
 socket to `<ip>:9100` and writes the ESC/POS stream — anything that accepts
@@ -100,52 +100,59 @@ for (const ev of decodeEscpos(bytes)) console.log(ev);
 Use this when you want to click through the actual app (pairing wizard, tray
 UI, Test print) or demo the flow end-to-end.
 
-### 1. Run a standalone ESC/POS capture listener on :9100
+### 1. Run the `escpos-emulator` package on :9100
 
-Save as `emulator.mjs` anywhere **outside** the agent repo and run it with
-`node emulator.mjs`. It binds your LAN IP (loopback is blocked by the
-approved-destination policy), accepts one connection at a time, and dumps the
-stream to `capture.bin` + a hex/text log:
+[`escpos-emulator`](https://www.npmjs.com/package/escpos-emulator) (MIT, v0.3.0)
+is an ESC/POS thermal receipt printer emulator: it accepts raw byte streams on a
+TCP port like a real printer, **parses** them, and serves the decoded receipt as
+a live HTML preview plus a REST API — no hexdump squinting required.
 
-```js
-import net from 'node:net';
-import fs from 'node:fs';
-import os from 'node:os';
-
-const LAN_IP = Object.values(os.networkInterfaces())
-  .flat()
-  .find((i) => i?.family === 'IPv4' && !i.internal)?.address;
-if (!LAN_IP) throw new Error('no LAN IPv4 interface');
-
-const chunks = [];
-net
-  .createServer((socket) => {
-    console.log(`[${new Date().toISOString()}] connection from ${socket.remoteAddress}`);
-    socket.on('data', (chunk) => {
-      chunks.push(chunk);
-      console.log(`<${chunk.length} bytes> ${chunk.toString('hex').slice(0, 120)}...`);
-    });
-    socket.on('close', () => {
-      fs.writeFileSync('capture.bin', Buffer.concat(chunks));
-      const text = Buffer.concat(chunks)
-        .toString('latin1')
-        .replace(/[\x00-\x1f\x7f]/g, '.');
-      console.log('--- stream (control chars as dots) ---\n' + text);
-      console.log(`saved ${Buffer.concat(chunks).length} bytes to capture.bin`);
-    });
-  })
-  .listen(9100, LAN_IP, () => console.log(`ESC/POS emulator on ${LAN_IP}:9100`));
+```bash
+npx escpos-emulator   # no install needed; or: npm i -g escpos-emulator
 ```
+
+Startup output:
+
+- **TCP printer**: port `9100` (env `TCP_PORT` to change) — point the agent here
+- **Web UI / REST API**: port `3000` (env `HTTP_PORT`) — open
+  `http://localhost:3000` in a browser to watch receipts render live
 
 Notes:
 
-- This listener is a separate process — the agent's "no listening sockets"
-  security rule applies to the agent itself, not to your test tooling.
-- Port 9100 semantics = plain socket, no protocol; the emulator never talks back.
-- Alternatively, a third-party emulator such as the MIT-licensed `escpos-emulator`
-  npm package (TCP :9100 + REST for decoded-output assertions) works the same
-  way — bind it to the LAN IP and point the printer config at it. Check license
-  and install scripts before adopting it permanently (dependency admission rules).
+- It is a separate process — the agent's "no listening sockets" security rule
+  applies to the agent itself, not to your test tooling.
+- It binds **all interfaces** (no host restriction), so it is reachable on your
+  LAN IPv4 automatically. The agent's approved-destination policy still blocks
+  loopback, so the printer config must reference the **LAN IPv4**, never
+  `127.0.0.1`. Expect a Windows Firewall prompt on first run — allow Node on
+  private networks.
+- It emulates an **Epson TM-M30III** (80 mm paper, 42 chars/line) — matches the
+  default agent receipt profile.
+- It never talks back on the socket (no DLE EOT status replies) — keep
+  `statusPolling: false` on test printers.
+- Unsupported commands are skipped with a console warning; notably **QR codes
+  (`GS ( k`) and raster bit images (`GS v 0`) are not rendered** in the preview.
+  Cut, bold, size, alignment, feed, and CODE128 barcodes all render.
+
+Useful knobs and REST endpoints (in single-printer mode the printer id is
+`default`; `GET /api/printers` lists all ids):
+
+```bash
+# Multiple virtual printers (kitchen/bar at different ports)
+PRINTERS='[
+  {"id":"counter","name":"Counter","tcpPort":9100},
+  {"id":"kitchen","name":"Kitchen","tcpPort":9101}
+]' npx escpos-emulator
+
+# Semantic verification from the shell (decoded receipt as JSON)
+curl http://localhost:3000/api/printers/default/receipts/last
+
+# Reset between test runs
+curl -X DELETE http://localhost:3000/api/printers/default/receipts
+```
+
+There is also a Docker image (`ghcr.io/lezram/escpos-emulator`) if you prefer
+not to run Node directly — publish both `9100` and `3000`.
 
 ### 2. Run the agent dev app and pair
 
@@ -164,7 +171,8 @@ pnpm dev
 Dashboard: `Settings → Printers` → add a printer with:
 
 - Transport kind: `tcp_raw`
-- Host: your **LAN IPv4** (from the emulator's startup line), e.g. `192.168.1.42`
+- Host: your **LAN IPv4** (run `ipconfig`), e.g. `192.168.1.42` — never
+  `127.0.0.1` (loopback is blocked by the approved-destination policy)
 - Port: `9100`
 - Role/paper width per your test scenario (80 mm receipt is the default)
 
@@ -173,20 +181,29 @@ config refresh). Verify it appears in the agent tray UI printer list.
 
 ### 4. Trigger prints
 
-1. **Test print** from the agent tray UI → emulator console should log a
-   connection and `capture.bin` should start with `1b 40`.
+1. **Test print** from the agent tray UI → the emulator console logs the
+   connection, and the receipt appears live in the web UI at
+   `http://localhost:3000` (a blank/absent receipt means the stream was
+   rejected — check the console for skipped-command warnings).
 2. **Real job**: place an order / trigger the print action in the dashboard
    (POS side) → watch the job status march `accepted → sent_to_printer →
-   completed` in the dashboard job log, and the bytes land in the emulator.
+   completed` in the dashboard job log, and the receipt land in the emulator.
    `completed` means *hand-off to the transport succeeded* — it never means
    "physically printed".
 
-### 5. Verify the stream
+### 5. Verify the receipt content
 
-Open `capture.bin` in a hex viewer, or decode it with
-`tests/helpers/escpos-decode.ts` (see Route A step 5). For a receipt you
-should see: `init` → alignment/bold/size commands → your order text lines →
-`feed` → `cut`.
+The emulator decodes the stream for you — three ways, cheapest first:
+
+1. **Web UI** (`http://localhost:3000`): the receipt renders as it would on
+   paper — check alignment, bold/size, order lines, feed and cut.
+2. **REST API**: `GET /api/printers/:id/receipts/last` returns the decoded
+   receipt as JSON (text lines with their style state). `DELETE
+   /api/printers/:id/receipts` clears history between runs.
+3. **Raw bytes**: for byte-exact assertions, decode a capture with
+   `tests/helpers/escpos-decode.ts` (see Route A step 5). For a receipt you
+   should see: `init` → alignment/bold/size commands → your order text lines →
+   `feed` → `cut`.
 
 ---
 
@@ -194,7 +211,9 @@ should see: `init` → alignment/bold/size commands → your order text lines �
 
 | Symptom | Likely cause |
 |---|---|
-| Printer connect fails / refused | Emulator bound to `127.0.0.1` — approved-destination policy blocks loopback; bind the LAN IP |
+| Printer connect fails / refused | Printer host is `127.0.0.1` — approved-destination policy blocks loopback; use the LAN IPv4 (the emulator itself listens on all interfaces) |
+| Printer connect fails / Windows Firewall prompt | Node blocked on private networks — allow it, or the agent's outbound connection is dropped |
+| Receipt missing from web UI | Stream rejected or all commands skipped — check the emulator console; QR (`GS ( k`) and raster images (`GS v 0`) are not rendered |
 | Config (printer) never appears in agent | Cloud config applies on push or the 60 s refresh — wait one cycle, check agent connection state is `online` |
 | Pairing fails `code_invalid`/`code_expired` | Code already used or >10 min old — generate a fresh one; also watch the 3/15 min rate limit on a prod-default backend |
 | Pair attempt returns an HTML 429 page | Pair rate limiter — set `PRINT_PAIRING_MAX_ATTEMPTS=100` in the backend `.env` or wait 15 min |
