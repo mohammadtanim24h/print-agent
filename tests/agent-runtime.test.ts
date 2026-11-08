@@ -944,7 +944,7 @@ describe('AgentRuntime WSS channel wiring (A3 revival)', () => {
     const { runtime, transport } = await makeRuntime({ wsFactory: factory, cloud: wssCloud });
     runtime.start();
     await runtime.pair(PAIRING_CODE);
-    await vi.waitFor(() => expect(sockets.length).toBe(1));
+    await vi.waitFor(() => { expect(sockets.length).toBe(1); });
     sockets[0]?.open(); // reach readyState 1 so we pin the teardown of a live socket
     transport.failNextPoll = new CloudError(
       'unauthorized',
