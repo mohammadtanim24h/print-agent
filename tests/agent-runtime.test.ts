@@ -938,4 +938,24 @@ describe('AgentRuntime WSS channel wiring (A3 revival)', () => {
     expect(sockets[0]?.options.headers['X-Agent-Version']).toBe('0.1.0-test');
     expect(sockets[0]?.options.headers['X-Protocol-Version']).toBe('1');
   });
+
+  it('flag on: revocation terminates the socket and never redials with wiped credentials', async () => {
+    const { factory, sockets } = fakeWsFactory();
+    const { runtime, transport } = await makeRuntime({ wsFactory: factory, cloud: wssCloud });
+    runtime.start();
+    await runtime.pair(PAIRING_CODE);
+    await vi.waitFor(() => expect(sockets.length).toBe(1));
+    sockets[0]?.open(); // reach readyState 1 so we pin the teardown of a live socket
+    transport.failNextPoll = new CloudError(
+      'unauthorized',
+      'device revoked',
+      undefined,
+      'device_revoked',
+    );
+    await vi.waitFor(async () => {
+      expect((await runtime.snapshot()).connection).toBe('revoked');
+    });
+    expect(sockets[0]?.terminated).toBe(true); // poller stop() → channel.stop() → disposeSocket
+    expect(sockets.length).toBe(1); // the terminated socket's close never schedules a redial
+  });
 });
