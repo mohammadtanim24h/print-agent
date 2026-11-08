@@ -51,18 +51,17 @@ the acceptance evidence required before ticking.
 
 ### A3. Server-side WSS endpoint (servepro-api — cross-team)
 
-- **Status:** descoped (2026-10-30). A WebSocket endpoint cannot run in
-  php-fpm request workers — it requires a long-running daemon plus a
-  WS-upgrade proxy, new deployment infrastructure the Laravel side declined.
-  Polling at the amended ~3 s cadence (agent default, `poller.ts`) yields
-  worst-case job latency ≈ 3 s — imperceptible for counter receipts, and
-  there was no sub-second delivery requirement. ~40 req/min/device against
-  the 120/min rate limit at 1–3 agents per single-restaurant deployment is
-  negligible load. The agent is **polling-first**: the runtime constructs no
-  WSS channel and never dials `wss://`; the ADR-15 client stays in-tree
-  unwired (revival = server endpoint + re-wiring the agent's channel). Spec
-  and acceptance criteria (§1, §6 WSS rows) retained there for that
-  eventuality. Nothing left to do on either side for v1.
+- **Status:** agent side revived (2026-11-08, spec
+  `docs/superpowers/specs/2026-11-08-wss-revival-design.md`) — the runtime
+  constructs the §1 channel behind `PRINT_AGENT_ENABLE_WSS=1` (default off;
+  polling unchanged) and passes it to the poller's existing `channel` slot.
+  Evidence: `tests/agent-runtime.test.ts` ("AgentRuntime WSS channel wiring
+  (A3 revival)"), `tests/runtime-wss-integration.test.ts` (full stack over a
+  loopback socket), protocol legs pre-existing in `tests/cloud-ws-channel.test.ts`,
+  `tests/cloud-poller.test.ts`, `tests/cloud-ws-integration.test.ts`. The
+  **server side** is specified in `docs/wss-server-spec.md` for servepro-api
+  (implementation happens in that repo); the flag stays off in production
+  until that endpoint ships and clears the §6 WSS matrix + 24 h soak.
 - **What (retained for a future revival):** implement
   `wss://<host>/agent/v1/ws` per `docs/api-contract.md` §1 as amended
   2026-10-30: token auth on upgrade (401 on bad token), close `4401` for auth

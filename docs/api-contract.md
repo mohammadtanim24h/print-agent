@@ -16,7 +16,15 @@ rejected, not ignored, within `data` payloads (envelope may gain additive fields
   (single-restaurant deployments, 1–3 agents). The agent is **polling-first**: it
   constructs no socket and never dials `wss://`. The WSS client (ADR-15) remains
   in-tree, unwired; reviving WSS = implementing the server endpoint per §1/§6 and
-  re-wiring the agent's channel (no protocol change). The §6 WSS matrix rows remain
+  re-wiring the agent's channel (no protocol change).
+
+  > **Amended 2026-11-08 (agent-side revival):** the agent's WSS client is re-wired —
+  > gated behind the app-level `PRINT_AGENT_ENABLE_WSS=1` flag (default off; polling
+  > remains the delivery path until the server daemon ships per
+  > `docs/wss-server-spec.md`). No protocol change; the §1 semantics below are exactly
+  > what the wired client implements.
+
+  The §6 WSS matrix rows remain
   the acceptance checklist for that future work. Contract details below are retained
   normative for that eventuality. The agent connects after pairing, sends §3.2
   heartbeats, and receives §2/§3.5/§4 envelopes. **Acks stay on REST (§3.3):** no WSS
@@ -311,8 +319,9 @@ replace `POST /heartbeat` while the socket is healthy.
 required) and was descoped as unjustified infra for this fleet. **REST polling is
 the v1 delivery path**, now at a ~3 s ± 10 % healthy cadence (§3.2 amendment;
 worst-case job latency ≈ 3 s, ~40 req/min/device vs the 120/min §7.1 limit). The
-agent is polling-first — its WSS client (ADR-15) stays in-tree unwired; §1
-semantics are unchanged for a future server implementation. `POST /heartbeat`
+agent is polling-first by default — its WSS client (ADR-15) is re-wired
+2026-11-08 behind the app-level `PRINT_AGENT_ENABLE_WSS=1` flag, default off;
+§1 semantics are unchanged for a future server implementation. `POST /heartbeat`
 and the pull-claim (§7 note 6) remain the operative server surface.
 
 1. **Restaurant identity** — deployments are single-restaurant. A stable
