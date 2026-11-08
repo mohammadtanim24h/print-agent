@@ -151,8 +151,10 @@ the acceptance evidence required before ticking.
   local backend if the team accepts that evidence).
 - **What:** 10 jobs in 5 s through the engine over the poll delivery path:
   no ordering regressions, ack buffer drains, ambiguous-rate stays zero.
-  (WSS push path descoped with A3; if WSS is ever revived, add its burst
-  leg then.)
+  (WSS push path: the agent channel is wired behind `PRINT_AGENT_ENABLE_WSS=1`
+  (A3) but stays default-off until the servepro-api endpoint ships per
+  `docs/wss-server-spec.md`; add its burst leg when a deployment enables the
+  flag.)
 - **Depends on:** nothing.
 - **Closes with:** CI-able burst test green + a recorded run against staging.
 
@@ -183,5 +185,5 @@ the acceptance evidence required before ticking.
 
 ## Suggested order
 
-B2 → B1 → C1 → C2 → C3. (A3 descoped 2026-10-30 — polling is the v1 delivery
-path; see A3 for the rationale and revival criteria.)
+B2 → B1 → C1 → C2 → C3. (A3: agent side revived 2026-11-08 — see A3; the server
+side follows `docs/wss-server-spec.md` and is not on the agent's critical path.)

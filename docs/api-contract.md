@@ -13,10 +13,12 @@ rejected, not ignored, within `data` payloads (envelope may gain additive fields
   path** (§7 amendment). A WebSocket endpoint cannot run in php-fpm request workers
   (it requires a long-running daemon + WS-upgrade proxy), and polling at the amended
   ~3 s cadence gives counter-imperceptible delivery latency at this fleet's scale
-  (single-restaurant deployments, 1–3 agents). The agent is **polling-first**: it
-  constructs no socket and never dials `wss://`. The WSS client (ADR-15) remains
-  in-tree, unwired; reviving WSS = implementing the server endpoint per §1/§6 and
-  re-wiring the agent's channel (no protocol change).
+  (single-restaurant deployments, 1–3 agents). The agent ships **polling-first**:
+  with the flag unset it constructs no socket and never dials `wss://`. The WSS
+  client (ADR-15) was unwired through 2026-11-07; it is re-wired behind
+  `PRINT_AGENT_ENABLE_WSS=1` — see the amendment below; reviving WSS =
+  implementing the server endpoint per §1/§6 and re-wiring the agent's channel
+  (no protocol change).
 
   > **Amended 2026-11-08 (agent-side revival):** the agent's WSS client is re-wired —
   > gated behind the app-level `PRINT_AGENT_ENABLE_WSS=1` flag (default off; polling
