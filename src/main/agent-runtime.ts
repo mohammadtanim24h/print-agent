@@ -1,6 +1,7 @@
 import { hostname, release, type } from 'node:os';
 import { statSync } from 'node:fs';
 import { createPollingCloudClient } from './cloud-client/poller';
+import { createWssChannel, deriveWssUrl, type WsFactory } from './cloud-client/ws-channel';
 import { createHttpTransport } from './cloud-client/http-transport';
 import {
   createSafeStorageSecretStore,
@@ -76,6 +77,11 @@ export interface RuntimeDeps {
     readonly pollIntervalMs?: number;
     /** Dev-only: permits http:// base URLs for a local backend (main.ts gates it on !app.isPackaged). */
     readonly allowInsecureHttp?: boolean;
+    /** Opt-in §1 push channel (main.ts: PRINT_AGENT_ENABLE_WSS=1). Default off —
+     *  polling is the v1 delivery path (api-contract §1, amended). */
+    readonly wss?: {
+      readonly enabled?: boolean;
+    };
   };
   /** Notified whenever the snapshot's content may have changed (connection-state
    *  transition, pair, unpair). main.ts forwards this to the renderer as a
@@ -97,6 +103,8 @@ export interface RuntimeDeps {
     readonly random?: () => number;
     /** Injected for tests; defaults to global fetch. */
     readonly fetchOverride?: typeof fetch;
+    /** Test seam: socket factory for the §1 WSS channel (default: real ws client). */
+    readonly wsFactory?: WsFactory;
   };
 }
 
@@ -233,11 +241,39 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
     },
   });
 
-  // Polling-first: REST polling at the healthy cadence is the v1 delivery
-  // path (api-contract §7, amended 2026-10-30). The WSS push channel stays
-  // unwired — the client is created with no `channel`, so the agent never
-  // dials `wss://` and the heartbeat piggybacks every poll cycle. Reviving
-  // WSS = constructing a channel here and passing it to the poller (§1).
+  // §1 push channel — opt-in behind the app-level flag; default OFF (polling
+  // remains the v1 delivery path, api-contract §1 amendment 2026-10-30, agent
+  // revival 2026-11-08). Disabled: no channel is constructed and the agent
+  // never dials wss://. Enabled: the poller owns start/stop/notifyAuthChanged
+  // and funnels frames through the same pipeline as poll batches; this
+  // constructor only assembles the socket. getAuth re-reads live secrets per
+  // dial so an unpaired runtime idles and post-rotation credentials are
+  // picked up by the poller's notifyAuthChanged. allowInsecureWs follows
+  // allowInsecureHttp (local-backend testing only; ws:// is refused outright
+  // in production builds).
+  const wssChannel =
+    deps.cloud.wss?.enabled === true
+      ? createWssChannel({
+          url: deriveWssUrl(deps.cloud.baseUrl),
+          agentVersion: deps.agentVersion,
+          getAuth: () => {
+            const identity = readIdentity();
+            return identity === null
+              ? null
+              : { deviceId: identity.deviceId, deviceToken: identity.deviceToken };
+          },
+          heartbeatSample: () => heartbeatSample(),
+          log: (message) => {
+            log.info(message);
+          },
+          now,
+          schedule,
+          random,
+          ...(deps.cloud.allowInsecureHttp === true ? { allowInsecureWs: true } : {}),
+          ...(deps.env?.wsFactory !== undefined ? { wsFactory: deps.env.wsFactory } : {}),
+        })
+      : undefined;
+
   client = createPollingCloudClient({
     transport,
     secrets,
@@ -251,6 +287,7 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
     ...(deps.cloud.pollIntervalMs !== undefined
       ? { pollIntervalMs: deps.cloud.pollIntervalMs }
       : {}),
+    ...(wssChannel !== undefined ? { channel: wssChannel } : {}),
     heartbeatSample: () => heartbeatSample(),
     onRevoked: () => {
       void wipeLocalState();

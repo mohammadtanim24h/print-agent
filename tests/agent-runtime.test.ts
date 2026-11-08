@@ -4,6 +4,7 @@ import type { SafeStorageLike } from '../src/main/cloud-client/secret-store';
 import { CloudError } from '../src/main/cloud-client/errors';
 import type { TransportRegistry } from '../src/main/transport/registry';
 import { TransportError } from '../src/main/transport/errors';
+import type { WsFactory, WsLike } from '../src/main/cloud-client/ws-channel';
 import { makeDraft } from './helpers/printers';
 import {
   PAIRING_CODE,
@@ -85,6 +86,69 @@ function manualSchedule(): {
       await settle();
     },
   };
+}
+
+// ---- WSS wiring seams (A3 revival) ---------------------------------------------
+
+const WS_OPEN = 1;
+
+class FakeWs implements WsLike {
+  readyState = 0;
+  readonly sent: string[] = [];
+  terminated = false;
+  private readonly handlers = new Map<string, Set<(...args: never[]) => void>>();
+
+  constructor(
+    readonly url: string,
+    readonly options: { headers: Record<string, string>; maxPayload: number },
+  ) {}
+
+  send(data: string): void {
+    this.sent.push(data);
+  }
+  ping(callback?: () => void): void {
+    callback?.();
+  }
+  close(): void {
+    this.readyState = 3;
+    this.emit('close');
+  }
+  terminate(): void {
+    this.terminated = true;
+    this.readyState = 3;
+    this.emit('close');
+  }
+  on(event: 'open' | 'pong', cb: () => void): void;
+  on(event: 'message', cb: (data: unknown) => void): void;
+  on(event: 'close', cb: (code: number) => void): void;
+  on(event: 'error', cb: (err: Error) => void): void;
+  // The never[] rest keeps the implementation signature compatible with every
+  // typed overload (strictFunctionTypes contravariance) without `any`.
+  on(event: string, cb: (...args: never[]) => void): void {
+    let set = this.handlers.get(event);
+    if (set === undefined) {
+      set = new Set();
+      this.handlers.set(event, set);
+    }
+    set.add(cb);
+  }
+  open(): void {
+    this.readyState = WS_OPEN;
+    this.emit('open');
+  }
+  private emit(event: string, ...args: unknown[]): void {
+    for (const cb of this.handlers.get(event) ?? []) cb(...(args as never[]));
+  }
+}
+
+function fakeWsFactory(): { factory: WsFactory; sockets: FakeWs[] } {
+  const sockets: FakeWs[] = [];
+  const factory = vi.fn<WsFactory>((url, options) => {
+    const ws = new FakeWs(url, options);
+    sockets.push(ws);
+    return ws;
+  });
+  return { factory, sockets };
 }
 
 // ---- tests ---------------------------------------------------------------------
@@ -833,5 +897,45 @@ describe('AgentRuntime printer status polling (C1)', () => {
     const atStop = transport.heartbeats.length;
     await new Promise((resolve) => setTimeout(resolve, 60)); // several poll cadences
     expect(transport.heartbeats.length).toBe(atStop);
+  });
+});
+
+describe('AgentRuntime WSS channel wiring (A3 revival)', () => {
+  const wssCloud = {
+    baseUrl: 'https://api.test',
+    pollIntervalMs: 20,
+    wss: { enabled: true },
+  };
+
+  it('flag off: poll cycles run but the ws factory is never invoked', async () => {
+    const { factory } = fakeWsFactory();
+    const { runtime, transport } = await makeRuntime({ wsFactory: factory });
+    runtime.start();
+    await runtime.pair(PAIRING_CODE);
+    await runtime.printers.add(makeDraft());
+    await vi.waitFor(() => {
+      expect(transport.heartbeats.length).toBeGreaterThanOrEqual(1); // cycles are live
+    });
+    expect(factory).not.toHaveBeenCalled();
+  });
+
+  it('flag on: unpaired start never dials; pairing dials the derived §1 URL with paired auth headers', async () => {
+    const { factory, sockets } = fakeWsFactory();
+    const { runtime, transport } = await makeRuntime({ wsFactory: factory, cloud: wssCloud });
+    runtime.start();
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect(factory).not.toHaveBeenCalled(); // unpaired → getAuth null → idle
+    expect(transport.heartbeats.length).toBe(0); // no cycles ran unpaired either
+    await runtime.pair(PAIRING_CODE);
+    await vi.waitFor(() => {
+      expect(sockets.length).toBe(1);
+    });
+    expect(sockets[0]?.url).toBe('wss://api.test/agent/v1/ws');
+    // Header names as the channel actually sends them (title-case); HTTP is
+    // case-insensitive, the values are what the contract pins.
+    expect(sockets[0]?.options.headers['Authorization']).toBe('Bearer device-token-test');
+    expect(sockets[0]?.options.headers['X-Device-Id']).toBe(makeUuid(3));
+    expect(sockets[0]?.options.headers['X-Agent-Version']).toBe('0.1.0-test');
+    expect(sockets[0]?.options.headers['X-Protocol-Version']).toBe('1');
   });
 });

@@ -30,6 +30,8 @@ import { generateDeviceKeyPair, signJobForTest } from '../../src/main/cloud-clie
 import { ENVELOPE_VERSION } from '../../src/main/cloud-client/schemas';
 import type { TransportRegistry } from '../../src/main/transport/registry';
 import type { SpoolerBridge } from '../../src/main/transport/spooler-native';
+import type { WsFactory } from '../../src/main/cloud-client/ws-channel';
+import type { SnapshotChangeReason } from '../../src/shared/ipc-contract';
 import { memoryAdapter } from './memory-adapter';
 import { makeDoc } from './render';
 
@@ -264,6 +266,10 @@ async function makeRuntime(
     safeStorage?: SafeStorageLike;
     log?: Logger;
     spoolerBridge?: SpoolerBridge;
+    /** Runtime cloud-deps override; defaults to https://api.test + 20 ms poll. */
+    cloud?: { baseUrl: string; allowInsecureHttp?: boolean; wss?: { enabled?: boolean } };
+    /** Socket factory seam forwarded to the runtime's §1 channel (default: real ws client). */
+    wsFactory?: WsFactory;
     onSnapshotChanged?: (reason: SnapshotChangeReason) => void;
   } = {},
 ): Promise<RuntimeHarness> {
@@ -302,6 +308,7 @@ async function makeRuntime(
     ...(overrides.spoolerBridge !== undefined
       ? { spoolerBridgeOverride: overrides.spoolerBridge }
       : {}),
+    ...(overrides.wsFactory !== undefined ? { wsFactory: overrides.wsFactory } : {}),
   };
   const runtime = await createAgentRuntime({
     db,
@@ -315,7 +322,7 @@ async function makeRuntime(
       dbFile: null,
       identityKvFile: ':memory-identity-kv',
     },
-    cloud: { baseUrl: 'https://api.test', pollIntervalMs: 20 },
+    cloud: overrides.cloud ?? { baseUrl: 'https://api.test', pollIntervalMs: 20 },
     ...(overrides.onSnapshotChanged !== undefined
       ? { onSnapshotChanged: overrides.onSnapshotChanged }
       : {}),
