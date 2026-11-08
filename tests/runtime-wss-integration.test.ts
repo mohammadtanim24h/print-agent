@@ -44,9 +44,7 @@ function startServer(): Promise<{
       headers.push(req.headers);
       ws.on('message', (data) => {
         // RawData is Buffer | ArrayBuffer | Buffer[]; normalize to Buffer first.
-        const buf = Array.isArray(data)
-          ? Buffer.concat(data)
-          : Buffer.from(new Uint8Array(data));
+        const buf = Array.isArray(data) ? Buffer.concat(data) : Buffer.from(new Uint8Array(data));
         frames.push(JSON.parse(buf.toString('utf8')));
       });
     });
@@ -60,7 +58,12 @@ function startServer(): Promise<{
             });
           }),
       });
-      resolve({ httpBaseUrl: `http://127.0.0.1:${String(addr.port)}`, connections, headers, frames });
+      resolve({
+        httpBaseUrl: `http://127.0.0.1:${String(addr.port)}`,
+        connections,
+        headers,
+        frames,
+      });
     });
   });
 }
