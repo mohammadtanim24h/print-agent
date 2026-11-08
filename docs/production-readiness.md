@@ -58,8 +58,11 @@ the acceptance evidence required before ticking.
   Evidence: `tests/agent-runtime.test.ts` ("AgentRuntime WSS channel wiring
   (A3 revival)"), `tests/runtime-wss-integration.test.ts` (full stack over a
   loopback socket), protocol legs pre-existing in `tests/cloud-ws-channel.test.ts`,
-  `tests/cloud-poller.test.ts`, `tests/cloud-ws-integration.test.ts`. The
-  **server side** is specified in `docs/wss-server-spec.md` for servepro-api
+  `tests/cloud-poller.test.ts`, `tests/cloud-ws-integration.test.ts`. AC-4
+  with the flag on: `PRINT_AGENT_ENABLE_WSS=1 pnpm no-listen` verified green
+  2026-11-08 (outbound dial only; a durable CI leg setting the env var is a
+  noted follow-up). The **server side** is specified in
+  `docs/wss-server-spec.md` for servepro-api
   (implementation happens in that repo); the flag stays off in production
   until that endpoint ships and clears the §6 WSS matrix + 24 h soak.
 - **What (retained for a future revival):** implement
