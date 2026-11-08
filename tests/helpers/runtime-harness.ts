@@ -266,8 +266,13 @@ async function makeRuntime(
     safeStorage?: SafeStorageLike;
     log?: Logger;
     spoolerBridge?: SpoolerBridge;
-    /** Runtime cloud-deps override; defaults to https://api.test + 20 ms poll. */
-    cloud?: { baseUrl: string; allowInsecureHttp?: boolean; wss?: { enabled?: boolean } };
+    /** Replaces the runtime cloud deps entirely (default: https://api.test + 20 ms poll). */
+    cloud?: {
+      baseUrl: string;
+      pollIntervalMs?: number;
+      allowInsecureHttp?: boolean;
+      wss?: { enabled?: boolean };
+    };
     /** Socket factory seam forwarded to the runtime's §1 channel (default: real ws client). */
     wsFactory?: WsFactory;
     onSnapshotChanged?: (reason: SnapshotChangeReason) => void;
