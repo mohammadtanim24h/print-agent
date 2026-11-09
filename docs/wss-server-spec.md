@@ -6,6 +6,13 @@ win). Prepared 2026-11-08 for the A3 revival: the agent's WSS client is wired
 behind `PRINT_AGENT_ENABLE_WSS=1` (default off); the flag stays off until this
 endpoint ships and clears the acceptance criteria in §9.
 
+> **Status 2026-11-09: IMPLEMENTED** in servepro-api (`feat/implement-one-click-print-using-agent`) —
+> Workerman v5.2.3 + workerman/redis v2.1.0 daemon (`php artisan agent:ws:serve`),
+> internal claim endpoint `POST /internal/agent-ws/claimed`, Redis publisher hooks,
+> §6-matrix feature tests. Deployment: `docs/deploy-agent-ws.md`. Remaining
+> acceptance: the §9.2 soak (§10). Amendments to §4/§5/§10 below record the
+> as-built decisions (also mirrored in api-contract §7 notes 12–13).
+
 Cross-team rule: this doc is written by the print-agent side; all
 implementation happens in the servepro-api repo by its owners.
 
@@ -64,12 +71,23 @@ with a connected agent:
 
 1. Laravel builds the §2 envelope and **signs it before transmit** —
    `sig = base64url(ed25519(server_signing_key, canonical_json(job)))` over the
-   exact JSON bytes pushed on the wire (§2: the agent verifies raw wire bytes;
-   never re-serialize after signing).
+   exact JSON bytes pushed on the wire (§2: the agent verifies
+   `canonical_json(parsed job)` — §2 note 13 ruling — so verbatim transmission
+   of the signed bytes is the safe form; never re-serialize after signing).
 2. Publish to Redis channel `agent-ws:{restaurant_uid}`:
-   `{ kind: "print_job", device_ids?: [...], envelope: {...} }` (device_ids
-   omitted = all connected agents of the restaurant — §7 note 5, printers are
-   restaurant-scoped).
+   `{ kind: "print_job", device_ids?: [...], envelope: "<pre-serialized signed
+   wire bytes>" }`.
+   **Amended 2026-11-09 (as-built):** (a) `envelope` carries the EXACT signed
+   JSON bytes as a string — the daemon transmits it verbatim and never
+   re-serializes after signing (api-contract §2 hard rule). (b) `device_ids`
+   omitted → the daemon delivers `print_job` frames to ONE connected agent per
+   restaurant (earliest-connected), not all of them: claim-on-send delivers
+   before claiming, so broadcasting to N agents would let N−1 devices hold a
+   frame their claim never won (double-print risk). `config_update` and
+   `revoke` still broadcast to all connected agents (§7 note 5 unchanged).
+   Carries over to the api-contract §7 note 12; agent impact: none — the agent
+   protocol is unchanged, it just never sees duplicate job frames from
+   same-restaurant siblings.
 3. The daemon sends the envelope frame to the connected agent(s).
 4. **The send IS the claim**: on confirmed frame write, the daemon calls an
    internal Laravel endpoint `POST /internal/agent-ws/claimed`
@@ -94,6 +112,14 @@ with a connected agent:
   fpm-side worker OR write directly to MySQL from the daemon (choose direct
   MySQL: same upsert SQL as the heartbeat controller, keeps a single writer
   path).
+  **Amended 2026-11-09 (as-built):** "per-printer `health` rows" was
+  aspirational — no printer-health table exists and the REST path
+  (`POST /heartbeat`) validates `printers.*` health without persisting it.
+  The socket path mirrors REST EXACTLY: `last_seen_at`, `last_ip`,
+  `agent_version`, `queue_depth` are upserted; `printers.*` health is
+  validated with the same rule set but not stored (api-contract §7 note 12).
+  If/when printer-health persistence is wanted, it must be added to BOTH
+  paths in the same change.
 - Offline detection stays §7 note 7: no heartbeat (REST or WSS) for > 90 s →
   `last_seen_at` staleness → `online: false`. No per-socket session registry
   is authoritative for online state.
@@ -152,5 +178,29 @@ with a connected agent:
   — must be resolved before any of this reaches a real restaurant.
 - Internal claim endpoint auth mechanism: shared secret vs mTLS — pick at
   implementation time; both are acceptable, it must never be public.
+  **Resolved 2026-11-09:** shared secret — `X-Internal-Token` vs
+  `AGENT_WS_INTERNAL_SECRET` (`hash_equals`, fail-closed when unset), route
+  `POST /internal/agent-ws/claimed`, additionally host-blocked at nginx
+  (`allow 127.0.0.1; deny all`). Payload is
+  `{ job_ids, via: "wss", device_id }` — `device_id` is additive on this
+  internal-only surface so `claimed_by_device_id` and printer_disabled
+  attribution stay correct.
 - `config.applied` / `config.rejected` telemetry (§7 note 9) remains
   undefined — out of scope here; do not add WSS acks for it.
+
+### As-built follow-ups (servepro-api, non-blocking)
+
+- The §9.2 soak (24 h staging) is the remaining acceptance gate; the daemon
+  cannot run on the Windows dev host (Workerman cannot fork there) — smoke
+  via Sail/Docker/Linux first.
+- workerman/redis daemon client consumes only `database.redis.default`
+  host/port/password/database — `REDIS_URL` and Redis ACL usernames are not
+  applied (see docs/deploy-agent-ws.md).
+- `ClaimOnSendClient` is a synchronous ≤3 s HTTP call inside the daemon event
+  loop — fine at this fleet's scale; revisit if restaurants gain many agents.
+- `UpgradeGuard`'s in-process auth cache evicts only lazily/on invalidation —
+  a periodic sweep would be cheap if soak shows growth.
+- REST wire-encoding item (api-contract §2 note + §7 note 13): **RESOLVED
+  2026-11-09** — the print-agent side ruled option (a): the agent verifies
+  over `canonical_json(parsed job)`, so the REST path's framework
+  re-encoding is conformant and no servepro-api change is needed.

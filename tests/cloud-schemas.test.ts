@@ -88,6 +88,33 @@ describe('PrintJobEnvelopeSchema (contract §6 envelope matrix)', () => {
     expect(verifyEnvelopeSig(tampered, parsed.sig, publicKeyRaw)).toBe(false);
   });
 
+  // §2 note 13 ruling (2026-11-09): verification canonicalizes the PARSED job,
+  // so the REST pull path's framework re-encoding (`/` → `\/`, non-ASCII →
+  // `\uXXXX`) after signing does not break verification.
+  it('verifies a sig over REST-re-encoded wire bytes (transport-indifferent)', () => {
+    const { envelope, publicKeyRaw } = makeSignedEnvelope({
+      job: {
+        payload: {
+          header: { restaurant_name: 'Café Brûlée & Co', address_lines: [] },
+          meta: { title: 'RECEIPT', order_ref: 'ord/1', created_at: '2026-10-22T10:00:00Z' },
+          lines: [{ text: 'Crème brûlée 1/2 kg' }],
+        },
+      },
+    });
+    // Simulate the REST encoder: escape every `/` as `\/` and the non-ASCII
+    // characters of the canonical text as \uXXXX escapes.
+    const canonicalText = canonicalJson(envelope.job);
+    const reEncodedText = canonicalText
+      .replace(/\//g, '\\/')
+      .replace(/é/g, '\\u00e9')
+      .replace(/û/g, '\\u00fb')
+      .replace(/è/g, '\\u00e8');
+    expect(reEncodedText).not.toBe(canonicalText); // the transforms must bite
+    expect(verifyEnvelopeSig(JSON.parse(reEncodedText), envelope.sig as string, publicKeyRaw)).toBe(
+      true,
+    );
+  });
+
   it('rejects a signature made by a different key', () => {
     const { envelope } = makeSignedEnvelope();
     const parsed = PrintJobEnvelopeSchema.parse(envelope);
@@ -106,8 +133,9 @@ describe('ConfigUpdateSchema', () => {
   });
 
   it('rejects a malformed restaurant_uid', () => {
-    expect(ConfigUpdateSchema.safeParse(makeConfigRaw(2, { restaurant_uid: 'not-a-uuid' })).success)
-      .toBe(false);
+    expect(
+      ConfigUpdateSchema.safeParse(makeConfigRaw(2, { restaurant_uid: 'not-a-uuid' })).success,
+    ).toBe(false);
   });
 
   it('rejects an invalid tcp transport address', () => {

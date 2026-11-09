@@ -26,6 +26,17 @@ rejected, not ignored, within `data` payloads (envelope may gain additive fields
   > `docs/wss-server-spec.md`). No protocol change; the §1 semantics below are exactly
   > what the wired client implements.
 
+  > **Amended 2026-11-09 (server-side revival):** the server WSS endpoint is
+  > IMPLEMENTED in servepro-api — a Workerman daemon (`php artisan agent:ws:serve`,
+  > systemd) behind an nginx WS-upgrade route; see `docs/wss-server-spec.md` for the
+  > implementation spec and `docs/deploy-agent-ws.md` for deployment. No protocol
+  > change. Server-implementation decisions that refine §1/§4/§7 (push targeting,
+  > heartbeat parity, claim-on-send) are recorded in §7 notes 12–13 and in
+  > wss-server-spec §4–§5. REST polling remains the fallback + control plane, and
+  > agents keep working unchanged with the daemon stopped (§9.3 fallback integrity).
+  > The §6 WSS matrix rows are now enforced server-side by feature tests
+  > (`tests/Feature/Agent/Wss*Test`, `tests/Feature/Internal/InternalClaimTest`).
+
   The §6 WSS matrix rows remain
   the acceptance checklist for that future work. Contract details below are retained
   normative for that eventuality. The agent connects after pairing, sends §3.2
@@ -76,9 +87,24 @@ rejected, not ignored, within `data` payloads (envelope may gain additive fields
   **Canonical form (normative for v1):** `canonical_json(job)` = JSON serialized with
   object keys sorted recursively by UTF-16 code unit, no whitespace, UTF-8 bytes;
   numbers as `JSON.stringify` emits them (v1 amounts are safe integers, so no float
-  formatting ambiguity). The agent verifies the signature over the **raw wire bytes**
-  of `job` — the server must sign the exact JSON it transmits, before any
-  server-side re-serialization with injected defaults.
+  formatting ambiguity). The agent verifies the signature over `canonical_json` of
+  the **parsed `job` VALUE as received on the wire** (pre-schema, so zod defaults
+  never leak into the verified form) — see the resolved note below for why this is
+  transport-indifferent rather than a strict byte comparison.
+
+  **RESOLVED 2026-11-09 (agent ruling on the 2026-11-09 OPEN ITEM — §7 note 13):**
+  the agent implements **option (a): verification canonicalizes the parsed `job`
+  before checking `sig`**. Rationale: `canonical_json` is normatively defined
+  (key-sorted, no whitespace, `JSON.stringify` escaping), so re-serializing the
+  parsed value reproduces the signed bytes exactly — `\/` / `\uXXXX` REST
+  re-encoding normalizes away on `JSON.parse`, and the WSS path's verbatim
+  canonical bytes round-trip identically. No server change is required; the REST
+  path's framework re-encoding is contract-conformant. The server requirements
+  that remain binding: (1) sign `canonical_json(job)` before transmission; (2)
+  transmit the same VALUE on every path — no serializer may inject, drop, or
+  default any field inside `job` (field-set changes still fail verification).
+  Agent regression test: `tests/cloud-schemas.test.ts` (REST-re-encoded wire
+  bytes case).
 - `idempotency_key` uniqueness scope: `(restaurant_id, idempotency_key)`.
 
 ### Document model v1 (common fields)
@@ -262,6 +288,17 @@ stolen tokens; revocation is also enforced server-side on every REST call.
   } ] }
 ```
 
+**2026-11-07 note (Phase 56 / PRINT-06, D-01/D-02):** printers carry a reserved,
+nullable `fallback_printer_id` column. It appears **present-but-null on every
+row of the dashboard printer resource** (`GET /api/printers`) and is **unused in
+v1 resolution** — the job destination is fixed at creation (§7 note 10). The
+write path rejects it: `POST/PATCH /api/printers` bodies carrying the field
+fail 422 as an unknown field. The **agent-facing `config_update.printers[]`
+entries intentionally omit the key in v1** (agent-parser strictness unverified);
+additive exposure on the agent wire follows §5 rule 2 (additive optional =
+non-breaking) and is deferred to FALLBACK-01, when the field gains rerouting
+behavior and dangling references get resolution-time handling.
+
 Agent applies atomically on `config_version` increase; acks `config.applied` or
 `config.rejected{error}`. Offline agents apply on reconnect. The increase is
 scoped per `restaurant_uid`: a snapshot whose `restaurant_uid` differs from the
@@ -326,6 +363,13 @@ agent is polling-first by default — its WSS client (ADR-15) is re-wired
 §1 semantics are unchanged for a future server implementation. `POST /heartbeat`
 and the pull-claim (§7 note 6) remain the operative server surface.
 
+**2026-11-09 amendment (supersedes the 2026-10-30 deferral):** the server-side
+WSS endpoint is IMPLEMENTED — `php artisan agent:ws:serve` (Workerman daemon,
+systemd) behind an nginx WS-upgrade route on `/agent/v1/ws`; REST polling
+remains the fallback + control plane and must keep working unchanged. The
+implementation spec is `docs/wss-server-spec.md`; deployment is
+`docs/deploy-agent-ws.md`; server decisions are §7 notes 12–13.
+
 1. **Restaurant identity** — deployments are single-restaurant. A stable
    `restaurant_uid` (UUIDv7, server-minted on the singleton `restaurant_settings`
    row) is the `restaurant_id` in every envelope; `tenant_id` is set to the same
@@ -363,6 +407,101 @@ and the pull-claim (§7 note 6) remain the operative server surface.
 9. **Config acks** (`config.applied` / `config.rejected{error}` in §4) have no
    REST/WSS surface yet; the agent logs rejections locally. Define the
    endpoint before relying on rejection telemetry.
+10. **POS job creation — station-based destination resolution (2026-11-07
+   amendment; supersedes the 2026-11-03 first-active note)** — on
+   `POST /api/print-jobs` the body's required fields remain `order_id` +
+   `doc_type`. When `printer_id` is omitted, the server resolves the
+   destination via the doc_type → station map:
+
+   | doc_type | station |
+   |----------|---------|
+   | `customer_receipt` | `cashier` |
+   | `kitchen_ticket` | `kitchen` |
+   | `bar_ticket` | `bar` |
+   | `station_ticket` | `station` |
+
+   The destination is the ACTIVE printer registered at the mapped station,
+   name-ordered ascending — identical to the `GET /api/printers` ordering.
+   Two distinct 422s, checked in this order: no active printer at all →
+   `"No active printer configured for this restaurant"` (message
+   unchanged); active printers exist but none at the mapped station →
+   `"No printer configured for station {station}"` — fail-fast, never
+   rerouted to another station's printer. An explicit `printer_id` still
+   wins and keeps the existing restaurant-scoped lookup (404) +
+   disabled-printer 422. Idempotent replays with the same key return the
+   ORIGINAL job — the destination is fixed at creation, so printer-config
+   changes between attempts never re-target an existing job. Printers now
+   also carry a nullable, reserved `fallback_printer_id` column
+   (present-but-null; documented in §4 — unused in v1 resolution).
+   Clients never name hosts/ports either way (§7 note 5).
+11. **Dashboard list — multi-status filter + server-computed `cause`
+   (2026-11-07 amendment, PRINT-07)** — `GET /api/print-jobs` accepts
+   multiple statuses via the bracket syntax, e.g.
+   `?status[]=failed&status[]=outcome_unknown` (the failed-jobs panel's
+   single request), returning one paginated newest-first list. The
+   single-value `?status=` form remains valid and byte-unchanged for
+   backward compatibility. Unknown/invalid status values are silently
+   ignored — garbage never 422s; when no valid value remains, the list
+   is simply unfiltered. Two additive serialized fields land on every
+   row: `cause` — the server-computed failure cause, one of
+   `printer_disabled`, `max_attempts_exceeded`, or `null` (derivation:
+   `failed` + a known server-written `last_error.code` wins; otherwise
+   an unrecognized/absent code maps to `max_attempts_exceeded` only
+   when `attempts >= printing.jobs.max_attempts` — the same ceiling
+   note 6's abandoned-claim recovery writes; any non-failed status
+   serializes `null`. Clients map the value to display labels and never
+   derive causes themselves); and `printer_name` — the null-safe
+   display name of the targeted printer, `null` after a printer
+   hard-delete (printers carry no FK to `print_jobs` by design, so a
+   deleted printer can never 500 the list). Reprint flows (panel
+   action) create a NEW job via `POST /api/print-jobs` with an explicit
+   `printer_id` and a DISTINCT `idempotency_key` — the default key
+   `order_{id}_{doc_type}` belongs to the original job, so reusing it
+   replays that job idempotently instead of creating the reprint
+   (note 10's fixed-destination semantics). `POST
+   /api/print-jobs/retry/{id}` remains the same-row requeue path and is
+   unchanged.
+12. **WSS push implemented (2026-11-09; details in `docs/wss-server-spec.md`)**
+   — server-implementation decisions that refine §1 semantics, all
+   feature-tested (`tests/Feature/Agent/Wss*Test`,
+   `tests/Feature/Internal/InternalClaimTest`):
+   - **Push targeting:** `print_job` envelopes are delivered to ONE
+     connected agent per restaurant (earliest-connected) unless the Redis
+     message pins `device_ids`; `config_update` and `revoke` broadcast to
+     all connected agents. Rationale: claim-on-send delivers before
+     claiming, so multi-device broadcast could double-print. This refines
+     the wss-server-spec §4 step-2 parenthetical ("all connected agents").
+   - **Claim-on-send transport:** the daemon calls the internal endpoint
+     `POST /internal/agent-ws/claimed` `{ job_ids, via: "wss", device_id }`
+     (shared-secret `X-Internal-Token` authed, host-blocked at nginx,
+     never public) ONLY after a confirmed frame write; the endpoint
+     performs the identical §7 note 6 transition (including the
+     `expires_at` claimability guard and `printer_disabled` at claim).
+     Pushed jobs are filtered from subsequent pulls (proven by test).
+     `device_id` is additive on an internal-only surface — not contract
+     surface.
+   - **Heartbeat parity:** socket §3.2 heartbeats upsert exactly what
+     `POST /heartbeat` upserts (`last_seen_at`, `last_ip`,
+     `agent_version`, `queue_depth`). The `printers.*.health` entries are
+     validated but NOT persisted (no printer-health table exists; REST
+     parity). Offline detection stays §7 note 7.
+   - **Upgrade auth:** token SHA-256 vs `agent_devices` with a ≤60 s
+     in-process cache (Redis invalidation on rotation/revocation);
+     failed-upgrade rate limit 3/15 min per IP; protocol ≠ 1 → HTTP 400;
+     mid-socket revocation closes `4401` after the revoke envelope;
+     non-heartbeat or oversized (> 32 KiB) agent frames close `1008`.
+   - **Lease-expiry reclaim push:** expired leases are re-pushed at most
+     once per lease window by a daemon-side scan; the REST pull remains
+     the authoritative recovery path (note 6 unchanged).
+13. **REST wire-encoding (2026-11-09; RESOLVED — agent ruling, see §2)** —
+   the REST pull serializes responses with the framework encoder, which can
+   re-encode the signed `job` value (`\/` and `\uXXXX` escaping) after
+   signing. The WSS path transmits the exact signed bytes. Ruling: the agent
+   verifies over `canonical_json(parsed job)` — transport-indifferent — so
+   option (a) is adopted and the REST re-encoding is conformant; no server
+   change. Binding server requirements unchanged: sign `canonical_json(job)`
+   before transmission; never let a serializer add/drop/default fields inside
+   the wire `job`.
 
 ### 7.1 Credential & endpoint summary (agent implementers)
 
