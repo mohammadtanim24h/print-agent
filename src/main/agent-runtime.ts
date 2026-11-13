@@ -547,7 +547,21 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
     try {
       const identity = await client.pair({ pairingCode: code, deviceName });
       const pairedAt = new Date(now()).toISOString();
-      await deps.settings.set({ pairedAt });
+      // A fresh identity must not inherit tenant-scoped state from the OLD
+      // device this install may have hosted. Re-pair (stale-device recovery)
+      // skips unpair's wipeLocalState — the identity vanished without a clean
+      // unpair — so the persisted config-version marker would block every
+      // fresh snapshot as a "regression" forever, and stale printer profiles
+      // would survive. Wipe before the first fetch so the fresh device
+      // applies its own snapshot cleanly.
+      jobStore.clearJobs();
+      await printers.clear();
+      configStore.clear();
+      await deps.settings.set({
+        pairedAt,
+        appliedConfigVersion: -1,
+        appliedConfigRestaurantUid: null,
+      });
       statusPoller.start(); // idempotent: covers a runtime that booted unpaired
       fetchConfigOnce(); // fire-and-forget; the fleet also arrives via poll/push
       armConfigRefresh(); // idempotent; pairs a runtime whose start() already ran unpaired

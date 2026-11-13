@@ -218,6 +218,40 @@ describe('AgentRuntime lifecycle', () => {
     expect(db.prepare('SELECT COUNT(*) AS n FROM cloud_config').get()).toMatchObject({ n: 0 });
   });
 
+  it('re-pair wipes stale tenant state the old device left behind', async () => {
+    const { runtime, db, settings, transport } = await makeRuntime();
+    runtime.start();
+    // Stale-identity recovery: the OLD device's tenant state survived an
+    // unclean identity loss (no unpair ran) — jobs, a printer profile, a
+    // cloud_config row, and a persisted config-version marker HIGHER than
+    // any fresh-server snapshot would carry.
+    await runtime.printers.add(makeDraft());
+    insertJobRow(db, { id: makeUuid(60), status: 'completed' });
+    await settings.set({ appliedConfigVersion: 9, appliedConfigRestaurantUid: RESTAURANT_ID });
+    db.prepare(
+      'INSERT INTO cloud_config (id, config_version, payload_json, updated_at) VALUES (1, 9, ?, ?)',
+    ).run('{}', Date.now());
+
+    const result = await runtime.pair(PAIRING_CODE);
+    expect(result.ok).toBe(true);
+
+    // pair() wipes everything tenant-scoped and resets the marker —
+    expect(runtime.printers.list()).toEqual([]);
+    expect(runtime.jobs.list()).toEqual([]);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM jobs').get()).toMatchObject({ n: 0 });
+    expect(db.prepare('SELECT COUNT(*) AS n FROM cloud_config').get()).toMatchObject({ n: 0 });
+    expect(settings.get().appliedConfigVersion).toBe(-1);
+    expect(settings.get().appliedConfigRestaurantUid).toBeNull();
+
+    // …so a fresh-server snapshot with a LOW version applies instead of
+    // being blocked as a "regression" against the stale marker forever.
+    transport.queuedJobs.push(makeCloudConfig(2, [makeCloudPrinterConfig(1)]));
+    await vi.waitFor(() => {
+      expect(runtime.printers.list()).toHaveLength(1);
+    });
+    expect(settings.get().appliedConfigVersion).toBe(2);
+  });
+
   it('recovers interrupted rows before the first poll', async () => {
     const { runtime, db } = await makeRuntime();
     insertJobRow(db, { id: makeUuid(51), status: 'sending' });
@@ -944,7 +978,9 @@ describe('AgentRuntime WSS channel wiring (A3 revival)', () => {
     const { runtime, transport } = await makeRuntime({ wsFactory: factory, cloud: wssCloud });
     runtime.start();
     await runtime.pair(PAIRING_CODE);
-    await vi.waitFor(() => { expect(sockets.length).toBe(1); });
+    await vi.waitFor(() => {
+      expect(sockets.length).toBe(1);
+    });
     sockets[0]?.open(); // reach readyState 1 so we pin the teardown of a live socket
     transport.failNextPoll = new CloudError(
       'unauthorized',

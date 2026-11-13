@@ -502,7 +502,10 @@ export function createPollingCloudClient(deps: PollingClientDeps): CloudClient {
       // New counter space — the version is not comparable with the marker.
       appliedConfigUid = uid;
       appliedConfigVersion = -1;
-    } else if (config.config_version <= appliedConfigVersion) {
+    } else if (config.config_version === appliedConfigVersion) {
+      return; // repeat — already applied, silent no-op (logging it every
+      // poll cycle made "regression" noise indistinguishable from a real one)
+    } else if (config.config_version < appliedConfigVersion) {
       log('cloud: ignored config version regression');
       return;
     }
