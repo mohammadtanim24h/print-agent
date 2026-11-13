@@ -190,14 +190,27 @@ with a connected agent:
 
 ### As-built follow-ups (servepro-api, non-blocking)
 
-- The §9.2 soak (24 h staging) is the remaining acceptance gate; the daemon
-  cannot run on the Windows dev host (Workerman cannot fork there) — smoke
-  via Sail/Docker/Linux first.
+- The §9.2 soak **PASSED 2026-11-13** on Docker staging (Windows host,
+  Docker Desktop; plain `ws://` via the agent's `PRINT_AGENT_ALLOW_HTTP=1`
+  local-testing flag — the production `wss://` topology still needs a real
+  Linux host per docs/deploy-agent-ws.md). Device
+  `01a1cfb6-31f1-7017-ac44-f4ffa7bcc58c`, 2026-11-12 12:23:08 UTC →
+  2026-11-13 ~12:40 UTC (> 24 h): memory plateaued twice (71.2 MiB first
+  boot, ~53.6 MiB after a daemon restart; peak 21% of the 256 MiB cap);
+  clean redials after two deliberate daemon restarts plus 13 hourly
+  token-rotation reconnects; E2E delivery proven on both paths (WSS job
+  claim-on-send confirmed 2026-11-12 18:46:26 UTC; REST-poll claims while
+  the daemon was stopped — §9.3 held).
 - workerman/redis daemon client consumes only `database.redis.default`
   host/port/password/database — `REDIS_URL` and Redis ACL usernames are not
   applied (see docs/deploy-agent-ws.md).
 - `ClaimOnSendClient` is a synchronous ≤3 s HTTP call inside the daemon event
   loop — fine at this fleet's scale; revisit if restaurants gain many agents.
+  As-built 2026-11-13: the request MUST set `CURLOPT_NOSIGNAL` — cURL
+  implements connect/total timeouts via SIGALRM, which Workerman's Timer
+  handler owns, so every claim-on-send aborted with ConnectionException
+  until the fix (3562c63). Delivered-but-unclaimed frames re-arm the poll
+  path, so this was a double-delivery window, not a cosmetic bug.
 - `UpgradeGuard`'s in-process auth cache evicts only lazily/on invalidation —
   a periodic sweep would be cheap if soak shows growth.
 - REST wire-encoding item (api-contract §2 note + §7 note 13): **RESOLVED
