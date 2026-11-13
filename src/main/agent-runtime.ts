@@ -319,6 +319,8 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
       docVersion: job.doc_version,
       expiresAt: Date.parse(job.expires_at),
       payload: job.payload,
+      // §2 envelope delivery attempt (contract §7 note 14) — echoed in acks.
+      attempt: envelope.attempt ?? 1,
     });
   });
 

@@ -69,6 +69,10 @@ export type PrintJob = z.output<typeof PrintJobSchema>;
 export const PrintJobEnvelopeSchema = z.looseObject({
   envelope_version: z.literal(ENVELOPE_VERSION),
   type: z.literal('print_job'),
+  // Additive 2026-11-13 (contract §7 note 14): the server's delivery-attempt
+  // counter (≥ 1), echoed by the agent in acks for job_id+attempt idempotency.
+  // Optional — servers predating the amendment omit it (fall back to 1).
+  attempt: z.number().int().min(1).max(999).optional(),
   job: PrintJobSchema,
   sig: b64url(64), // ed25519 signature = 64 raw bytes
 });

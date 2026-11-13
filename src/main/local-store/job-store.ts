@@ -33,6 +33,9 @@ export interface JobRow {
   readonly copies: number;
   readonly status: JobStatus;
   readonly attempts: number;
+  /** Server delivery-attempt counter from the §2 envelope (contract §7
+   *  note 14) — echoed in acks. NOT the local print-retry counter. */
+  readonly deliveryAttempt: number;
   readonly reprintOf: string | null;
   readonly createdAt: number;
   readonly expiresAt: number | null;
@@ -103,6 +106,7 @@ interface JobDbRow {
   copies: number;
   status: string;
   attempts: number;
+  delivery_attempt: number;
   reprint_of: string | null;
   created_at: number;
   expires_at: number | null;
@@ -135,6 +139,7 @@ function toRow(r: JobDbRow): JobRow {
     copies: r.copies,
     status: r.status as JobStatus,
     attempts: r.attempts,
+    deliveryAttempt: r.delivery_attempt,
     reprintOf: r.reprint_of,
     createdAt: r.created_at,
     expiresAt: r.expires_at,
@@ -167,11 +172,11 @@ export function createSqliteJobStore(
   // Prepared once at factory time — these sit on the hot path (every state transition).
   const insertStmt = db.prepare(`
     INSERT INTO jobs (id, idempotency_key, tenant_id, restaurant_id, printer_id, doc_type, doc_version,
-                      payload_json, priority, copies, status, attempts, reprint_of, created_at, expires_at,
-                      sent_at, completed_at, updated_at, last_error)
+                      payload_json, priority, copies, status, attempts, delivery_attempt, reprint_of,
+                      created_at, expires_at, sent_at, completed_at, updated_at, last_error)
     VALUES (@id, @idempotencyKey, @tenantId, @restaurantId, @printerId, @docType, @docVersion,
-            @payloadJson, @priority, @copies, @status, @attempts, @reprintOf, @createdAt, @expiresAt,
-            @sentAt, @completedAt, @updatedAt, @lastError)
+            @payloadJson, @priority, @copies, @status, @attempts, @deliveryAttempt, @reprintOf,
+            @createdAt, @expiresAt, @sentAt, @completedAt, @updatedAt, @lastError)
   `);
   const updateStatusStmt = db.prepare(`
     UPDATE jobs SET status = @status, updated_at = @at,

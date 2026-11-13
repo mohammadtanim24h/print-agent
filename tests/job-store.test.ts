@@ -25,6 +25,7 @@ function makeRow(overrides: Partial<NewJobRow> = {}): NewJobRow {
     copies: 1,
     status: 'accepted',
     attempts: 0,
+    deliveryAttempt: 1,
     reprintOf: null,
     createdAt: 1_000,
     expiresAt: null,

@@ -115,6 +115,7 @@ export function makeJob(printerId: string, overrides: Partial<PrintJobInput> = {
     docVersion: 1,
     expiresAt: null,
     payload: makeDoc(),
+    attempt: 1,
     ...overrides,
   };
 }

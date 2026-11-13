@@ -14,6 +14,11 @@ export interface PrintJobInput {
   /** Epoch ms, or null when the server sets no expiry. */
   readonly expiresAt: number | null;
   readonly payload: unknown; // validated against DocV1Schema at intake
+  /** Server delivery-attempt counter from the §2 envelope (additive
+   *  2026-11-13, contract §7 note 14). The agent echoes it in acks —
+   *  `job_id`+`attempt` idempotency keys on THIS value, never on the local
+   *  print-retry counter. 1 when the server predates the field. */
+  readonly attempt: number;
 }
 
 /** Ack statuses per api-contract §3.1 — sending/printer_ack never appear. */

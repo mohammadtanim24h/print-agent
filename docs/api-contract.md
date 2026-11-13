@@ -63,6 +63,10 @@ rejected, not ignored, within `data` payloads (envelope may gain additive fields
 {
   "envelope_version": 1,
   "type": "print_job", // | "config_update" | "revoke" | "ping"
+  "attempt": 1, // additive 2026-11-13 (§5.2): server delivery-attempt counter, ≥ 1.
+                // The agent ECHOES this value in its §3.1 acks so `job_id`+`attempt`
+                // idempotency is well-defined. Never inside `job` (would change the
+                // signed canonical bytes — §2 hard rule).
   "job": {
     "job_id": "018f3c2e-...", // uuidv7
     "idempotency_key": "ord_8842-receipt-1",
@@ -152,7 +156,9 @@ the safe-integer range (≤ 2^53−1). Payloads exceeding these are rejected wit
     "printer_status": "ok|unknown|offline|paper_out|paper_low|cover_open", // best-effort
     "printed": false,          // ALWAYS false in v1 — see semantics table below
     "error": { "code": "transport_timeout", "message": "...?" },  // required when failed/rejected
-    "attempt": 1,
+    "attempt": 1,  // MUST echo the delivery attempt from the §2 envelope
+                   // (additive 2026-11-13) the ack refers to — NOT the
+                   // agent's local print-retry counter.
     "at": "2026-10-22T10:00:01.250Z"
   } ] }
 ```
@@ -338,7 +344,8 @@ cp437/cp850 (R-VAL-1).
 - Config: version regression ignored / invalid transport address rejected.
 - WSS: upgrade with a valid token / with a bad token (4401 or 401 upgrade rejection) /
   job delivered over WSS == job delivered over the poll batch (idempotent by
-  `job_id`+`attempt`) / revoke + config_update over WSS / oversized frame dropped /
+  `job_id`+`attempt`, where `attempt` is the §2 envelope's delivery-attempt
+  counter echoed by the agent) / revoke + config_update over WSS / oversized frame dropped /
   90 s silence → agent reconnects.
 
 ## 7. Server implementation notes & deviations (servepro-api, 2026-10-24)
@@ -502,6 +509,17 @@ implementation spec is `docs/wss-server-spec.md`; deployment is
    change. Binding server requirements unchanged: sign `canonical_json(job)`
    before transmission; never let a serializer add/drop/default fields inside
    the wire `job`.
+14. **Ack `attempt` semantics (2026-11-13; additive envelope field)** — the
+   §3.1 ack `attempt` was left undefined in v1 and the two sides drifted:
+   the server compared it against its claim counter while the agent sent its
+   local print-retry counter (the wire carried no attempt at all), so acks
+   could land `stale`/`rejected` spuriously. Resolution: the §2 envelope now
+   carries `attempt` at the TOP LEVEL (additive per §5.2 — never inside the
+   signed `job`, §2 hard rule) = the server's delivery-attempt counter (≥ 1);
+   the agent echoes it in every ack. Idempotency `job_id`+`attempt` is now
+   well-defined; old acks for a re-claimed job map to `stale` (success
+   no-op). Agents that predate the field keep working (they ignore the
+   additive field); their acks fall back to the pre-amendment behavior.
 
 ### 7.1 Credential & endpoint summary (agent implementers)
 

@@ -106,7 +106,9 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
       status,
       printerStatus: statusFor(row.printerId),
       printed: false,
-      attempt: Math.max(row.attempts, 1),
+      // §7 note 14: acks echo the ENVELOPE's delivery attempt, not the
+      // local print-retry counter (row.attempts).
+      attempt: Math.max(row.deliveryAttempt, 1),
       at: new Date(now()).toISOString(),
       ...(error === undefined ? {} : { error }),
     };
@@ -120,7 +122,7 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
       status: 'rejected',
       printerStatus: statusFor(job.printerId),
       printed: false,
-      attempt: 1,
+      attempt: Math.max(job.attempt, 1),
       at: new Date(now()).toISOString(),
       error: { code, message },
     };
@@ -138,7 +140,7 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
       status,
       printerStatus: statusFor(row.printerId),
       printed: false,
-      attempt: Math.max(row.attempts, 1),
+      attempt: Math.max(row.deliveryAttempt, 1),
       at: new Date(now()).toISOString(),
       error: { code, message },
     };
@@ -151,7 +153,7 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
       status,
       printerStatus: statusFor(row.printerId),
       printed: false,
-      attempt: Math.max(row.attempts, 1),
+      attempt: Math.max(row.deliveryAttempt, 1),
       at: new Date(now()).toISOString(),
     });
     switch (row.status) {
@@ -235,6 +237,7 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
       copies: job.copies,
       status: 'accepted',
       attempts: 0,
+      deliveryAttempt: Math.max(job.attempt, 1),
       reprintOf: null,
       createdAt: now(),
       expiresAt: job.expiresAt,
@@ -656,6 +659,9 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
       copies: row.copies,
       status: 'accepted',
       attempts: 0,
+      // A reprint never had an envelope of its own — no server delivery
+      // attempt exists; keep the pre-amendment constant.
+      deliveryAttempt: 1,
       reprintOf: row.id,
       createdAt: now(),
       expiresAt: null, // an operator reprint does not inherit the original's expiry

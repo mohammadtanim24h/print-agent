@@ -83,6 +83,7 @@ function ghostRow(overrides: Partial<JobRow> = {}): JobRow {
     copies: 1,
     status: 'accepted',
     attempts: 0,
+    deliveryAttempt: 1,
     reprintOf: null,
     createdAt: T0,
     expiresAt: null,

@@ -68,6 +68,18 @@ export const MIGRATIONS: readonly Migration[] = [
       `);
     },
   },
+  {
+    version: 3,
+    name: 'jobs_delivery_attempt',
+    up: (db) => {
+      // Contract §7 note 14 (2026-11-13): acks echo the §2 envelope's
+      // delivery-attempt counter, so the row must remember what the server
+      // sent. Distinct from `attempts` (the local print-retry counter).
+      // Rows persisted before the amendment predate envelopes with attempt
+      // — 1 is the safe pre-amendment value.
+      db.exec('ALTER TABLE jobs ADD COLUMN delivery_attempt INTEGER NOT NULL DEFAULT 1;');
+    },
+  },
 ];
 
 export function migrate(db: SqliteDatabase, now: () => number = Date.now): number {
