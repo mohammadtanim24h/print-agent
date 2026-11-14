@@ -64,7 +64,11 @@ the acceptance evidence required before ticking.
   noted follow-up). The **server side** is specified in
   `docs/wss-server-spec.md` for servepro-api
   (implementation happens in that repo); the flag stays off in production
-  until that endpoint ships and clears the §6 WSS matrix + 24 h soak.
+  until the endpoint runs the production `wss://` topology on a real Linux
+  host. Server-side gates already cleared: the endpoint is IMPLEMENTED
+  (2026-11-09), the §6 WSS matrix is enforced by its feature tests, and the
+  24 h soak PASSED 2026-11-13 (over plain `ws://` on Docker staging —
+  `docs/wss-server-spec.md` §10).
 - **What (retained for a future revival):** implement
   `wss://<host>/agent/v1/ws` per `docs/api-contract.md` §1 as amended
   2026-10-30: token auth on upgrade (401 on bad token), close `4401` for auth

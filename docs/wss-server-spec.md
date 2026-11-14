@@ -9,8 +9,10 @@ endpoint ships and clears the acceptance criteria in §9.
 > **Status 2026-11-09: IMPLEMENTED** in servepro-api (`feat/implement-one-click-print-using-agent`) —
 > Workerman v5.2.3 + workerman/redis v2.1.0 daemon (`php artisan agent:ws:serve`),
 > internal claim endpoint `POST /internal/agent-ws/claimed`, Redis publisher hooks,
-> §6-matrix feature tests. Deployment: `docs/deploy-agent-ws.md`. Remaining
-> acceptance: the §9.2 soak (§10). Amendments to §4/§5/§10 below record the
+> §6-matrix feature tests. Deployment: `docs/deploy-agent-ws.md`. **§9 acceptance
+> CLEARED 2026-11-13** — §9.2 soak PASSED (recorded in §10 as-built follow-ups;
+> caveat: over plain `ws://` on Docker staging — the production `wss://` topology
+> still awaits a real Linux host). Amendments to §4/§5/§10 below record the
 > as-built decisions (also mirrored in api-contract §7 notes 12–13).
 
 Cross-team rule: this doc is written by the print-agent side; all
