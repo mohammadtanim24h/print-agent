@@ -176,6 +176,33 @@ describe('sqlite JobStore', () => {
     }
   });
 
+  it('persistRedelivery updates the delivery epoch and expiry, stamping updated_at', () => {
+    const { db, store } = makeStore();
+    try {
+      let t = 5_000;
+      const timed = createSqliteJobStore(db, { now: () => t });
+      timed.insert(makeRow({ deliveryAttempt: 1, expiresAt: 6_000 }));
+
+      // Server-initiated retry: bumped epoch + the re-delivery's refreshed TTL.
+      t = 7_000;
+      timed.persistRedelivery('job-1', 2, 9_000);
+
+      const row = timed.get('job-1');
+      expect(row?.deliveryAttempt).toBe(2);
+      expect(row?.expiresAt).toBe(9_000);
+      expect(row?.updatedAt).toBe(7_000);
+      // The local print counter and status are NOT this mutation's concern
+      // (resetAttempts + updateStatus own those).
+      expect(row?.attempts).toBe(0);
+      expect(row?.status).toBe('accepted');
+
+      expect(() => timed.persistRedelivery('ghost', 2, null)).toThrow(/no such job/);
+      expect(() => timed.persistRedelivery('ghost', 2, null)).toThrow(StoreError);
+    } finally {
+      closeDatabase(db);
+    }
+  });
+
   it('listByStatus orders by priority then created_at, and counts non-terminal rows', () => {
     const { db, store } = makeStore();
     try {

@@ -3,6 +3,7 @@ import { migrate } from '../../src/main/local-store/migrations';
 import { createSqliteJobStore } from '../../src/main/local-store/job-store';
 import type { JobStore } from '../../src/main/local-store/job-store';
 import { createPrinterStore } from '../../src/main/printers/store';
+import type { PrinterStore } from '../../src/main/printers/store';
 import type { TransportRegistry } from '../../src/main/transport/registry';
 import type { PrinterStatus } from '../../src/main/transport/types';
 import { createJobEngine } from '../../src/main/jobs/engine';
@@ -20,6 +21,9 @@ export const HARNESS_T0 = T0;
 export interface Harness {
   readonly engine: JobEngine;
   readonly acks: JobAck[];
+  /** Printer store seam — lets tests reconfigure/remove printers mid-test
+   *  (e.g. GAP-2 bypass re-validation against drifted printer state). */
+  readonly printers: PrinterStore;
   /** First printer (backward-compat alias for `printerIds[0]`). */
   readonly printerId: string;
   /** All configured printers, in creation order. */
@@ -93,6 +97,7 @@ export async function makeHarness(options: HarnessOptions = {}): Promise<Harness
   return {
     engine,
     acks,
+    printers,
     printerId: profile.printerId,
     printerIds: profiles.map((p) => p.printerId),
     timers,

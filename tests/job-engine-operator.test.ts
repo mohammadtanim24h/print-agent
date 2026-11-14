@@ -231,4 +231,56 @@ describe('engine operator actions', () => {
       h.dispose();
     }
   });
+
+  // ---- GAP-2: operator flows vs the server delivery epoch ----------------
+
+  it('local retryJob re-prints without touching the server delivery epoch', async () => {
+    let failFirst = 1; // first open only
+    const transports = new OpenScriptRegistry(() =>
+      failFirst-- > 0 ? new TransportError('connect_refused', 'printer refused') : undefined,
+    );
+    const h = await makeHarness({ transports, limits: { maxAttempts: 1 } });
+    try {
+      h.engine.submit(makeJob(h.printerId)); // attempt 1 — open fails → failed
+      await drained();
+      expect(h.engine.getJob('job-1')?.status).toBe('failed');
+
+      // Local operator retry: fresh attempt budget; the delivery epoch is a
+      // SERVER-side counter — local retries never bump it.
+      h.engine.retryJob('job-1');
+      await drained();
+      expect(h.engine.getJob('job-1')?.status).toBe('completed');
+      expect(h.engine.getJob('job-1')?.deliveryAttempt).toBe(1);
+      expect(h.acks.at(-1)?.attempt).toBe(1); // acks still echo epoch 1
+
+      // A same-epoch server re-delivery (late duplicate push) still dedups —
+      // the epoch signal only moves on SERVER-initiated retries.
+      const dup = h.engine.submit(makeJob(h.printerId, { jobId: 'job-1-again' }));
+      expect(dup.status).toBe('completed');
+      expect(transports.get(h.printerId)?.writes).toHaveLength(1); // no extra print
+    } finally {
+      h.dispose();
+    }
+  });
+
+  it('reprintJob rows keep deliveryAttempt 1; an epoch-2 re-delivery bypasses only the original', async () => {
+    const transports = new FakeTransportRegistry(() => ({}));
+    const h = await makeHarness({ transports });
+    try {
+      h.engine.submit(makeJob(h.printerId));
+      await drained();
+      const reprintId = h.engine.reprintJob('job-1');
+      await drained();
+      expect(h.engine.getJob(reprintId)?.deliveryAttempt).toBe(1); // no envelope of its own
+      expect(h.engine.getJob('job-1')?.deliveryAttempt).toBe(1);
+
+      // Server retry of the ORIGINAL job: only the original row's epoch moves.
+      h.engine.submit(makeJob(h.printerId, { attempt: 2 }));
+      await drained();
+      expect(h.engine.getJob('job-1')?.deliveryAttempt).toBe(2);
+      expect(h.engine.getJob(reprintId)?.deliveryAttempt).toBe(1); // reprint row untouched
+    } finally {
+      h.dispose();
+    }
+  });
 });

@@ -1,8 +1,43 @@
 import { describe, expect, it } from 'vitest';
 import { makeHarness, makeJob, HARNESS_T0 } from './helpers/job-engine-harness';
 import { makeDoc } from './helpers/render';
+import { FakeTransport, FakeTransportRegistry } from './helpers/fake-transport';
+import { TransportError } from '../src/main/transport/errors';
+import type { PrinterProfile } from '../src/main/printers/profile';
+import type { TransportRegistry } from '../src/main/transport/registry';
 import type { JobStore } from '../src/main/local-store/job-store';
 import { JobEngineError } from '../src/main/jobs/errors';
+
+/** FakeTransport whose open() consults a callback per call (first-use script
+ *  freezing in FakeTransportRegistry makes per-call outcomes impossible there). */
+class OpenScriptRegistry implements TransportRegistry {
+  private readonly byPrinter = new Map<string, FakeTransport>();
+
+  constructor(private readonly openErrorFor: (printerId: string) => Error | undefined) {}
+
+  forPrinter(profile: PrinterProfile): FakeTransport {
+    const existing = this.byPrinter.get(profile.printerId);
+    if (existing !== undefined) return existing;
+    const errFor = (): Error | undefined => this.openErrorFor(profile.printerId);
+    const t = new (class extends FakeTransport {
+      override open(): Promise<void> {
+        this.opens += 1;
+        const err = errFor();
+        return err !== undefined ? Promise.reject(err) : Promise.resolve();
+      }
+    })({});
+    this.byPrinter.set(profile.printerId, t);
+    return t;
+  }
+
+  get(printerId: string): FakeTransport | undefined {
+    return this.byPrinter.get(printerId);
+  }
+}
+
+async function drained(): Promise<void> {
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+}
 
 describe('engine intake', () => {
   it('durably accepts a valid job and emits exactly one accepted ack', async () => {
@@ -208,6 +243,177 @@ describe('engine intake', () => {
       expect(thrown).toBeInstanceOf(JobEngineError);
       expect((thrown as JobEngineError).code).toBe('store_unavailable');
       expect(h.acks).toHaveLength(0);
+    } finally {
+      h.dispose();
+    }
+  });
+
+  // ---- GAP-2: strictly-greater epoch = server-initiated retry ------------
+
+  it('re-executes a FAILED row when the incoming attempt is strictly greater (server retry)', async () => {
+    let failFirst = 1; // first open only
+    const transports = new OpenScriptRegistry(() =>
+      failFirst-- > 0 ? new TransportError('connect_refused', 'printer refused') : undefined,
+    );
+    const h = await makeHarness({ transports, limits: { maxAttempts: 1 } });
+    try {
+      h.engine.submit(makeJob(h.printerId)); // attempt 1 — open fails → failed
+      await drained();
+      const failedRow = h.engine.getJob('job-1');
+      expect(failedRow?.status).toBe('failed');
+      expect(failedRow?.deliveryAttempt).toBe(1);
+
+      // Operator retry server-side: same job id/key, epoch bumped to 2.
+      const retry = h.engine.submit(makeJob(h.printerId, { attempt: 2 }));
+      expect(retry.status).toBe('accepted');
+      expect(retry.jobId).toBe('job-1'); // same stored row, not a new one
+      await drained();
+
+      const row = h.engine.getJob('job-1');
+      expect(row?.status).toBe('completed'); // re-executed — paper
+      expect(row?.deliveryAttempt).toBe(2); // epoch persisted
+      expect(row?.attempts).toBe(1); // fresh local budget after resetAttempts
+      expect(transports.get(h.printerId)?.writes).toHaveLength(1); // exactly one write (the retry cycle)
+      // Every ack of the new cycle echoes the new epoch.
+      const firstNew = h.acks.findIndex((a) => a.attempt === 2);
+      expect(firstNew).toBeGreaterThan(-1);
+      const newCycle = h.acks.slice(firstNew);
+      expect(newCycle.length).toBeGreaterThan(0);
+      expect(newCycle.every((a) => a.attempt === 2)).toBe(true);
+      expect(newCycle.at(-1)?.status).toBe('completed');
+    } finally {
+      h.dispose();
+    }
+  });
+
+  it('re-prints a COMPLETED row on a higher-attempt re-delivery (lost-ack retry gap)', async () => {
+    const transports = new FakeTransportRegistry(() => ({}));
+    const h = await makeHarness({ transports });
+    try {
+      h.engine.submit(makeJob(h.printerId));
+      await drained();
+      expect(h.engine.getJob('job-1')?.status).toBe('completed'); // printed; completion ack lost server-side
+      const acksBefore = h.acks.length;
+
+      // The server never learned of the completion, so the operator retried
+      // → epoch 2 re-delivery of the already-printed row.
+      const retry = h.engine.submit(makeJob(h.printerId, { attempt: 2 }));
+      expect(retry.status).toBe('accepted');
+      await drained();
+
+      expect(h.engine.getJob('job-1')?.status).toBe('completed');
+      expect(h.engine.getJob('job-1')?.deliveryAttempt).toBe(2);
+      expect(transports.get(h.printerId)?.writes).toHaveLength(2); // original + retry — paper twice, on purpose
+      expect(h.acks).toHaveLength(acksBefore + 4); // accepted/rendered/sent_to_printer/completed for the new cycle
+      expect(h.acks.at(-1)).toMatchObject({ status: 'completed', attempt: 2 });
+    } finally {
+      h.dispose();
+    }
+  });
+
+  it('never re-executes on an EQUAL-attempt re-delivery (lease re-claim dedup)', async () => {
+    const transports = new FakeTransportRegistry(() => ({}));
+    const h = await makeHarness({ transports });
+    try {
+      h.engine.submit(makeJob(h.printerId));
+      await drained();
+      expect(h.engine.getJob('job-1')?.status).toBe('completed');
+      const acksBefore = h.acks.length;
+
+      // Lease-expiry re-claim re-delivers the SAME epoch — transport-level dedup.
+      const dup = h.engine.submit(makeJob(h.printerId, { jobId: 'job-1-again', attempt: 1 }));
+      expect(dup.status).toBe('completed'); // duplicateAck from stored state
+      expect(dup.jobId).toBe('job-1');
+      expect(dup.attempt).toBe(1); // echoes the STORED epoch
+      await drained();
+
+      expect(transports.get(h.printerId)?.writes).toHaveLength(1); // no second print
+      expect(h.acks).toHaveLength(acksBefore); // no sink delivery either
+      expect(h.engine.getJob('job-1')?.deliveryAttempt).toBe(1);
+    } finally {
+      h.dispose();
+    }
+  });
+
+  it('acks an OLDER-attempt re-delivery as a duplicate without re-execution', async () => {
+    const transports = new FakeTransportRegistry(() => ({}));
+    const h = await makeHarness({ transports });
+    try {
+      h.engine.submit(makeJob(h.printerId));
+      await drained();
+      h.engine.submit(makeJob(h.printerId, { attempt: 2 })); // epoch → 2
+      await drained();
+      expect(h.engine.getJob('job-1')?.deliveryAttempt).toBe(2);
+      const acksBefore = h.acks.length;
+
+      const stale = h.engine.submit(makeJob(h.printerId, { attempt: 1 }));
+      expect(stale.status).toBe('completed'); // duplicateAck — stored state
+      await drained();
+
+      expect(transports.get(h.printerId)?.writes).toHaveLength(2); // no third print
+      expect(h.acks).toHaveLength(acksBefore);
+      expect(h.engine.getJob('job-1')?.deliveryAttempt).toBe(2);
+    } finally {
+      h.dispose();
+    }
+  });
+
+  it('re-validates the bypass: unknown printer → rejected WITH the incoming attempt (existing-row path)', async () => {
+    const transports = new FakeTransportRegistry(() => ({}));
+    const h = await makeHarness({ transports });
+    try {
+      h.engine.submit(makeJob(h.printerId));
+      await drained();
+      expect(h.engine.getJob('job-1')?.status).toBe('completed');
+      await h.printers.remove(h.printerId); // printer drifted away before the retry arrived
+
+      const retry = h.engine.submit(makeJob(h.printerId, { attempt: 2 }));
+      expect(retry.status).toBe('rejected');
+      expect(retry.error?.code).toBe('unknown_printer');
+      expect(retry.attempt).toBe(2); // the INCOMING epoch, not the stale row's 1
+      expect(h.acks.at(-1)).toMatchObject({ jobId: 'job-1', status: 'rejected', attempt: 2 });
+      // The stored row is untouched by the failed bypass.
+      expect(h.engine.getJob('job-1')?.status).toBe('completed');
+      expect(h.engine.getJob('job-1')?.deliveryAttempt).toBe(1);
+    } finally {
+      h.dispose();
+    }
+  });
+
+  it('re-validates the bypass: expired re-delivery → rejected WITH the incoming attempt', async () => {
+    const transports = new FakeTransportRegistry(() => ({}));
+    const h = await makeHarness({ transports });
+    try {
+      h.engine.submit(makeJob(h.printerId));
+      await drained();
+      expect(h.engine.getJob('job-1')?.status).toBe('completed');
+
+      const retry = h.engine.submit(
+        makeJob(h.printerId, { attempt: 2, expiresAt: HARNESS_T0 - 1 }),
+      );
+      expect(retry.status).toBe('rejected');
+      expect(retry.error?.code).toBe('expired_job');
+      expect(retry.attempt).toBe(2);
+      expect(h.engine.getJob('job-1')?.deliveryAttempt).toBe(1); // untouched
+    } finally {
+      h.dispose();
+    }
+  });
+
+  it('re-validates the bypass: queue full → rejected WITH the incoming attempt', async () => {
+    const transports = new FakeTransportRegistry(() => ({ hang: true }));
+    const h = await makeHarness({ transports, limits: { maxPending: 1 } });
+    try {
+      h.engine.submit(makeJob(h.printerId)); // hangs mid-transmission → sending (non-terminal)
+      await drained();
+      expect(h.engine.getJob('job-1')?.status).toBe('sending');
+
+      const retry = h.engine.submit(makeJob(h.printerId, { attempt: 2 }));
+      expect(retry.status).toBe('rejected');
+      expect(retry.error?.code).toBe('queue_full');
+      expect(retry.attempt).toBe(2);
+      expect(h.engine.getJob('job-1')?.status).toBe('sending'); // untouched
+      expect(h.engine.getJob('job-1')?.deliveryAttempt).toBe(1);
     } finally {
       h.dispose();
     }
