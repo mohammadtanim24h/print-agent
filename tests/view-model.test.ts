@@ -17,6 +17,7 @@ const row: JobRow = {
   copies: 1,
   status: 'completed',
   attempts: 1,
+  deliveryAttempt: 1,
   reprintOf: null,
   createdAt: 0,
   expiresAt: null,

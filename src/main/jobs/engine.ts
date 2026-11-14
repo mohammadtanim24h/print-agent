@@ -183,12 +183,77 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
     }
   }
 
+  /** Server-initiated retry of a known job (GAP-2): the incoming epoch is
+   *  STRICTLY GREATER than the persisted one. The epoch is a retry-only
+   *  counter (claims and lease re-claims never touch it), so strictly-greater
+   *  uniquely identifies an operator retry — unlike the old claim-counter
+   *  envelope, where a naive greater-than bypass would double-print on lease
+   *  re-claims. Re-validates against CURRENT state (unlike a same-epoch
+   *  duplicate, printer/expiry/queue drift must be honored), then resets the
+   *  local attempt budget, persists the new epoch + refreshed expiry, and
+   *  re-enqueues. Acks afterwards echo the new epoch via the existing
+   *  Math.max(row.deliveryAttempt, 1) read sites. */
+  function redeliverRetry(existing: JobRow, job: PrintJobInput, incoming: number): JobAck {
+    if (printers.get(job.printerId) === null) {
+      return rejectStoredRow(
+        existing,
+        incoming,
+        'unknown_printer',
+        `printer ${job.printerId} is not configured`,
+      );
+    }
+    if (job.expiresAt !== null && job.expiresAt <= now()) {
+      return rejectStoredRow(existing, incoming, 'expired_job', 'job expired before intake');
+    }
+    if (store.countByStatus(...NON_TERMINAL) >= limits.maxPending) {
+      return rejectStoredRow(existing, incoming, 'queue_full', 'local queue is at capacity');
+    }
+    store.resetAttempts(existing.id);
+    store.persistRedelivery(existing.id, incoming, job.expiresAt);
+    store.updateStatus(existing.id, 'accepted', { clearError: true });
+    enqueueExecution(existing.printerId, existing.id);
+    const fresh = store.get(existing.id);
+    if (fresh === null) {
+      throw new JobEngineError(
+        'store_unavailable',
+        `retry bypass: row ${existing.id} vanished after reset`,
+      );
+    }
+    return emit(fresh, 'accepted');
+  }
+
+  /** Rejection on the existing-row path (GAP-2): the pre-insert rejectAck never
+   *  runs here because the row exists — ack rejected carrying the INCOMING epoch
+   *  so the server's epoch pinning can match it. The stored row stays untouched. */
+  function rejectStoredRow(row: JobRow, attempt: number, code: string, message: string): JobAck {
+    const ack: JobAck = {
+      jobId: row.id,
+      status: 'rejected',
+      printerStatus: statusFor(row.printerId),
+      printed: false,
+      attempt,
+      at: new Date(now()).toISOString(),
+      error: { code, message },
+    };
+    acks.submit(ack);
+    return ack;
+  }
+
   function submit(job: PrintJobInput): JobAck {
     // T4/ADR-6: idempotency lookup FIRST — a re-delivery whose row exists is
     // acked from stored state and never re-evaluated against current
     // printer/expiry/schema state (which may have drifted since acceptance).
+    // GAP-2 exception: a STRICTLY GREATER delivery epoch is an operator retry
+    // (the epoch is retry-only), so the known row re-executes instead of
+    // deduping. Equal/older epochs keep the transport-level duplicateAck:
+    // lease-expiry re-claims re-deliver the SAME epoch and must never
+    // double-print (ADR-5/T4).
     const existing = store.findByIdempotency(job.restaurantId, job.idempotencyKey);
     if (existing !== null) {
+      const incoming = Math.max(job.attempt, 1);
+      if (incoming > existing.deliveryAttempt) {
+        return redeliverRetry(existing, job, incoming);
+      }
       return duplicateAck(existing);
     }
     if (printers.get(job.printerId) === null) {

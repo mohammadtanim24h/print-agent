@@ -82,6 +82,10 @@ export interface JobStore {
   incrementAttempts(id: string): number;
   /** Start a fresh attempt cycle: counter back to 0 AND the cycle's attempt history cleared. */
   resetAttempts(id: string): void;
+  /** Server-initiated retry re-delivery (GAP-2): persist the bumped delivery
+   *  epoch and the re-delivery's server-refreshed expiry. Status and the local
+   *  print counter are the caller's concern (resetAttempts + updateStatus). */
+  persistRedelivery(id: string, deliveryAttempt: number, expiresAt: number | null): void;
   recordAttempt(jobId: string, attempt: number, record: AttemptRecord, at: number): void;
   listAttempts(jobId: string): JobAttemptRow[];
   listByStatus(...statuses: JobStatus[]): JobRow[];
@@ -193,6 +197,9 @@ export function createSqliteJobStore(
     'UPDATE jobs SET attempts = attempts + 1, updated_at = ? WHERE id = ? RETURNING attempts',
   );
   const resetAttemptsStmt = db.prepare('UPDATE jobs SET attempts = 0, updated_at = ? WHERE id = ?');
+  const persistRedeliveryStmt = db.prepare(
+    'UPDATE jobs SET delivery_attempt = ?, expires_at = ?, updated_at = ? WHERE id = ?',
+  );
   const recordAttemptStmt = db.prepare(
     'INSERT INTO job_attempts (job_id, attempt, outcome, error_code, error_message, at) VALUES (?, ?, ?, ?, ?, ?)',
   );
@@ -267,6 +274,16 @@ export function createSqliteJobStore(
         cycle(id);
       } catch (err) {
         throw wrap('resetAttempts', err);
+      }
+    },
+    persistRedelivery(id, deliveryAttempt, expiresAt) {
+      try {
+        const info = persistRedeliveryStmt.run(deliveryAttempt, expiresAt, clock.now(), id);
+        if (info.changes === 0)
+          throw new StoreError('not_found', `persistRedelivery: no such job ${id}`);
+      } catch (err) {
+        if (err instanceof StoreError) throw err;
+        throw wrap('persistRedelivery', err);
       }
     },
     recordAttempt(jobId, attempt, record, at) {

@@ -177,7 +177,7 @@ describe('sqlite JobStore', () => {
   });
 
   it('persistRedelivery updates the delivery epoch and expiry, stamping updated_at', () => {
-    const { db, store } = makeStore();
+    const { db } = makeStore();
     try {
       let t = 5_000;
       const timed = createSqliteJobStore(db, { now: () => t });
