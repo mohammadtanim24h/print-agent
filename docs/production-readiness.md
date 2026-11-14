@@ -52,23 +52,24 @@ the acceptance evidence required before ticking.
 ### A3. Server-side WSS endpoint (servepro-api — cross-team)
 
 - **Status:** agent side revived (2026-11-08, spec
-  `docs/superpowers/specs/2026-11-08-wss-revival-design.md`) — the runtime
-  constructs the §1 channel behind `PRINT_AGENT_ENABLE_WSS=1` (default off;
-  polling unchanged) and passes it to the poller's existing `channel` slot.
+  `docs/superpowers/specs/2026-11-08-wss-revival-design.md`); since
+  **2026-11-14 the §1 channel is DEFAULT-ON** — the `PRINT_AGENT_ENABLE_WSS`
+  opt-in flag was removed once the server gates closed (api-contract §1
+  amendment 2026-11-14). The runtime constructs the channel unconditionally
+  (an unpaired agent never dials) and passes it to the poller's existing
+  `channel` slot; REST polling is the fallback + control plane.
   Evidence: `tests/agent-runtime.test.ts` ("AgentRuntime WSS channel wiring
-  (A3 revival)"), `tests/runtime-wss-integration.test.ts` (full stack over a
+  (§1 — default on)"), `tests/runtime-wss-integration.test.ts` (full stack over a
   loopback socket), protocol legs pre-existing in `tests/cloud-ws-channel.test.ts`,
   `tests/cloud-poller.test.ts`, `tests/cloud-ws-integration.test.ts`. AC-4
-  with the flag on: `PRINT_AGENT_ENABLE_WSS=1 pnpm no-listen` verified green
-  2026-11-08 (outbound dial only; a durable CI leg setting the env var is a
-  noted follow-up). The **server side** is specified in
-  `docs/wss-server-spec.md` for servepro-api
-  (implementation happens in that repo); the flag stays off in production
-  until the endpoint runs the production `wss://` topology on a real Linux
-  host. Server-side gates already cleared: the endpoint is IMPLEMENTED
-  (2026-11-09), the §6 WSS matrix is enforced by its feature tests, and the
-  24 h soak PASSED 2026-11-13 (over plain `ws://` on Docker staging —
-  `docs/wss-server-spec.md` §10).
+  no-listen smoke verified green 2026-11-08 with the flag on (outbound dial
+  only; the default-on build needs a re-run of `pnpm no-listen` to re-pin AC-4,
+  plus a durable CI leg — still a noted follow-up). The **server side** is
+  specified in `docs/wss-server-spec.md` for servepro-api; its gates are
+  cleared (IMPLEMENTED 2026-11-09, §6 matrix feature-tested, 24 h soak PASSED
+  2026-11-13 over plain `ws://` on Docker staging — `docs/wss-server-spec.md`
+  §10). Remaining server step: the production `wss://` topology on a real
+  Linux host.
 - **What (retained for a future revival):** implement
   `wss://<host>/agent/v1/ws` per `docs/api-contract.md` §1 as amended
   2026-10-30: token auth on upgrade (401 on bad token), close `4401` for auth
@@ -158,10 +159,9 @@ the acceptance evidence required before ticking.
   local backend if the team accepts that evidence).
 - **What:** 10 jobs in 5 s through the engine over the poll delivery path:
   no ordering regressions, ack buffer drains, ambiguous-rate stays zero.
-  (WSS push path: the agent channel is wired behind `PRINT_AGENT_ENABLE_WSS=1`
-  (A3) but stays default-off until the servepro-api endpoint ships per
-  `docs/wss-server-spec.md`; add its burst leg when a deployment enables the
-  flag.)
+  (WSS push path: default-on since 2026-11-14 — the burst leg now exercises
+  whichever path delivers; a dedicated WSS-push burst leg remains open until
+  the production Linux deployment, per `docs/wss-server-spec.md`.)
 - **Depends on:** nothing.
 - **Closes with:** CI-able burst test green + a recorded run against staging.
 

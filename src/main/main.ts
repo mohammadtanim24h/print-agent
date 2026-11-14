@@ -107,14 +107,10 @@ async function start(): Promise<void> {
     log.warn('PRINT_AGENT_ALLOW_HTTP=1 — transport downgraded to plain http; local testing only');
   }
 
-  // §1 push channel opt-in (A3 revival). Default OFF — polling is the v1
-  // delivery path and the servepro-api WSS endpoint does not exist yet (see
-  // docs/wss-server-spec.md). Same discipline as PRINT_AGENT_ALLOW_HTTP:
-  // launcher-controlled, never the machine's global environment.
-  const ENABLE_WSS = process.env['PRINT_AGENT_ENABLE_WSS'] === '1';
-  if (ENABLE_WSS) {
-    log.info('PRINT_AGENT_ENABLE_WSS=1 — §1 push channel enabled');
-  }
+  // §1 push channel (default ON since api-contract §1 amendment 2026-11-14 —
+  // no opt-in flag; the runtime constructs the channel unconditionally and an
+  // unpaired agent never dials). The former PRINT_AGENT_ENABLE_WSS env gate
+  // was removed once the servepro-api endpoint cleared §9 acceptance.
 
   // Assigned after createMainWindow below; the runtime may emit before the
   // window exists (first poll cycle) — those signals are dropped, which is
@@ -136,7 +132,6 @@ async function start(): Promise<void> {
     cloud: {
       baseUrl: API_BASE_URL,
       ...(ALLOW_INSECURE_HTTP ? { allowInsecureHttp: true } : {}),
-      ...(ENABLE_WSS ? { wss: { enabled: true } } : {}),
     },
     onSnapshotChanged: (reason) => {
       if (mainWindow !== null && !mainWindow.isDestroyed()) {

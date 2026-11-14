@@ -2,9 +2,10 @@
 
 Implementation spec for the server half of api-contract §1 (print-agent repo;
 `docs/api-contract.md` is normative — where this doc overlaps §1/§2/§4/§6, those
-win). Prepared 2026-11-08 for the A3 revival: the agent's WSS client is wired
-behind `PRINT_AGENT_ENABLE_WSS=1` (default off); the flag stays off until this
-endpoint ships and clears the acceptance criteria in §9.
+win). Prepared 2026-11-08 for the A3 revival: the agent's WSS client was
+flag-gated (`PRINT_AGENT_ENABLE_WSS`, default off) until this endpoint shipped
+and cleared §9 — since 2026-11-14 WSS is the agent's DEFAULT delivery path and
+the flag is removed (api-contract §1 amendment).
 
 > **Status 2026-11-09: IMPLEMENTED** in servepro-api (`feat/implement-one-click-print-using-agent`) —
 > Workerman v5.2.3 + workerman/redis v2.1.0 daemon (`php artisan agent:ws:serve`),

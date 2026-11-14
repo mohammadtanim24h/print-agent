@@ -77,8 +77,10 @@ export interface RuntimeDeps {
     readonly pollIntervalMs?: number;
     /** Dev-only: permits http:// base URLs for a local backend (main.ts gates it on !app.isPackaged). */
     readonly allowInsecureHttp?: boolean;
-    /** Opt-in §1 push channel (main.ts: PRINT_AGENT_ENABLE_WSS=1). Default off —
-     *  polling is the v1 delivery path (api-contract §1, amended). */
+    /** §1 push channel — ON by default (api-contract §1 amendment 2026-11-14);
+     *  the former PRINT_AGENT_ENABLE_WSS opt-in flag was removed once the
+     *  servepro-api endpoint cleared acceptance. `enabled: false` is the
+     *  explicit opt-out (hermetic tests; an ops kill-switch if ever needed). */
     readonly wss?: {
       readonly enabled?: boolean;
     };
@@ -241,18 +243,19 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
     },
   });
 
-  // §1 push channel — opt-in behind the app-level flag; default OFF (polling
-  // remains the v1 delivery path, api-contract §1 amendment 2026-10-30, agent
-  // revival 2026-11-08). Disabled: no channel is constructed and the agent
-  // never dials wss://. Enabled: the poller owns start/stop/notifyAuthChanged
-  // and funnels frames through the same pipeline as poll batches; this
-  // constructor only assembles the socket. getAuth re-reads live secrets per
-  // dial so an unpaired runtime idles and post-rotation credentials are
-  // picked up by the poller's notifyAuthChanged. allowInsecureWs follows
-  // allowInsecureHttp (local-backend testing only; ws:// is refused outright
-  // in production builds).
+  // §1 push channel — ON by default (api-contract §1 amendment 2026-11-14;
+  // the servepro-api daemon shipped 2026-11-09 and cleared the §9 acceptance
+  // incl. the 24 h soak on 2026-11-13). Explicit `wss.enabled: false` skips
+  // construction entirely — the agent never dials wss:// — which is what the
+  // shared test harness opts into to stay hermetic. Enabled: the poller owns
+  // start/stop/notifyAuthChanged and funnels frames through the same pipeline
+  // as poll batches; this constructor only assembles the socket. getAuth
+  // re-reads live secrets per dial so an unpaired runtime idles and
+  // post-rotation credentials are picked up by the poller's notifyAuthChanged.
+  // allowInsecureWs follows allowInsecureHttp (local-backend testing only;
+  // ws:// is refused outright in production builds).
   const wssChannel =
-    deps.cloud.wss?.enabled === true
+    deps.cloud.wss?.enabled !== false
       ? createWssChannel({
           url: deriveWssUrl(deps.cloud.baseUrl),
           agentVersion: deps.agentVersion,

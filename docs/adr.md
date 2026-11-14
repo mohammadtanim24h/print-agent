@@ -29,6 +29,14 @@ superseded by future ADRs (append, don't edit).
 > drop to the 5-min safety cadence — the original "push primary + slow-poll safety
 > net" shape applies only then.
 
+> **Re-amended 2026-11-14 (default restored):** the opt-in flag is removed —
+> every agent constructs the §1 channel unconditionally (dials only once
+> paired) and the "push primary + 5-min slow-poll safety net" shape is the
+> default again. Gate that justified the flag is closed: the servepro-api
+> daemon shipped 2026-11-09 and cleared §9 acceptance (24 h soak PASSED
+> 2026-11-13). REST polling remains the fallback + control plane; an unpaired
+> agent never dials.
+
 ## Implementation order (phases; each phase ships tested, PRD AC-7)
 
 | Phase                                                | Deliverable                                                                                                                             | Key exit test                                                      |

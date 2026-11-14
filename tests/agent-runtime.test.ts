@@ -820,8 +820,9 @@ describe('AgentRuntime polling-first delivery (§7 amendment 2026-10-30)', () =>
     const { runtime, transport } = await makeRuntime();
     runtime.start();
     await runtime.pair(PAIRING_CODE);
-    // Poll cycles carry §3.2 heartbeats directly over REST (no WSS channel is
-    // constructed by the runtime, so nothing ever dials `wss://`).
+    // Poll cycles carry §3.2 heartbeats directly over REST. The §1 channel is
+    // default-on in the runtime, but the harness's default cloud config opts
+    // out (`wss.enabled: false`), so nothing ever dials `wss://` here.
     await vi.waitFor(() => {
       expect(transport.heartbeats.length).toBeGreaterThanOrEqual(1);
     });
@@ -934,16 +935,19 @@ describe('AgentRuntime printer status polling (C1)', () => {
   });
 });
 
-describe('AgentRuntime WSS channel wiring (A3 revival)', () => {
+describe('AgentRuntime WSS channel wiring (§1 — default on, 2026-11-14 amendment)', () => {
+  // No `wss` key: the runtime default is ON, so these pin the default path.
   const wssCloud = {
     baseUrl: 'https://api.test',
     pollIntervalMs: 20,
-    wss: { enabled: true },
   };
 
-  it('flag off: poll cycles run but the ws factory is never invoked', async () => {
+  it('explicit opt-out: poll cycles run but the ws factory is never invoked', async () => {
     const { factory } = fakeWsFactory();
-    const { runtime, transport } = await makeRuntime({ wsFactory: factory });
+    const { runtime, transport } = await makeRuntime({
+      wsFactory: factory,
+      cloud: { baseUrl: 'https://api.test', pollIntervalMs: 20, wss: { enabled: false } },
+    });
     runtime.start();
     await runtime.pair(PAIRING_CODE);
     await runtime.printers.add(makeDraft());
@@ -953,7 +957,7 @@ describe('AgentRuntime WSS channel wiring (A3 revival)', () => {
     expect(factory).not.toHaveBeenCalled();
   });
 
-  it('flag on: unpaired start never dials; pairing dials the derived §1 URL with paired auth headers', async () => {
+  it('default-on: unpaired start never dials; pairing dials the derived §1 URL with paired auth headers', async () => {
     const { factory, sockets } = fakeWsFactory();
     const { runtime, transport } = await makeRuntime({ wsFactory: factory, cloud: wssCloud });
     runtime.start();
@@ -973,7 +977,7 @@ describe('AgentRuntime WSS channel wiring (A3 revival)', () => {
     expect(sockets[0]?.options.headers['X-Protocol-Version']).toBe('1');
   });
 
-  it('flag on: revocation terminates the socket and never redials with wiped credentials', async () => {
+  it('default-on: revocation terminates the socket and never redials with wiped credentials', async () => {
     const { factory, sockets } = fakeWsFactory();
     const { runtime, transport } = await makeRuntime({ wsFactory: factory, cloud: wssCloud });
     runtime.start();

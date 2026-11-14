@@ -37,6 +37,17 @@ rejected, not ignored, within `data` payloads (envelope may gain additive fields
   > The §6 WSS matrix rows are now enforced server-side by feature tests
   > (`tests/Feature/Agent/Wss*Test`, `tests/Feature/Internal/InternalClaimTest`).
 
+  > **Amended 2026-11-14 (WSS is the default delivery path):** the
+  > `PRINT_AGENT_ENABLE_WSS` opt-in flag is REMOVED. Every agent constructs the
+  > §1 channel unconditionally and dials `wss://` once paired; REST polling
+  > remains the fallback + control plane (§9.3) and needs no env var either.
+  > Gate history: the endpoint shipped 2026-11-09 and cleared §9 acceptance —
+  > §6 matrix feature-tested server-side, 24 h soak PASSED 2026-11-13 (over
+  > plain `ws://` on Docker staging; the production `wss://` topology on a
+  > real Linux host remains a release step, not an agent gate). An unpaired
+  > agent never dials; `wss.enabled: false` survives in the runtime deps as a
+  > test-only opt-out.
+
   The §6 WSS matrix rows remain
   the acceptance checklist for that future work. Contract details below are retained
   normative for that eventuality. The agent connects after pairing, sends §3.2
@@ -379,6 +390,12 @@ systemd) behind an nginx WS-upgrade route on `/agent/v1/ws`; REST polling
 remains the fallback + control plane and must keep working unchanged. The
 implementation spec is `docs/wss-server-spec.md`; deployment is
 `docs/deploy-agent-ws.md`; server decisions are §7 notes 12–13.
+
+**2026-11-14 amendment (supersedes the polling-first default):** WSS is the
+agent's DEFAULT delivery path — the `PRINT_AGENT_ENABLE_WSS` opt-in flag is
+removed and the §1 channel is constructed unconditionally (see the §1
+amendment of the same date). REST polling remains the fallback + control
+plane; an unpaired agent never dials.
 
 1. **Restaurant identity** — deployments are single-restaurant. A stable
    `restaurant_uid` (UUIDv7, server-minted on the singleton `restaurant_settings`

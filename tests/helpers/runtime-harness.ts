@@ -327,7 +327,16 @@ async function makeRuntime(
       dbFile: null,
       identityKvFile: ':memory-identity-kv',
     },
-    cloud: overrides.cloud ?? { baseUrl: 'https://api.test', pollIntervalMs: 20 },
+    // Default cloud config opts the §1 channel OUT (`enabled: false`): WSS is
+    // default-on in the runtime (api-contract §1 amendment 2026-11-14), but a
+    // channel here would dial wss://api.test through the real `ws` client as
+    // soon as a test pairs. WSS tests pass `wsFactory` + `wss.enabled: true`
+    // (or no wss key) explicitly.
+    cloud: overrides.cloud ?? {
+      baseUrl: 'https://api.test',
+      pollIntervalMs: 20,
+      wss: { enabled: false },
+    },
     ...(overrides.onSnapshotChanged !== undefined
       ? { onSnapshotChanged: overrides.onSnapshotChanged }
       : {}),

@@ -3,11 +3,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import {
-  closeDatabase,
-  openDatabase,
-  type SqliteDatabase,
-} from '../src/main/local-store/db';
+import { closeDatabase, openDatabase, type SqliteDatabase } from '../src/main/local-store/db';
 import { migrate } from '../src/main/local-store/migrations';
 import { createSettingsStore, type SettingsStore } from '../src/main/services/settings';
 import { createNodeSettingsAdapter } from '../src/main/services/settings-fs';
@@ -119,7 +115,13 @@ d('live backend E2E', () => {
       agentVersion: '0.1.1-e2e',
       deviceName: 'E2E-DEV',
       safeStorage: passthroughSafeStorage(),
-      cloud: { baseUrl: `${BACKEND_URL as string}/api/agent/v1`, allowInsecureHttp: true },
+      cloud: {
+        baseUrl: `${BACKEND_URL as string}/api/agent/v1`,
+        allowInsecureHttp: true,
+        // The mock backend has no WS endpoint — WSS is default-on since
+        // 2026-11-14, so opt out to keep this a REST-flow E2E.
+        wss: { enabled: false },
+      },
     });
     runtime = result;
   }, 30_000);
@@ -176,7 +178,9 @@ d('live backend E2E', () => {
 
   it('GET /config validates against the agent strict schema', async () => {
     const identity = await readIdentity(join(dir, 'identity-kv.json'));
-    const res = await fetch(`${AGENT_API}/config`, { headers: agentHeaders(identity.deviceToken, identity.deviceId) });
+    const res = await fetch(`${AGENT_API}/config`, {
+      headers: agentHeaders(identity.deviceToken, identity.deviceId),
+    });
     log(`GET /config → ${res.status}`);
     expect(res.status).toBe(200);
     const parsed = ConfigUpdateSchema.safeParse(await res.json());
@@ -226,7 +230,11 @@ d('live backend E2E', () => {
     const res = await fetch(`${adminApi()}/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: ADMIN_EMAIL, password: ADMIN_PASSWORD, device_name: 'e2e-admin' }),
+      body: JSON.stringify({
+        email: ADMIN_EMAIL,
+        password: ADMIN_PASSWORD,
+        device_name: 'e2e-admin',
+      }),
     });
     expect(res.status).toBe(200);
     const body = (await res.json()) as { data: { token: string } };
@@ -247,7 +255,10 @@ d('live backend E2E', () => {
         log(`agent jobs at timeout: ${JSON.stringify(runtime.jobs.list())}`);
         log(
           `agent recent logs: ${JSON.stringify(
-            runtime.diagnostics.recentLogs().slice(-15).map((l) => `${l.level} ${l.message}`),
+            runtime.diagnostics
+              .recentLogs()
+              .slice(-15)
+              .map((l) => `${l.level} ${l.message}`),
           )}`,
         );
         throw new Error(`timed out waiting for ${what}`);
@@ -256,128 +267,145 @@ d('live backend E2E', () => {
     }
   }
 
-  da('job delivery: registers a cloud printer and waits for config apply', async () => {
-    const token = await adminLogin();
-    cloudCapture = await startVirtualPrinter(lanIpv4());
-    const res = await fetch(`${adminApi()}/printers`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: 'E2E-Cloud-Capture',
-        station: 'kitchen',
-        transport_kind: 'tcp_raw',
-        transport: {
-          kind: 'tcp_raw',
-          host: lanIpv4(),
-          port: cloudCapture.port,
-          connect_timeout_ms: 3000,
-          write_timeout_ms: 5000,
-        },
-        copies_default: 1,
-        codepage: 'cp437',
-        cut_default: 'partial',
-        duplicate_policy: 'never',
-      }),
-    });
-    const body = (await res.json()) as { data?: { id?: string } };
-    log(`printer create → ${res.status} ${JSON.stringify(body)}`);
-    expect(res.status).toBe(201);
-    cloudPrinterId = body.data?.id;
-    expect(cloudPrinterId).toBeDefined();
+  da(
+    'job delivery: registers a cloud printer and waits for config apply',
+    async () => {
+      const token = await adminLogin();
+      cloudCapture = await startVirtualPrinter(lanIpv4());
+      const res = await fetch(`${adminApi()}/printers`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'E2E-Cloud-Capture',
+          station: 'kitchen',
+          transport_kind: 'tcp_raw',
+          transport: {
+            kind: 'tcp_raw',
+            host: lanIpv4(),
+            port: cloudCapture.port,
+            connect_timeout_ms: 3000,
+            write_timeout_ms: 5000,
+          },
+          copies_default: 1,
+          codepage: 'cp437',
+          cut_default: 'partial',
+          duplicate_policy: 'never',
+        }),
+      });
+      const body = (await res.json()) as { data?: { id?: string } };
+      log(`printer create → ${res.status} ${JSON.stringify(body)}`);
+      expect(res.status).toBe(201);
+      cloudPrinterId = body.data?.id;
+      expect(cloudPrinterId).toBeDefined();
 
-    // Evidence: dump exactly what the agent's next GET /config will see. If any
-    // row violates the agent's approved-destination policy (hostname, loopback),
-    // the WHOLE config_update is rejected atomically — including our new printer.
-    const identity = await readIdentity(join(dir, 'identity-kv.json'));
-    const cfgRes = await fetch(`${AGENT_API}/config`, {
-      headers: agentHeaders(identity.deviceToken, identity.deviceId),
-    });
-    const cfg = (await cfgRes.json()) as {
-      config_version?: number;
-      printers?: Array<{ printer_id: string; name: string; transport: { kind: string; host?: string } }>;
-    };
-    log(
-      `config v${String(cfg.config_version)} printers: ${JSON.stringify(
-        cfg.printers?.map((p) => ({ id: p.printer_id, name: p.name, kind: p.transport.kind, host: p.transport.host })),
-      )}`,
-    );
+      // Evidence: dump exactly what the agent's next GET /config will see. If any
+      // row violates the agent's approved-destination policy (hostname, loopback),
+      // the WHOLE config_update is rejected atomically — including our new printer.
+      const identity = await readIdentity(join(dir, 'identity-kv.json'));
+      const cfgRes = await fetch(`${AGENT_API}/config`, {
+        headers: agentHeaders(identity.deviceToken, identity.deviceId),
+      });
+      const cfg = (await cfgRes.json()) as {
+        config_version?: number;
+        printers?: Array<{
+          printer_id: string;
+          name: string;
+          transport: { kind: string; host?: string };
+        }>;
+      };
+      log(
+        `config v${String(cfg.config_version)} printers: ${JSON.stringify(
+          cfg.printers?.map((p) => ({
+            id: p.printer_id,
+            name: p.name,
+            kind: p.transport.kind,
+            host: p.transport.host,
+          })),
+        )}`,
+      );
 
-    // Config stream: the agent's 60 s periodic refresh must pick up the new
-    // printer (config_version bump); allow two refresh intervals + margin.
-    await until('cloud printer in agent printer store', 150_000, async () => {
-      const list = runtime.printers.list();
-      const found = list.find((p) => p.config.printerId === cloudPrinterId);
-      if (found === undefined) {
-        log(`waiting; agent printers: ${JSON.stringify(list.map((p) => p.config.printerId))}`);
-        return undefined;
-      }
-      log(`cloud printer applied, source=${found.config.source}`);
-      return found;
-    });
-  }, 60_000);
+      // Config stream: the agent's 60 s periodic refresh must pick up the new
+      // printer (config_version bump); allow two refresh intervals + margin.
+      await until('cloud printer in agent printer store', 150_000, async () => {
+        const list = runtime.printers.list();
+        const found = list.find((p) => p.config.printerId === cloudPrinterId);
+        if (found === undefined) {
+          log(`waiting; agent printers: ${JSON.stringify(list.map((p) => p.config.printerId))}`);
+          return undefined;
+        }
+        log(`cloud printer applied, source=${found.config.source}`);
+        return found;
+      });
+    },
+    60_000,
+  );
 
-  da('job delivery: enqueues a POS print job and observes completed + captured bytes', async () => {
-    const token = await adminLogin();
-    const ordersRes = await fetch(`${adminApi()}/orders?status=completed`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (ordersRes.status !== 200) {
-      log(`orders list → ${ordersRes.status}: ${await ordersRes.text()}`);
-    }
-    expect(ordersRes.status).toBe(200);
-    const ordersBody = (await ordersRes.json()) as { data: unknown };
-    const ordersRaw = Array.isArray(ordersBody.data)
-      ? ordersBody.data
-      : (ordersBody.data as { data?: Array<{ id: string | number }> }).data;
-    const orderId = (ordersRaw as Array<{ id: string | number }> | undefined)?.[0]?.id;
-    if (orderId === undefined) {
-      throw new Error('no existing order to attach a print job to — seed one order and rerun');
-    }
-    log(`using order ${String(orderId)}`);
-
-    const jobRes = await fetch(`${adminApi()}/print-jobs`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        order_id: orderId,
-        printer_id: cloudPrinterId,
-        doc_type: 'customer_receipt',
-        idempotency_key: `e2e-${Date.now()}`,
-      }),
-    });
-    const jobBody = (await jobRes.json()) as { data?: { id?: string; status?: string } };
-    log(`job create → ${jobRes.status} ${JSON.stringify(jobBody)}`);
-    expect(jobRes.status).toBe(201);
-    const jobId = jobBody.data?.id;
-    expect(jobId).toBeDefined();
-
-    // completed is only reachable via the agent's ack chain (§7 note 2).
-    const finalStatus = await until('backend job completed', 45_000, async () => {
-      const res = await fetch(`${adminApi()}/print-jobs/show/${String(jobId)}`, {
+  da(
+    'job delivery: enqueues a POS print job and observes completed + captured bytes',
+    async () => {
+      const token = await adminLogin();
+      const ordersRes = await fetch(`${adminApi()}/orders?status=completed`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (res.status !== 200) return undefined;
-      const body = (await res.json()) as { data?: { status?: string } };
-      const status = body.data?.status;
-      if (status === 'completed' || status === 'failed' || status === 'outcome_unknown') {
-        return status;
+      if (ordersRes.status !== 200) {
+        log(`orders list → ${ordersRes.status}: ${await ordersRes.text()}`);
       }
-      return undefined;
-    });
-    log(`backend job status: ${String(finalStatus)}`);
-    expect(finalStatus).toBe('completed');
+      expect(ordersRes.status).toBe(200);
+      const ordersBody = (await ordersRes.json()) as { data: unknown };
+      const ordersRaw = Array.isArray(ordersBody.data)
+        ? ordersBody.data
+        : (ordersBody.data as { data?: Array<{ id: string | number }> }).data;
+      const orderId = (ordersRaw as Array<{ id: string | number }> | undefined)?.[0]?.id;
+      if (orderId === undefined) {
+        throw new Error('no existing order to attach a print job to — seed one order and rerun');
+      }
+      log(`using order ${String(orderId)}`);
 
-    const local = runtime.jobs.list().find((j) => j.jobId === jobId);
-    log(`agent job record: ${JSON.stringify(local)}`);
-    expect(local?.status).toBe('completed');
+      const jobRes = await fetch(`${adminApi()}/print-jobs`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          order_id: orderId,
+          printer_id: cloudPrinterId,
+          doc_type: 'customer_receipt',
+          idempotency_key: `e2e-${Date.now()}`,
+        }),
+      });
+      const jobBody = (await jobRes.json()) as { data?: { id?: string; status?: string } };
+      log(`job create → ${jobRes.status} ${JSON.stringify(jobBody)}`);
+      expect(jobRes.status).toBe(201);
+      const jobId = jobBody.data?.id;
+      expect(jobId).toBeDefined();
 
-    const bytes = await Promise.race([
-      (cloudCapture as VirtualPrinter).received,
-      new Promise<Uint8Array>((resolve) => setTimeout(() => resolve(new Uint8Array(0)), 5_000)),
-    ]);
-    expect(bytes.length).toBeGreaterThan(0);
-    log(`captured ${bytes.length} bytes for job ${String(jobId)}`);
-  }, 90_000);
+      // completed is only reachable via the agent's ack chain (§7 note 2).
+      const finalStatus = await until('backend job completed', 45_000, async () => {
+        const res = await fetch(`${adminApi()}/print-jobs/show/${String(jobId)}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.status !== 200) return undefined;
+        const body = (await res.json()) as { data?: { status?: string } };
+        const status = body.data?.status;
+        if (status === 'completed' || status === 'failed' || status === 'outcome_unknown') {
+          return status;
+        }
+        return undefined;
+      });
+      log(`backend job status: ${String(finalStatus)}`);
+      expect(finalStatus).toBe('completed');
+
+      const local = runtime.jobs.list().find((j) => j.jobId === jobId);
+      log(`agent job record: ${JSON.stringify(local)}`);
+      expect(local?.status).toBe('completed');
+
+      const bytes = await Promise.race([
+        (cloudCapture as VirtualPrinter).received,
+        new Promise<Uint8Array>((resolve) => setTimeout(() => resolve(new Uint8Array(0)), 5_000)),
+      ]);
+      expect(bytes.length).toBeGreaterThan(0);
+      log(`captured ${bytes.length} bytes for job ${String(jobId)}`);
+    },
+    90_000,
+  );
 
   it('cleans up', async () => {
     // Remove this run's cloud printer so reruns don't accumulate orphans
