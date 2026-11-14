@@ -63,10 +63,13 @@ rejected, not ignored, within `data` payloads (envelope may gain additive fields
 {
   "envelope_version": 1,
   "type": "print_job", // | "config_update" | "revoke" | "ping"
-  "attempt": 1, // additive 2026-11-13 (§5.2): server delivery-attempt counter, ≥ 1.
-                // The agent ECHOES this value in its §3.1 acks so `job_id`+`attempt`
-                // idempotency is well-defined. Never inside `job` (would change the
-                // signed canonical bytes — §2 hard rule).
+  "attempt": 1, // additive 2026-11-13, epoch semantics 2026-11-14 (§5.2): server
+                // delivery-attempt EPOCH, ≥ 1 — stable across lease re-claims and
+                // bumped ONLY by operator retry of the job (§7 note 14). The agent
+                // ECHOES this value in its §3.1 acks so `job_id`+`attempt`
+                // idempotency is well-defined, and re-executes a known job only
+                // when a re-delivered epoch is strictly greater. Never inside `job`
+                // (would change the signed canonical bytes — §2 hard rule).
   "job": {
     "job_id": "018f3c2e-...", // uuidv7
     "idempotency_key": "ord_8842-receipt-1",
@@ -466,8 +469,11 @@ implementation spec is `docs/wss-server-spec.md`; deployment is
    `order_{id}_{doc_type}` belongs to the original job, so reusing it
    replays that job idempotently instead of creating the reprint
    (note 10's fixed-destination semantics). `POST
-   /api/print-jobs/retry/{id}` remains the same-row requeue path and is
-   unchanged.
+   /api/print-jobs/retry/{id}` remains the same-row requeue path — as of
+   2026-11-14 it no longer merely resets the claim counter unchanged: it
+   bumps the job's `delivery_attempt` epoch and re-delivers the envelope
+   (WSS push, REST pull backstop) with the incremented attempt, which the
+   agent re-executes (§7 note 14).
 12. **WSS push implemented (2026-11-09; details in `docs/wss-server-spec.md`)**
    — server-implementation decisions that refine §1 semantics, all
    feature-tested (`tests/Feature/Agent/Wss*Test`,
@@ -520,6 +526,15 @@ implementation spec is `docs/wss-server-spec.md`; deployment is
    well-defined; old acks for a re-claimed job map to `stale` (success
    no-op). Agents that predate the field keep working (they ignore the
    additive field); their acks fall back to the pre-amendment behavior.
+   **2026-11-14 amendment (retry epoch, GAP-2):** the `attempt` source is
+   the server's dedicated `delivery_attempt` column — a retry-only epoch,
+   stable across lease re-claims (which move only the claim counter) and
+   bumped exclusively by operator retry. The server pins acks against
+   `delivery_attempt`; duplicate-replay detection still honors equal-or-
+   older attempts (`duplicate` for exact replays, `stale` for older). The
+   agent re-executes a known `job_id` only when a re-delivered epoch is
+   strictly greater and keeps deduping equal/older re-deliveries — the fix
+   that makes dashboard retry actually produce paper. No new wire field.
 
 ### 7.1 Credential & endpoint summary (agent implementers)
 
