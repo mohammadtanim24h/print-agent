@@ -432,6 +432,17 @@ describe('tcp-raw transport — status probe (DLE EOT, C1)', () => {
     await expect(transport.status()).rejects.toMatchObject({ code: 'status_failed' });
   });
 
+  it('a connect that hangs past the budget rejects with connect_timeout, not status_failed', async () => {
+    // Silent firewall drop: no 'connect', no 'error' — the connect phase can
+    // never finish. The probe died before reaching the printer, so this is a
+    // connect-class timeout (poller maps it to offline), not a silent printer.
+    const sockets = mockSocketFactory(() => {
+      /* deliberately inert socket */
+    });
+    const transport = makeStatusTransport(sockets, 20);
+    await expect(transport.status()).rejects.toMatchObject({ code: 'connect_timeout' });
+  });
+
   it('trickled bytes (one per chunk) accumulate into the two-byte answer', async () => {
     const sockets = mockSocketFactory((sock) => {
       const write = sock.write.bind(sock);

@@ -218,9 +218,13 @@ export function createTcpRawTransport(options: TcpRawTransportOptions): PrinterT
       };
 
       timer = setTimeout(() => {
+        // The budget covers the whole probe, so the phase decides the code: a
+        // connect that never completed is unreachable (→ poller 'offline');
+        // a printer that took the connection but stayed silent is the R-VAL-3
+        // 'status_failed' case (→ poller 'unknown', never offline).
         finish(
           new TransportError(
-            'status_failed',
+            connected ? 'status_failed' : 'connect_timeout',
             `${target}: status probe timed out after ${String(statusTimeoutMs)}ms`,
           ),
         );
