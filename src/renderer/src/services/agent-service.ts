@@ -21,11 +21,13 @@ export interface AgentService {
 
   /**
    * Main-process push: the snapshot changed (connection-state transition,
-   * pair/unpair — including a server-side revoke, or a cloud config apply).
-   * The listener should re-fetch via getSnapshot. Returns an unsubscribe
-   * function.
+   * pair/unpair — including a server-side revoke, a cloud config apply, or a
+   * printer's polled health changing). The listener should re-fetch via
+   * getSnapshot. Returns an unsubscribe function.
    */
-  onSnapshotChanged(listener: (reason: 'connection' | 'pairing' | 'config') => void): () => void;
+  onSnapshotChanged(
+    listener: (reason: 'connection' | 'pairing' | 'config' | 'printer_status') => void,
+  ): () => void;
 
   pairWithCode(code: string): Promise<PairResult>;
   /** Wipes pairing credentials, queued jobs and cached printers (PRD FR-4). */

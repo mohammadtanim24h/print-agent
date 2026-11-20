@@ -59,11 +59,15 @@ describe('view-model mappers', () => {
     expect(toJobRecord(failed, () => null).lastError).toBe('connect_timeout: no route');
   });
 
-  it('maps a profile to PrinterInfo with honest unknown health', () => {
-    const info = toPrinterInfo(profile);
+  it('carries the status poller health into PrinterInfo', () => {
+    const info = toPrinterInfo(profile, 'ok');
     expect(info.config).toEqual(profile);
-    expect(info.health).toBe('unknown');
-    expect(info.lastPrintAt).toBeNull(); // no status polling this phase (R-VAL-3)
+    expect(info.health).toBe('ok');
+    expect(info.lastPrintAt).toBeNull(); // §3.1: the agent never claims a physical print
+  });
+
+  it('passes an explicit unknown health through unchanged', () => {
+    expect(toPrinterInfo(profile, 'unknown').health).toBe('unknown');
   });
 
   it('maps cloud errors to PairFailureReason', () => {

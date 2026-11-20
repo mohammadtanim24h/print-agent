@@ -10,6 +10,7 @@ import {
   PAIRING_CODE,
   RESTAURANT_ID,
   TENANT_ID,
+  fakeCloudTransport,
   fakeKv,
   makeCloudConfig,
   makeCloudPrinterConfig,
@@ -271,7 +272,7 @@ describe('AgentRuntime lifecycle', () => {
   });
 
   it('pushes a snapshot-changed signal on pair and unpair (renderer refresh cue)', async () => {
-    const reasons: Array<'connection' | 'pairing' | 'config'> = [];
+    const reasons: Array<'connection' | 'pairing' | 'config' | 'printer_status'> = [];
     const { runtime } = await makeRuntime({
       onSnapshotChanged: (reason) => {
         reasons.push(reason);
@@ -283,6 +284,49 @@ describe('AgentRuntime lifecycle', () => {
     // Startup also produces 'connection' transitions (connecting → offline …);
     // the deterministic pairing cues are exactly these two.
     expect(reasons.filter((r) => r === 'pairing')).toEqual(['pairing', 'pairing']);
+  });
+
+  it('surfaces status-poller health in printers.list() and signals printer_status on transitions', async () => {
+    // Probes fail (connect_refused → offline) first, then recover (→ ok):
+    // each VALUE transition must update the renderer-visible health and push
+    // a 'printer_status' snapshot cue; steady re-polls must stay quiet.
+    let probe: () => Promise<readonly [number, number]> = () =>
+      Promise.reject(new TransportError('connect_refused', 'stub: refused'));
+    const transports: TransportRegistry = {
+      forPrinter: () => ({
+        open: () => Promise.resolve(),
+        write: () => Promise.resolve(),
+        close: () => Promise.resolve(),
+        healthCheck: () => Promise.resolve(),
+        status: () => probe(),
+      }),
+    };
+    const transport = fakeCloudTransport();
+    transport.queuedJobs.push(makeCloudConfig(1, [makeCloudPrinterConfig(1)]));
+    const reasons: string[] = [];
+    const { runtime } = await makeRuntime({
+      transport,
+      transports,
+      onSnapshotChanged: (reason) => {
+        reasons.push(reason);
+      },
+    });
+    runtime.start();
+    await runtime.pair(PAIRING_CODE);
+
+    await vi.waitFor(() => {
+      expect(runtime.printers.list()).toHaveLength(1);
+    });
+    await vi.waitFor(() => {
+      expect(runtime.printers.list()[0]?.health).toBe('offline');
+    });
+    expect(reasons.filter((r) => r === 'printer_status')).toEqual(['printer_status']);
+
+    probe = () => Promise.resolve([0x12, 0x00] as const);
+    await vi.waitFor(() => {
+      expect(runtime.printers.list()[0]?.health).toBe('ok');
+    });
+    expect(reasons.filter((r) => r === 'printer_status')).toEqual(['printer_status', 'printer_status']);
   });
 
   it('presents as unpaired instead of crashing when the stored identity cannot be decrypted', async () => {

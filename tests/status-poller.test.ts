@@ -314,4 +314,42 @@ describe('createStatusPoller', () => {
     expect(poller.get(profile.printerId)).toBe('unknown');
     poller.stop();
   });
+
+  it('onChange fires only on status transitions, on both answer and failure paths', async () => {
+    const printers = await makeStore('auto');
+    const profile = printers.list()[0];
+    if (profile === undefined) throw new Error('unreachable: test printer missing');
+    let answer: Promise<readonly [number, number]> = Promise.resolve([0x12, 0x00] as const); // ok
+    const fake = fakeRegistry(() => answer);
+    const timer = manualSchedule();
+    const changes: Array<[string, string]> = [];
+    const poller = createStatusPoller({
+      printers,
+      registry: fake.registry,
+      schedule: timer.schedule,
+      onChange: (printerId, status) => changes.push([printerId, status]),
+    });
+
+    poller.start(); // unknown → ok: fires
+    await drained();
+    expect(changes).toEqual([[profile.printerId, 'ok']]);
+
+    await timer.tick(); // ok → ok: no fire
+    await drained();
+    expect(changes).toEqual([[profile.printerId, 'ok']]);
+
+    answer = Promise.reject(new TransportError('connect_refused', 'refused')); // ok → offline: fires
+    await timer.tick();
+    await drained();
+    expect(changes).toEqual([
+      [profile.printerId, 'ok'],
+      [profile.printerId, 'offline'],
+    ]);
+
+    answer = Promise.reject(new TransportError('connect_refused', 'refused')); // offline → offline: no fire
+    await timer.tick();
+    await drained();
+    expect(changes).toHaveLength(2);
+    poller.stop();
+  });
 });

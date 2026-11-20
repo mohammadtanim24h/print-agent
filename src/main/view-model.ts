@@ -27,12 +27,12 @@ export function toJobRecord(
 }
 
 /**
- * Wraps a store profile as the renderer's `PrinterInfo`. Health stays
- * 'unknown' until status polling lands (R-VAL-3); lastPrintAt is null — the
- * agent never claims a physical print (§3.1).
+ * Wraps a store profile as the renderer's `PrinterInfo`. Health comes from the
+ * caller (the C1 status poller's TTL cache, usually); lastPrintAt is null —
+ * the agent never claims a physical print (§3.1).
  */
-export function toPrinterInfo(profile: PrinterInfo['config']): PrinterInfo {
-  return { config: profile, health: 'unknown', lastPrintAt: null };
+export function toPrinterInfo(profile: PrinterInfo['config'], health: PrinterInfo['health']): PrinterInfo {
+  return { config: profile, health, lastPrintAt: null };
 }
 
 export function mapPairFailure(err: CloudError): PairResult {

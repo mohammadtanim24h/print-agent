@@ -64,6 +64,9 @@ export interface StatusPollerDeps {
   readonly now?: () => number;
   /** Returns a cancel function (same seam as the runtime/poller). */
   readonly schedule?: (fn: () => void, delayMs: number) => () => void;
+  /** Fires only when a printer's cached status VALUE changes (not on steady
+   *  re-polls) — the runtime forwards this as a UI snapshot-refresh signal. */
+  readonly onChange?: (printerId: string, status: PrinterStatus) => void;
   readonly log?: (message: string) => void;
 }
 
@@ -99,6 +102,13 @@ export function createStatusPoller(deps: StatusPollerDeps): StatusPoller {
   let cancelTimer: (() => void) | null = null;
   let stopped = true;
 
+  /** Cache-write + transition-only notification (steady re-polls stay quiet). */
+  function settle(printerId: string, status: PrinterStatus): void {
+    const previous = cache.get(printerId)?.status;
+    cache.set(printerId, { status, at: now() });
+    if (previous !== status) deps.onChange?.(printerId, status);
+  }
+
   function pollOne(printerId: string, profile: PrinterProfile): void {
     if (inFlight.has(printerId)) return; // serialize per printer
     inFlight.add(printerId);
@@ -114,11 +124,11 @@ export function createStatusPoller(deps: StatusPollerDeps): StatusPoller {
       .then(() => probe())
       .then(
         ([printerByte, paperByte]) => {
-          cache.set(printerId, { status: parseDleEotStatus(printerByte, paperByte), at: now() });
+          settle(printerId, parseDleEotStatus(printerByte, paperByte));
         },
         (err: unknown) => {
           const offline = err instanceof TransportError && OFFLINE_CODES.has(err.code);
-          cache.set(printerId, { status: offline ? 'offline' : 'unknown', at: now() });
+          settle(printerId, offline ? 'offline' : 'unknown');
           log(`status poll failed for ${printerId}: ${err instanceof Error ? err.message : String(err)}`);
         },
       )

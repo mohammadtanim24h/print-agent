@@ -207,6 +207,12 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
     registry,
     now,
     schedule,
+    // A health VALUE change is a renderer-visible snapshot change — the UI
+    // re-fetches and shows the new health (the poller only fires on
+    // transitions, so steady re-polls stay quiet).
+    onChange: () => {
+      deps.onSnapshotChanged?.('printer_status');
+    },
     log: (message) => {
       log.warn(message);
     },
@@ -633,14 +639,18 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
       return spoolerBridge.enumerate();
     },
     list(): readonly PrinterInfo[] {
-      return printers.list().map(toPrinterInfo);
+      return printers.list().map((p) => toPrinterInfo(p, statusPoller.get(p.printerId)));
     },
     add(draft: unknown): Promise<PrinterInfo> {
       // The store re-validates with PrinterDraftSchema — unknown never reaches disk raw.
-      return printers.add(draft as PrinterDraft).then(toPrinterInfo);
+      return printers
+        .add(draft as PrinterDraft)
+        .then((p) => toPrinterInfo(p, statusPoller.get(p.printerId)));
     },
     update(printerId: string, patch: unknown): Promise<PrinterInfo> {
-      return printers.update(printerId, patch as Partial<PrinterDraft>).then(toPrinterInfo);
+      return printers
+        .update(printerId, patch as Partial<PrinterDraft>)
+        .then((p) => toPrinterInfo(p, statusPoller.get(p.printerId)));
     },
     remove(printerId: string): Promise<boolean> {
       return printers.remove(printerId);
