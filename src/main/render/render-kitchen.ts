@@ -1,6 +1,6 @@
 import { applyCut, separator, writeText, type RenderContext } from './context';
 import type { DocV1 } from './doc';
-import { formatQty, wrapText } from './layout';
+import { formatOrderTime, formatQty, wrapText } from './layout';
 import { sanitizeText } from './sanitize';
 
 /**
@@ -21,7 +21,11 @@ export function renderKitchen(doc: DocV1, ctx: RenderContext): void {
   if (doc.meta.table !== undefined) {
     writeText(ctx, `Table: ${sanitizeText(doc.meta.table).text}`, 'center', 'double_height');
   }
-  writeText(ctx, doc.meta.created_at.replace('T', ' '), 'center', 'none');
+  // Labeled + locally formatted (see formatOrderTime): a bare ISO string
+  // read as the print/now time — unlabeled UTC left staff guessing which
+  // clock it belonged to, especially on delta tickets whose footer carries
+  // the actual print time.
+  writeText(ctx, `Order: ${formatOrderTime(doc.meta.created_at)}`, 'center', 'none');
   separator(ctx);
 
   enc.setAlign('left');

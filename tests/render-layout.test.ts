@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { formatMinorUnits, formatQty, splitTwoColumns, wrapText } from '../src/main/render/layout';
+import {
+  formatMinorUnits,
+  formatOrderTime,
+  formatQty,
+  splitTwoColumns,
+  wrapText,
+} from '../src/main/render/layout';
 
 describe('wrapText', () => {
   it('wraps greedily on spaces within the width', () => {
@@ -58,5 +64,25 @@ describe('formatMinorUnits', () => {
   });
   it('formats negatives (discounts) with a minus sign', () => {
     expect(formatMinorUnits(-500)).toBe('-5.00');
+  });
+});
+
+describe('formatOrderTime', () => {
+  // Timezone-independent checks: the shape and the parse/fallback behavior
+  // (the local wall clock itself is deployment-dependent by design — the
+  // device's timezone IS the restaurant's).
+  it('renders the d M Y, g:i A shape in the device-local timezone', () => {
+    expect(formatOrderTime('2026-10-22T16:09:29+00:00')).toMatch(
+      /^\d{2} Oct 2026, \d{1,2}:\d{2} [AP]M$/,
+    );
+  });
+  it('keeps the same instant across offset spellings (UTC vs +06:00)', () => {
+    // 16:09Z == 22:09+06:00 — the local wall clock must agree.
+    expect(formatOrderTime('2026-10-22T16:09:29+00:00')).toBe(
+      formatOrderTime('2026-10-22T22:09:29+06:00'),
+    );
+  });
+  it('falls back to the raw T→space rendering when the timestamp does not parse', () => {
+    expect(formatOrderTime('not-a-date')).toBe('not-a-date');
   });
 });

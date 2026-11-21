@@ -36,6 +36,22 @@ describe('kitchen ticket template', () => {
     });
   });
 
+  it('labels and locally formats the order time (never a bare ISO string)', () => {
+    const doc = makeDoc({
+      meta: { title: 'KITCHEN', order_ref: 'ORD-77', created_at: '2026-10-22T16:09:29+00:00' },
+    });
+    const r = renderDoc('kitchen_ticket', doc, makeRenderProfile());
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const t = texts(r.bytes).join('\n');
+    // Labeled so staff know which clock it is (the ORDER time, not the
+    // print time — delta tickets carry that in the footer).
+    expect(t).toContain('Order:');
+    // Human "d M Y, g:i A" shape, and never the raw ISO form.
+    expect(t).toMatch(/Order: \d{2} \w{3} \d{4}, \d{1,2}:\d{2} [AP]M/);
+    expect(t).not.toContain('2026-10-22T16');
+  });
+
   it('shows quantities prominently and item names, but never prices', () => {
     const doc = makeDoc({
       lines: [
