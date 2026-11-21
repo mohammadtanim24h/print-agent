@@ -12,7 +12,7 @@ function texts(bytes: Uint8Array): string[] {
 describe('kitchen ticket template', () => {
   it('renders the title double-size and the order ref double-height', () => {
     const doc = makeDoc({
-      meta: { title: 'KITCHEN', order_ref: 'ORD-77', created_at: '2026-10-22T10:00:00.000Z' },
+      meta: { title: 'KITCHEN', order_ref: 'ORD-77', created_at: '2026-10-22T10:00:00.000Z', order_time: '22 Oct 2026, 4:00 PM' },
     });
     const r = renderDoc('kitchen_ticket', doc, makeRenderProfile());
     expect(r.ok).toBe(true);
@@ -36,9 +36,9 @@ describe('kitchen ticket template', () => {
     });
   });
 
-  it('labels and locally formats the order time (never a bare ISO string)', () => {
+  it('labels the order time (never a bare ISO string)', () => {
     const doc = makeDoc({
-      meta: { title: 'KITCHEN', order_ref: 'ORD-77', created_at: '2026-10-22T16:09:29+00:00' },
+      meta: { title: 'KITCHEN', order_ref: 'ORD-77', created_at: '2026-10-22T16:09:29+00:00', order_time: '22 Oct 2026, 10:09 PM' },
     });
     const r = renderDoc('kitchen_ticket', doc, makeRenderProfile());
     expect(r.ok).toBe(true);
@@ -117,7 +117,7 @@ describe('kitchen ticket template', () => {
 
   it('bar/station tickets reuse the kitchen layout with the doc title', () => {
     const doc = makeDoc({
-      meta: { title: 'BAR', order_ref: 'ORD-5', created_at: '2026-10-22T10:00:00.000Z' },
+      meta: { title: 'BAR', order_ref: 'ORD-5', created_at: '2026-10-22T10:00:00.000Z', order_time: '22 Oct 2026, 4:00 PM' },
       lines: [{ text: 'Espresso', qty: 1, emphasis: 'none', align: 'left' }],
     });
     const r = renderDoc('bar_ticket', doc, makeRenderProfile());

@@ -1,6 +1,6 @@
 import { applyCut, separator, writeText, type RenderContext } from './context';
 import type { DocV1 } from './doc';
-import { formatOrderTime, formatQty, wrapText } from './layout';
+import { formatQty, wrapText } from './layout';
 import { sanitizeText } from './sanitize';
 
 /**
@@ -21,14 +21,12 @@ export function renderKitchen(doc: DocV1, ctx: RenderContext): void {
   if (doc.meta.table !== undefined) {
     writeText(ctx, `Table: ${sanitizeText(doc.meta.table).text}`, 'center', 'double_height');
   }
-  // Order time: the server's preformatted meta.order_time is the single
-  // source of truth (rendered VERBATIM — the server owns the timezone);
-  // the device-local conversion is only the fallback for older servers
-  // that predate the field. Labeled either way: a bare ISO string read as
-  // the print/now time — especially confusing on delta tickets whose
-  // footer carries the actual print time.
-  const orderTime = doc.meta.order_time ?? formatOrderTime(doc.meta.created_at);
-  writeText(ctx, `Order: ${sanitizeText(orderTime).text}`, 'center', 'none');
+  // Order time: the server's preformatted meta.order_time (REQUIRED) is
+  // the single source of truth — rendered VERBATIM, the server owns the
+  // timezone and the agent never converts to its device clock. Labeled so
+  // staff know which clock it is: the ORDER time, not the print time
+  // (delta tickets carry that in the footer).
+  writeText(ctx, `Order: ${sanitizeText(doc.meta.order_time).text}`, 'center', 'none');
   separator(ctx);
 
   enc.setAlign('left');

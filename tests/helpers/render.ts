@@ -13,6 +13,7 @@ export function makeDoc(overrides: Partial<DocV1Input> = {}): DocV1Input {
       title: 'RECEIPT',
       order_ref: 'ORD-1001',
       created_at: '2026-10-22T10:00:00.000Z',
+      order_time: '22 Oct 2026, 4:00 PM',
     },
     lines: [{ text: 'Coffee', qty: 2, unit_price: 1200, emphasis: 'none', align: 'left' }],
     totals: [{ label: 'TOTAL', amount_minor: 2400, emphasis: 'bold' }],

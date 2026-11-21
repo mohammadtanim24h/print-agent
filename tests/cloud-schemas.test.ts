@@ -96,7 +96,7 @@ describe('PrintJobEnvelopeSchema (contract §6 envelope matrix)', () => {
       job: {
         payload: {
           header: { restaurant_name: 'Café Brûlée & Co', address_lines: [] },
-          meta: { title: 'RECEIPT', order_ref: 'ord/1', created_at: '2026-10-22T10:00:00Z' },
+          meta: { title: 'RECEIPT', order_ref: 'ord/1', created_at: '2026-10-22T10:00:00Z', order_time: '22 Oct 2026, 4:00 PM' },
           lines: [{ text: 'Crème brûlée 1/2 kg' }],
         },
       },

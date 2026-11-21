@@ -65,6 +65,7 @@ describe('renderer fuzz corpus (deterministic seeds)', () => {
           title: mutate(rand, 'RECEIPT'),
           order_ref: mutate(rand, 'ORD-1'),
           created_at: '2026-10-22T10:00:00.000Z',
+          order_time: mutate(rand, '22 Oct 2026, 4:00 PM'),
           ...(rand() < 0.5 ? { table: mutate(rand, 'T9') } : {}),
         },
         lines: Array.from({ length: 1 + Math.floor(rand() * 5) }, () => ({

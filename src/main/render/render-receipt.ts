@@ -46,14 +46,9 @@ export function renderReceipt(doc: DocV1, ctx: RenderContext): void {
     writeText(ctx, `Table: ${sanitizeText(doc.meta.table).text}`, 'left', 'none');
   if (doc.meta.server_name !== undefined)
     writeText(ctx, `Server: ${sanitizeText(doc.meta.server_name).text}`, 'left', 'none');
-  // Server-preformatted order time verbatim when present (single source
-  // of truth — the server owns the timezone); older servers fall back to
-  // the raw ISO rendering.
-  const orderTime =
-    doc.meta.order_time !== undefined
-      ? sanitizeText(doc.meta.order_time).text
-      : doc.meta.created_at.replace('T', ' ');
-  writeText(ctx, orderTime, 'left', 'none');
+  // Server-preformatted order time (REQUIRED) rendered verbatim — the
+  // server owns the timezone; no device-clock conversion.
+  writeText(ctx, sanitizeText(doc.meta.order_time).text, 'left', 'none');
   separator(ctx);
 
   for (const line of doc.lines) {

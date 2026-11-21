@@ -45,28 +45,6 @@ export function formatQty(qty: number): string {
   return Number.isInteger(qty) ? String(qty) : String(Number(qty.toFixed(3)));
 }
 
-const MONTHS = [
-  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
-  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
-] as const;
-
-/**
- * Human local format for doc.meta.created_at (RFC 3339, offset-aware):
- * the agent device runs in the restaurant, so its local timezone IS the
- * deployment's wall clock — "21 Nov 2026, 10:09 PM", mirroring the
- * server's delta footer stamp. Falls back to the raw string (T → space,
- * the pre-format rendering) when the timestamp does not parse — a bad
- * date must never fabricate one.
- */
-export function formatOrderTime(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso.replace('T', ' ');
-  const hh = d.getHours();
-  const h12 = hh % 12 === 0 ? 12 : hh % 12;
-  const min = String(d.getMinutes()).padStart(2, '0');
-  return `${String(d.getDate()).padStart(2, '0')} ${MONTHS[d.getMonth()]} ${d.getFullYear()}, ${h12}:${min} ${hh < 12 ? 'AM' : 'PM'}`;
-}
-
 export function formatMinorUnits(amountMinor: number): string {
   const sign = amountMinor < 0 ? '-' : '';
   const abs = Math.abs(amountMinor);

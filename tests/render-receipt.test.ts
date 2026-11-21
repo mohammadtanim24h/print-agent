@@ -43,12 +43,13 @@ describe('customer receipt template', () => {
     if (r.ok) expect(r.summary.warnings).toContain('logo_skipped_no_asset_store');
   });
 
-  it('renders the meta block with order bold and the timestamp verbatim', () => {
+  it('renders the meta block with order bold and the order time verbatim', () => {
     const doc = makeDoc({
       meta: {
         title: 'RECEIPT',
         order_ref: 'ORD-9',
         created_at: '2026-10-22T10:00:00.000Z',
+        order_time: '22 Oct 2026, 4:00 PM',
         table: 'T7',
         server_name: 'Ana',
       },
@@ -60,7 +61,9 @@ describe('customer receipt template', () => {
     expect(t).toContain('Order: ORD-9');
     expect(t).toContain('Table: T7');
     expect(t).toContain('Server: Ana');
-    expect(t).toContain('2026-10-22 10:00:00.000Z');
+    // meta.order_time rendered verbatim — never the raw ISO instant.
+    expect(t).toContain('22 Oct 2026, 4:00 PM');
+    expect(t).not.toContain('2026-10-22 10:00:00');
   });
 
   it('puts item text and price on one physical line (two columns)', () => {

@@ -50,7 +50,7 @@ const VALID_JOB_BASE = {
   expires_at: '2026-10-22T10:10:00Z',
   payload: {
     header: { restaurant_name: 'Test Diner', address_lines: [] },
-    meta: { title: 'RECEIPT', order_ref: 'ord_1', created_at: '2026-10-22T10:00:00Z' },
+    meta: { title: 'RECEIPT', order_ref: 'ord_1', created_at: '2026-10-22T10:00:00Z', order_time: '22 Oct 2026, 4:00 PM' },
     lines: [{ text: '1x Burger' }],
   },
 } as const;
