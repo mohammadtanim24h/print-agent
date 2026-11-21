@@ -512,9 +512,24 @@ plane; an unpaired agent never dials.
      surface.
    - **Heartbeat parity:** socket §3.2 heartbeats upsert exactly what
      `POST /heartbeat` upserts (`last_seen_at`, `last_ip`,
-     `agent_version`, `queue_depth`). The `printers.*.health` entries are
-     validated but NOT persisted (no printer-health table exists; REST
-     parity). Offline detection stays §7 note 7.
+     `agent_version`, `queue_depth`). Offline detection stays §7 note 7.
+   - **Printer health persistence (2026-11-20):** heartbeat
+     `printers[]` entries are persisted, superseding the earlier
+     "validated but NOT persisted" stance. Both ingestion paths — REST
+     `POST /heartbeat` and the `agent:ws:serve` daemon's socket
+     heartbeats — share `PrinterHealthService`, which writes
+     `last_health` + `last_health_at` onto the printer row for known
+     printers of the device's restaurant; unknown printer_ids and
+     health-less entries are silently ignored and never fail the
+     heartbeat. The dashboard `GET /api/printers` serialization derives
+     a SERVER-side staleness verdict `health_state`: the raw
+     `last_health` while `last_health_at` is within
+     `printing.heartbeat.stale_after` (90 s — the §7 note 7
+     device-offline threshold, config-referenced, never re-hardcoded),
+     otherwise the literal string `stale`; `null` when never reported.
+     Dashboard clients must key badges off `health_state` and never
+     compare timestamps themselves — a stored `ok` older than the
+     threshold never reads as current.
    - **Upgrade auth:** token SHA-256 vs `agent_devices` with a ≤60 s
      in-process cache (Redis invalidation on rotation/revocation);
      failed-upgrade rate limit 3/15 min per IP; protocol ≠ 1 → HTTP 400;
