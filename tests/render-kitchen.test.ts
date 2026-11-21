@@ -52,6 +52,25 @@ describe('kitchen ticket template', () => {
     expect(t).not.toContain('2026-10-22T16');
   });
 
+  it('renders meta.order_time verbatim when present (server = single source of truth)', () => {
+    // The server pre-formats in the deployment timezone; the agent must
+    // NOT re-convert — an "Order: 05 Jan 2026, 9:00 PM" fixture is
+    // deliberately impossible for any device clock on Oct 22 to produce,
+    // so verbatim rendering is the only way this passes.
+    const doc = makeDoc({
+      meta: {
+        title: 'KITCHEN',
+        order_ref: 'ORD-77',
+        created_at: '2026-10-22T16:09:29+00:00',
+        order_time: '05 Jan 2026, 9:00 PM',
+      },
+    });
+    const r = renderDoc('kitchen_ticket', doc, makeRenderProfile());
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(texts(r.bytes)).toContain('Order: 05 Jan 2026, 9:00 PM');
+  });
+
   it('shows quantities prominently and item names, but never prices', () => {
     const doc = makeDoc({
       lines: [

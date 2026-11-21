@@ -45,6 +45,12 @@ export const DocV1Schema = z.strictObject({
     order_ref: bytes(24),
     // RFC 3339 UTC — offset form accepted alongside `Z` (see cloud schemas).
     created_at: z.iso.datetime({ offset: true }),
+    // Server-formatted order time in the deployment's timezone ("21 Nov
+    // 2026, 10:09 PM") — the SINGLE SOURCE OF TRUTH for the printed order
+    // time; the agent renders it verbatim (labeled on tickets). Optional +
+    // additive: older servers omit it and the renderer falls back to
+    // converting created_at to the device clock (formatOrderTime).
+    order_time: bytes(32).optional(),
     server_name: bytes(32).optional(),
     table: bytes(16).optional(),
   }),

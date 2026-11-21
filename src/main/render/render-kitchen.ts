@@ -21,11 +21,14 @@ export function renderKitchen(doc: DocV1, ctx: RenderContext): void {
   if (doc.meta.table !== undefined) {
     writeText(ctx, `Table: ${sanitizeText(doc.meta.table).text}`, 'center', 'double_height');
   }
-  // Labeled + locally formatted (see formatOrderTime): a bare ISO string
-  // read as the print/now time — unlabeled UTC left staff guessing which
-  // clock it belonged to, especially on delta tickets whose footer carries
-  // the actual print time.
-  writeText(ctx, `Order: ${formatOrderTime(doc.meta.created_at)}`, 'center', 'none');
+  // Order time: the server's preformatted meta.order_time is the single
+  // source of truth (rendered VERBATIM — the server owns the timezone);
+  // the device-local conversion is only the fallback for older servers
+  // that predate the field. Labeled either way: a bare ISO string read as
+  // the print/now time — especially confusing on delta tickets whose
+  // footer carries the actual print time.
+  const orderTime = doc.meta.order_time ?? formatOrderTime(doc.meta.created_at);
+  writeText(ctx, `Order: ${sanitizeText(orderTime).text}`, 'center', 'none');
   separator(ctx);
 
   enc.setAlign('left');
