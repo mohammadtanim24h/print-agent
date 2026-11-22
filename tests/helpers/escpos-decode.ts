@@ -11,6 +11,7 @@ export type DecodedEvent =
   | { kind: 'init' }
   | { kind: 'align'; value: number }
   | { kind: 'bold'; on: boolean }
+  | { kind: 'reverse'; on: boolean }
   | { kind: 'size'; doubleWidth: boolean; doubleHeight: boolean }
   | { kind: 'text'; text: string }
   | { kind: 'lf' }
@@ -108,6 +109,12 @@ export function decodeEscpos(bytes: Uint8Array): DecodedEvent[] {
           doubleWidth: (n & 0x10) !== 0,
           doubleHeight: (n & 0x01) !== 0,
         });
+        i += 3;
+        continue;
+      }
+      if (cmd === 0x42) {
+        // GS B n — set/cancel reverse (white-on-black) printing.
+        events.push({ kind: 'reverse', on: (bytes[i + 2] ?? 0) !== 0 });
         i += 3;
         continue;
       }

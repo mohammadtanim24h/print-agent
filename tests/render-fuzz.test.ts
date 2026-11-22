@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { EMPHASIS } from '../src/main/render/doc';
 import { MAX_OUTPUT_BYTES, renderDoc } from '../src/main/render/render';
 import { decodeEscpos } from './helpers/escpos-decode';
 import { makeDoc, makeRenderProfile } from './helpers/render';
@@ -73,7 +74,7 @@ describe('renderer fuzz corpus (deterministic seeds)', () => {
           ...(rand() < 0.7 ? { qty: Math.floor(rand() * 12000) } : {}),
           ...(rand() < 0.7 ? { unit_price: Math.floor(rand() * 2_000_000) - 1000 } : {}),
           ...(rand() < 0.4 ? { note: mutate(rand, 'note') } : {}),
-          emphasis: 'none' as const,
+          emphasis: EMPHASIS[Math.floor(rand() * EMPHASIS.length)] as (typeof EMPHASIS)[number],
           align: 'left' as const,
         })),
         footer: {

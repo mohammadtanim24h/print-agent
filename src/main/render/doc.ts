@@ -17,7 +17,7 @@ const bytes = (max: number) =>
       `must be at most ${String(max)} UTF-8 bytes`,
     );
 
-export const EMPHASIS = ['none', 'bold', 'double_height', 'double'] as const;
+export const EMPHASIS = ['none', 'bold', 'double_height', 'double', 'reverse'] as const;
 export const ALIGN = ['left', 'center', 'right'] as const;
 export type Emphasis = (typeof EMPHASIS)[number];
 export type Align = (typeof ALIGN)[number];

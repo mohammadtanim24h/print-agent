@@ -17,7 +17,7 @@ OEM units — the dominant fleet in target markets.
 | -------------------- | ------------------------------------- | ------------------------------------------------ |
 | Init                 | `ESC @`                               | Sent at stream start                             |
 | Text / codepage      | `ESC t n` + `ESC R n`                 | Per-printer codepage config; ASCII-safe fallback |
-| Emphasis             | `ESC E n`, `GS ! n`                   | bold / double-height / double-size               |
+| Emphasis             | `ESC E n`, `GS ! n`, `GS B n`         | bold / double-height / double-size / reverse (GS B 1 + ESC E 1 paired) |
 | Alignment            | `ESC a n`                             | left/center/right                                |
 | Feed / cut           | `ESC d n`, `GS V n`                   | partial cut default; `none` option               |
 | QR                   | `GS ( k`                              | model 2; data ≤ 512 B validated                  |

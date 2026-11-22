@@ -85,4 +85,27 @@ describe('renderDoc dispatch + guards', () => {
       expect(events.filter((e) => e.kind === 'init')).toHaveLength(1);
     }
   });
+
+  it('kitchen ticket renders a reverse-emphasis line as a reversed bold bar that does not leak', () => {
+    const doc = makeDoc({
+      lines: [
+        { text: 'Grilled Chicken', qty: 1, emphasis: 'none', align: 'left' },
+        { text: 'VOID Grilled Chicken', qty: 1, emphasis: 'reverse', align: 'left' },
+        { text: 'Tiramisu', qty: 1, emphasis: 'none', align: 'left' },
+      ],
+    });
+    const r = renderDoc('kitchen_ticket', doc, makeRenderProfile());
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      const events = decodeEscpos(r.bytes);
+      expect(events).toContainEqual({ kind: 'reverse', on: true });
+      // The reverse line carries bold too (ESC E 1 pairs with GS B 1).
+      expect(events).toContainEqual({ kind: 'bold', on: true });
+      // Exactly one reverse transition, and the stream ends reverse-free:
+      // every later style tuple clears GS B, so nothing leaks past the line.
+      const reverse = events.filter((e) => e.kind === 'reverse');
+      expect(reverse.filter((e) => e.on)).toHaveLength(1);
+      expect(reverse.at(-1)).toEqual({ kind: 'reverse', on: false });
+    }
+  });
 });

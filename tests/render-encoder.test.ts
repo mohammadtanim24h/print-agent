@@ -41,6 +41,18 @@ describe('ThermalPrinterEncoder', () => {
     b = enc.bytes();
     const events = decodeEscpos(b);
     expect(events).toContainEqual({ kind: 'bold', on: false });
+    expect(events).toContainEqual({ kind: 'reverse', on: false });
+  });
+
+  it('reverse emits bold AND reverse together (GS B 1 + ESC E 1)', () => {
+    const enc = new ThermalPrinterEncoder(makeRenderProfile());
+    enc.setEmphasis('reverse');
+    const events = decodeEscpos(enc.bytes());
+    expect(events).toContainEqual({ kind: 'reverse', on: true });
+    expect(events).toContainEqual({ kind: 'bold', on: true });
+    // Reverse is a normal-size style: size must be normalized like bold.
+    const lastSize = events.filter((e) => e.kind === 'size').at(-1);
+    expect(lastSize).toEqual({ kind: 'size', doubleWidth: false, doubleHeight: false });
   });
 
   it('text() strips control chars as defense in depth and counts them', () => {
@@ -120,6 +132,19 @@ describe('ThermalPrinterEncoder', () => {
     const lastSize = events.filter((e) => e.kind === 'size').at(-1);
     expect(lastSize).toEqual({ kind: 'size', doubleWidth: false, doubleHeight: false });
     expect(events.filter((e) => e.kind === 'bold').at(-1)).toEqual({ kind: 'bold', on: true });
+  });
+
+  it('reverse transitions do not leak reverse state (reverse → bold)', () => {
+    const enc = new ThermalPrinterEncoder(makeRenderProfile());
+    enc.setEmphasis('reverse');
+    enc.setEmphasis('bold');
+    const events = decodeEscpos(enc.bytes());
+    // The bold entry must appear with reverse already cleared — every style
+    // entry emits GS B so nothing leaks into subsequent lines.
+    expect(events.filter((e) => e.kind === 'reverse')).toEqual([
+      { kind: 'reverse', on: true },
+      { kind: 'reverse', on: false },
+    ]);
   });
 
   it('interleaved align and emphasis changes each emit exactly once per change', () => {

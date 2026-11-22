@@ -8,7 +8,7 @@ import type { RenderProfile } from './profile';
 /**
  * The ESC/POS boundary of the renderer (architecture.md §3.3). Everything the
  * printer-compatibility.md §2 baseline calls "conservative intersection" is
- * emitted here as explicit bytes (ESC @, ESC t, ESC a, ESC E, GS !, LF);
+ * emitted here as explicit bytes (ESC @, ESC t, ESC a, ESC E, GS !, GS B, LF);
  * node-thermal-printer (ISC, active 2026-08) is used only where dialect
  * payload construction is genuinely fiddly: QR (GS ( k model 2) and CODE128
  * (GS k). Cuts are explicit GS V bytes — the library's cut() would also emit
@@ -19,14 +19,19 @@ import type { RenderProfile } from './profile';
 
 /**
  * Styles as explicit command bytes (decoder-testable, deterministic). Every
- * entry sets BOTH ESC E (emphasis) and GS ! (size) so transitions never leak
- * state — e.g. double_height → bold must drop back to normal size.
+ * entry sets ALL of ESC E (emphasis), GS ! (size) and GS B (reverse) so
+ * transitions never leak state — e.g. double_height → bold must drop back to
+ * normal size, anything → none/bold/double_height/double must clear reverse.
+ * `reverse` = white-on-black bar (the POS void treatment); it carries bold
+ * too (ESC E 1) because pure reverse prints faint on many thermal heads.
  */
 const EMPHASIS_BYTES: Record<Emphasis, readonly number[]> = {
-  none: [0x1b, 0x45, 0x00, 0x1d, 0x21, 0x00], // ESC E 0 + GS ! 0
-  bold: [0x1b, 0x45, 0x01, 0x1d, 0x21, 0x00], // ESC E 1 + GS ! 0 (normal size)
-  double_height: [0x1b, 0x45, 0x00, 0x1d, 0x21, 0x01], // GS ! 1 (double height only)
-  double: [0x1b, 0x45, 0x01, 0x1d, 0x21, 0x11], // ESC E 1 + GS ! 0x11 (quad)
+  none: [0x1b, 0x45, 0x00, 0x1d, 0x21, 0x00, 0x1d, 0x42, 0x00], // ESC E 0 + GS ! 0 + GS B 0
+  bold: [0x1b, 0x45, 0x01, 0x1d, 0x21, 0x00, 0x1d, 0x42, 0x00], // ESC E 1 + GS ! 0 + GS B 0
+  double_height: [0x1b, 0x45, 0x00, 0x1d, 0x21, 0x01, 0x1d, 0x42, 0x00], // GS ! 1 + GS B 0
+  double: [0x1b, 0x45, 0x01, 0x1d, 0x21, 0x11, 0x1d, 0x42, 0x00], // ESC E 1 + GS ! 0x11 + GS B 0
+  // ESC E 1 + GS ! 0 (normal size) + GS B 1 — reverse AND bold together.
+  reverse: [0x1b, 0x45, 0x01, 0x1d, 0x21, 0x00, 0x1d, 0x42, 0x01],
 };
 
 const ALIGN_BYTES: Record<Align, readonly number[]> = {

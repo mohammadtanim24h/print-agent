@@ -135,7 +135,7 @@ rejected, not ignored, within `data` payloads (envelope may gain additive fields
               "order_ref": "string<=24", "created_at": "rfc3339",
               "server_name": "string<=32?", "table": "string<=16?" },
   "lines": [ { "text": "string<=96", "qty": "number?", "unit_price": "integer-minor-units?",
-               "note": "string<=64?", "emphasis": "none|bold|double_height|double",
+               "note": "string<=64?", "emphasis": "none|bold|double_height|double|reverse",
                "align": "left|center|right" } ],
   "totals": [ { "label": "string<=24", "amount_minor": "integer",
                 "emphasis": "none|bold" } ],
@@ -156,6 +156,15 @@ Additional limits the agent enforces (server must validate identically):
 and all numeric fields (`qty`, `unit_price`, `amount_minor`, `change_minor`) within
 the safe-integer range (≤ 2^53−1). Payloads exceeding these are rejected with
 `rejected{code:"invalid_doc"}`.
+
+Line `emphasis` semantics (agent rendering, additive 2026-11-22): `reverse`
+prints the line as a white-on-black bar (GS B 1) combined with bold (ESC E 1)
+— pure reverse prints faint on many thermal heads — at normal size, and is
+the kitchen-delta void treatment: servers MUST put the verb in the line text
+(e.g. `"VOID 1x Grilled Chicken"`), not in a note. Every other emphasis value
+clears reverse (GS B 0); styles never leak across lines. Older agents reject
+`reverse` payloads with `rejected{code:"invalid_doc"}` (strict schema) —
+deploy updated agents before the server emits it.
 
 ## 3. Agent → server messages
 

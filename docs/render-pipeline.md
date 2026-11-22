@@ -71,7 +71,7 @@ Related policies:
 | --- | --- | --- |
 | Init | `ESC @` immediately followed by `ESC t <table>` (contiguous 5 bytes) | Explicit prefix emitted by the adapter constructor after a clean `setBuffer` — cp437 selects table 0, cp850 table 2 |
 | Text | printable ASCII bytes + `LF` | `append()`, never the library's `print()` (which folds lines at the configured width) |
-| Emphasis / size | `ESC E n` **and** `GS ! n` on every entry | Both commands always emitted together so transitions never leak size state (e.g. `double_height` → `bold` drops back to normal size) |
+| Emphasis / size | `ESC E n`, `GS ! n` **and** `GS B n` on every entry | All three commands always emitted together so transitions never leak state (e.g. `double_height` → `bold` drops back to normal size; anything → non-reverse clears GS B). `reverse` = GS B 1 + ESC E 1 at normal size (white-on-black bar, the kitchen-delta void treatment) |
 | Alignment | `ESC a n` | left/center/right |
 | Feed | `LF` repeats | `feed(n)` appends `n` newlines; `ESC d` is not used |
 | Cut | `GS V 0` (full) / `GS V 1` (partial) | Explicit bytes — **not** the library's `cut()`/`partialCut()`, which would add `ESC d 4` feeds and a mid-stream `ESC @` re-init |
