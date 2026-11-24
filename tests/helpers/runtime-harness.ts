@@ -77,6 +77,9 @@ export interface FakeCloudTransport extends AgentTransport {
   readonly heartbeats: HeartbeatSample[];
   /** Next pollJobs call throws this once (e.g. CloudError with serverCode 'device_revoked'). */
   failNextPoll: Error | null;
+  /** When set, refresh() resolves with this response instead of rejecting
+   *  (token-rotation paths: poller refresh → notifyAuthChanged). */
+  refreshResponse: RefreshResponse | null;
   /** Mutable GET /config response for refreshConfig tests. */
   configResponse: ConfigUpdate;
   readonly configFetches: number;
@@ -89,6 +92,7 @@ export function fakeCloudTransport(): FakeCloudTransport {
     acks: [] as AckBatch[],
     heartbeats: [] as HeartbeatSample[],
     failNextPoll: null as Error | null,
+    refreshResponse: null as RefreshResponse | null,
     configResponse: {
       type: 'config_update',
       config_version: 0,
@@ -110,7 +114,12 @@ export function fakeCloudTransport(): FakeCloudTransport {
       }));
     },
     refresh(): Promise<RefreshResponse> {
-      return Promise.reject(new CloudError('unauthorized', 'refresh not used in runtime tests'));
+      return Promise.resolve().then(() => {
+        if (impl.refreshResponse === null) {
+          throw new CloudError('unauthorized', 'refresh not used in runtime tests');
+        }
+        return impl.refreshResponse;
+      });
     },
     pollJobs(): Promise<PollResponse> {
       return Promise.resolve().then(() => {

@@ -65,6 +65,7 @@ function insertJobRow(db: SqliteDatabase, seed: SeedOverrides): void {
 function manualSchedule(): {
   schedule: (fn: () => void, delayMs: number) => () => void;
   tick: () => Promise<void>;
+  runAll: () => Promise<void>;
 } {
   const timers: Array<{ fn: () => void; delayMs: number; cancelled: boolean }> = [];
   const settle = async (ticks = 8): Promise<void> => {
@@ -82,6 +83,13 @@ function manualSchedule(): {
     },
     async tick() {
       const due = timers.filter((t) => !t.cancelled && t.delayMs < 1_000);
+      for (const t of due) t.cancelled = true;
+      for (const t of due) t.fn();
+      await settle();
+    },
+    /** Fires every pending timer regardless of delay (long backoffs, floors). */
+    async runAll() {
+      const due = timers.filter((t) => !t.cancelled);
       for (const t of due) t.cancelled = true;
       for (const t of due) t.fn();
       await settle();
@@ -136,6 +144,12 @@ class FakeWs implements WsLike {
   open(): void {
     this.readyState = WS_OPEN;
     this.emit('open');
+  }
+  /** A rejected upgrade, as the real `ws` client delivers it: the error event
+   *  ("Unexpected server response: NNN", no close frame) then close 1006. */
+  failUpgrade(status: number): void {
+    this.emit('error', new Error(`Unexpected server response: ${String(status)}`));
+    this.emit('close', 1006);
   }
   private emit(event: string, ...args: unknown[]): void {
     for (const cb of this.handlers.get(event) ?? []) cb(...(args as never[]));
@@ -1041,5 +1055,43 @@ describe('AgentRuntime WSS channel wiring (§1 — default on, 2026-11-14 amendm
     });
     expect(sockets[0]?.terminated).toBe(true); // poller stop() → channel.stop() → disposeSocket
     expect(sockets.length).toBe(1); // the terminated socket's close never schedules a redial
+  });
+
+  it('default-on: a refresh-driven notifyAuthChanged cancels the pending post-401 redial', async () => {
+    // Incident 2026-11-24: the runtime handed the channel a schedule seam that
+    // dropped the cancel fn, so the stale-token redial scheduled after a 401
+    // upgrade rejection could never be cancelled by the token refresh's
+    // notifyAuthChanged — it fired anyway, disposed the fresh socket, and kept
+    // burning the server's failed-upgrade limiter with dead credentials.
+    const { factory, sockets } = fakeWsFactory();
+    const transport = fakeCloudTransport();
+    transport.refreshResponse = {
+      device_token: 'device-token-2',
+      refresh_token: 'refresh-token-2',
+      token_ttl_s: 3600,
+    };
+    const sched = manualSchedule();
+    const { runtime } = await makeRuntime({
+      transport,
+      wsFactory: factory,
+      schedule: sched.schedule,
+      cloud: wssCloud,
+    });
+    runtime.start();
+    await runtime.pair(PAIRING_CODE);
+    await vi.waitFor(() => {
+      expect(sockets.length).toBe(1);
+    });
+    sockets[0]?.failUpgrade(401); // auth-failed cycle + pending floor redial
+    transport.failNextPoll = new CloudError('unauthorized', 'stale token'); // → refresh
+    await sched.tick();
+    await vi.waitFor(() => {
+      expect(sockets.length).toBe(2);
+    });
+    expect(sockets[1]?.options.headers['Authorization']).toBe('Bearer device-token-2');
+    // The redial scheduled by the 401 close must be cancelled: firing it would
+    // dispose the fresh socket and redial with superseded credentials.
+    await sched.runAll();
+    expect(sockets.length).toBe(2);
   });
 });

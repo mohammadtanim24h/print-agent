@@ -388,4 +388,56 @@ describe('ws-channel auth failures', () => {
     h.channel.notifyAuthChanged();
     expect(h.sockets).toHaveLength(0);
   });
+
+  // Incident 2026-11-24: three sub-second stale-token redials after 401 upgrade
+  // rejections exhausted the server's 3-per-15-min failed-upgrade limiter, the
+  // 4th dial got 429, and recovery depended on luck. The channel must give the
+  // in-flight token refresh room to deliver rotated credentials (notifyAuth-
+  // Changed preempts the pending dial) instead of racing it at backoff speed.
+  it('an upgrade-401 rejection redials on the auth floor, not the fast backoff', () => {
+    const h = makeChannelHarness();
+    h.channel.start();
+    // Real ws emits error THEN close(1006) on a rejected upgrade (no close frame).
+    h.sockets[0]?.serverError(new Error('Unexpected server response: 401'));
+    h.sockets[0]?.serverClose(1006);
+    expect(h.authFailures).toBe(1);
+    // random=0.5 → regular backoff for attempt 1 would be 750 ms.
+    expect(h.scheduler.nextDelay()).toBe(5000);
+  });
+
+  it('an upgrade-429 rejection also triggers the refresh path and redials on the floor', () => {
+    const h = makeChannelHarness();
+    h.channel.start();
+    h.sockets[0]?.serverError(new Error('Unexpected server response: 429'));
+    h.sockets[0]?.serverClose(1006);
+    expect(h.authFailures).toBe(1);
+    expect(h.logs).toContain('wss: upgrade rejected (rate limited)');
+    expect(h.scheduler.nextDelay()).toBe(5000);
+  });
+
+  it('notifyAuthChanged cancels the pending auth-floor redial (fresh token wins the race)', () => {
+    const h = makeChannelHarness();
+    h.channel.start();
+    h.sockets[0]?.serverError(new Error('Unexpected server response: 401'));
+    h.sockets[0]?.serverClose(1006);
+    expect(h.scheduler.pendingCount).toBe(1);
+    // Refresh completed → redial immediately with the rotated token; the stale
+    // floor dial must be cancelled, not left to fire behind the fresh socket.
+    h.channel.notifyAuthChanged();
+    expect(h.sockets).toHaveLength(2);
+    expect(h.scheduler.pendingCount).toBe(0);
+    expect(h.sockets[1]?.headers['Authorization']).toBe('Bearer token-1');
+  });
+
+  it('the auth floor applies only to the close that follows an auth rejection', async () => {
+    const h = makeChannelHarness();
+    h.channel.start();
+    h.sockets[0]?.serverError(new Error('Unexpected server response: 401'));
+    h.sockets[0]?.serverClose(1006);
+    expect(h.scheduler.nextDelay()).toBe(5000);
+    await h.scheduler.runNext();
+    h.sockets[1]?.serverOpen(); // fresh token accepted — clears the auth flag
+    h.sockets[1]?.serverClose(1006); // later plain connection drop
+    expect(h.scheduler.nextDelay()).toBe(750); // regular backoff again
+  });
 });

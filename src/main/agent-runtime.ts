@@ -243,10 +243,11 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
     acks: ackSink,
     printerStatus: (printerId) => statusPoller.get(printerId),
     now,
-    // The engine's schedule seam returns void; the env seam returns a cancel fn.
-    schedule: (fn, delayMs) => {
-      void schedule(fn, delayMs);
-    },
+    // Pass-through: the channel's cancellation (cancelDial/heartbeat/keepalive)
+    // depends on the cancel fn this seam returns — dropping it (as a previous
+    // wrapper did) made every notifyAuthChanged race an uncancellable stale
+    // redial (incident 2026-11-24).
+    schedule,
   });
 
   // §1 push channel — ON by default (api-contract §1 amendment 2026-11-14;

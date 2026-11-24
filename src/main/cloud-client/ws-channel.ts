@@ -28,6 +28,7 @@ const DEFAULT_PING_INTERVAL_MS = 30_000;
 const DEFAULT_DEAD_SILENCE_MS = 90_000;
 const DEFAULT_MAX_FRAME_BYTES = 1024 * 1024;
 const DEFAULT_MAX_BACKOFF_MS = 60_000;
+const DEFAULT_AUTH_REDIAL_FLOOR_MS = 5_000;
 const BASE_BACKOFF_MS = 1_000;
 
 /**
@@ -96,6 +97,13 @@ export interface WssChannelDeps {
   readonly deadSilenceMs?: number;
   readonly maxFrameBytes?: number;
   readonly maxBackoffMs?: number;
+  /** Minimum delay before redialing after an auth-flavored failure (401/429
+   *  upgrade rejection or a 4401 close). The poller's single-flight token
+   *  refresh needs this window to deliver rotated credentials — its
+   *  notifyAuthChanged preempts the pending dial; racing it at backoff speed
+   *  with the SAME dead token exhausts the server's failed-upgrade limiter
+   *  (incident 2026-11-24). */
+  readonly authRedialFloorMs?: number;
   /** Local-integration escape hatch (ws://); refused outright in production. */
   readonly allowInsecureWs?: boolean;
   readonly wsFactory?: WsFactory;
@@ -122,6 +130,7 @@ export function createWssChannel(deps: WssChannelDeps): WssChannelLike {
   const deadSilenceMs = deps.deadSilenceMs ?? DEFAULT_DEAD_SILENCE_MS;
   const maxFrameBytes = deps.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES;
   const maxBackoffMs = deps.maxBackoffMs ?? DEFAULT_MAX_BACKOFF_MS;
+  const authRedialFloorMs = deps.authRedialFloorMs ?? DEFAULT_AUTH_REDIAL_FLOOR_MS;
 
   const listeners = {
     message: new Set<(raw: unknown) => void>(),
@@ -133,6 +142,9 @@ export function createWssChannel(deps: WssChannelDeps): WssChannelLike {
   let stopped = true;
   let socket: WsLike | null = null;
   let backoffAttempt = 0;
+  /** Set by onSocketError when the upgrade was rejected with 401/429; consumed
+   *  by the close that always follows (real ws emits error → close 1006). */
+  let authRejectedUpgrade = false;
   let cancelDial: (() => void) | null = null;
   let cancelHeartbeat: (() => void) | null = null;
   let cancelKeepalive: (() => void) | null = null;
@@ -185,6 +197,7 @@ export function createWssChannel(deps: WssChannelDeps): WssChannelLike {
     ws.on('open', () => {
       if (socket !== ws || stopped) return;
       backoffAttempt = 0;
+      authRejectedUpgrade = false;
       lastActivityAt = now();
       setState('connected');
       cancelHeartbeat = schedule(sendHeartbeat, jitteredHeartbeatMs());
@@ -222,9 +235,9 @@ export function createWssChannel(deps: WssChannelDeps): WssChannelLike {
     return Math.floor(heartbeatIntervalMs * (0.9 + 0.2 * random()));
   }
 
-  function scheduleDial(): void {
+  function scheduleDial(delayMs: number = backoffDelayMs()): void {
     cancelDial?.();
-    cancelDial = schedule(dial, backoffDelayMs());
+    cancelDial = schedule(dial, delayMs);
   }
 
   /** Re-reads the live flags after a listener dispatch: control-flow narrowing
@@ -239,12 +252,22 @@ export function createWssChannel(deps: WssChannelDeps): WssChannelLike {
     cancelKeepalive = null;
     setState('disconnected');
     if (stopped) return;
-    if (code === WS_AUTH_CLOSE_CODE) {
-      log('wss: server closed with auth failure');
-      for (const l of listeners['auth-failed']) l();
-      // A listener may have redialed (notifyAuthChanged) or stopped us —
-      // never schedule a dial that would tear down that fresh socket.
+    const authRejected = authRejectedUpgrade;
+    authRejectedUpgrade = false;
+    if (code === WS_AUTH_CLOSE_CODE || authRejected) {
+      if (code === WS_AUTH_CLOSE_CODE) {
+        log('wss: server closed with auth failure');
+        for (const l of listeners['auth-failed']) l();
+      }
+      // Upgrade rejections already notified auth-failed in onSocketError — the
+      // refresh is in flight. Dialing here at backoff speed with the SAME dead
+      // token is what exhausted the server's failed-upgrade limiter (incident
+      // 2026-11-24): hold the floor so notifyAuthChanged preempts this dial
+      // with rotated credentials.
       if (dialInvalidated()) return;
+      backoffAttempt += 1;
+      scheduleDial(Math.max(authRedialFloorMs, backoffDelayMs()));
+      return;
     }
     backoffAttempt += 1;
     scheduleDial();
@@ -252,14 +275,26 @@ export function createWssChannel(deps: WssChannelDeps): WssChannelLike {
 
   function onSocketError(err: Error): void {
     // Failed upgrades surface as the exact ws message "Unexpected server
-    // response: 401" with no close frame — never log the text (it may echo
-    // server internals), and never substring-match a bare "401" (URLs/ports).
-    if (err.message.includes('Unexpected server response: 401')) {
-      log('wss: upgrade rejected (auth failure)');
-      for (const l of listeners['auth-failed']) l();
-    } else {
-      log('wss: socket error'); // static only; error text may echo server internals
+    // response: <code>" with no close frame — never log the text (it may echo
+    // server internals), and never substring-match a bare code (URLs/ports).
+    const upgrade = /^Unexpected server response: (\d{3})$/.exec(err.message);
+    if (upgrade !== null) {
+      const status = upgrade[1];
+      if (status === '401' || status === '429') {
+        authRejectedUpgrade = true;
+        // 429 = the limiter already locked this IP on failed upgrades; the
+        // backend clears the counter on a VALID upgrade, so the recovery is
+        // the same as for 401: refresh → notifyAuthChanged → redial fresh.
+        log(
+          status === '401'
+            ? 'wss: upgrade rejected (auth failure)'
+            : 'wss: upgrade rejected (rate limited)',
+        );
+        for (const l of listeners['auth-failed']) l();
+        return;
+      }
     }
+    log('wss: socket error'); // static only; error text may echo server internals
   }
 
   function onMessage(data: unknown): void {
