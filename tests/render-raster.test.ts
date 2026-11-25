@@ -6,6 +6,11 @@ import { decodeEscpos } from './helpers/escpos-decode';
 import { makeDoc, makeRenderProfile } from './helpers/render';
 
 const FONT = resolve(__dirname, '../assets/fonts/NotoSansBengali-Regular.ttf');
+const FONTS = [
+  'NotoSansBengali-Regular.ttf',
+  'NotoSansArabic-Regular.ttf',
+  'NotoSansJP-Regular.ttf',
+].map((f) => resolve(__dirname, '../assets/fonts', f));
 
 /** Narrow `T | null` after a not-null expectation (lint: no non-null assertions). */
 function must<T>(value: T | null): T {
@@ -28,6 +33,15 @@ describe('createCanvasRasterizer', () => {
     const bmp = r.rasterize('প্রিন্ট এজেন্ট রসিদ', 576);
     expect(bmp.width).toBeLessThanOrEqual(576);
     expect(bmp.data.some((b) => b !== 0)).toBe(true);
+  });
+
+  it('rasterizes Arabic and Japanese via the bundled Noto fonts (RECEIPT_LOCALE fleet)', () => {
+    const r = must(createCanvasRasterizer(FONTS));
+    for (const text of ['المجموع الكلي 1,250.00', '合計 1,250']) {
+      const bmp = r.rasterize(text, 576);
+      expect(bmp.width).toBeLessThanOrEqual(576);
+      expect(bmp.data.some((b) => b !== 0), text).toBe(true); // no tofu-only output
+    }
   });
 
   it('is deterministic for identical input', () => {
@@ -98,5 +112,34 @@ describe('raster fallback end-to-end', () => {
     expect(
       events.some((e) => e.kind === 'text' && (e as { text: string }).text.includes('Coffee')),
     ).toBe(true);
+  });
+
+  it('renders a localized bn receipt: GS v 0 images for Bangla, text + currency suffix for ASCII', () => {
+    // Integration shape per api-contract §6: decode the stream and assert the
+    // hybrid — raster images where the payload is Bangla, ESC/POS text where
+    // it is ASCII (labels kept English by decision), currency suffix intact.
+    const doc = makeDoc({
+      header: { restaurant_name: 'প্রিন্ট ক্যাফে', address_lines: [] },
+      meta: {
+        title: 'RECEIPT',
+        order_ref: 'ORD-9',
+        created_at: '2026-11-25T10:00:00.000Z',
+        order_time: '২৫ নভেম্বর 2026, 4:00 PM',
+      },
+      lines: [{ text: 'পানি', qty: 2, unit_price: 2000, emphasis: 'none', align: 'left' }],
+      totals: [{ label: 'TOTAL', amount_minor: 4000, currency: 'BDT', emphasis: 'bold' }],
+    });
+    const r = renderDoc('customer_receipt', doc, rasterProfile);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.summary.rasterizedLines).toBeGreaterThanOrEqual(3); // name, time, item
+    const events = decodeEscpos(r.bytes);
+    const images = events.filter((e) => e.kind === 'image');
+    expect(images.length).toBeGreaterThanOrEqual(3);
+    expect(images.every((e) => (e as { dataBytes: number }).dataBytes > 0)).toBe(true);
+    const totalLine = events.find(
+      (e) => e.kind === 'text' && (e as { text: string }).text.includes('40.00 BDT'),
+    );
+    expect(totalLine).toBeDefined();
   });
 });

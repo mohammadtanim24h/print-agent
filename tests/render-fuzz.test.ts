@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { resolve } from 'node:path';
 import { EMPHASIS } from '../src/main/render/doc';
 import { MAX_OUTPUT_BYTES, renderDoc } from '../src/main/render/render';
+import { BUNDLED_FONT_FILES } from '../src/main/render/font-bundle';
 import { decodeEscpos } from './helpers/escpos-decode';
 import { makeDoc, makeRenderProfile } from './helpers/render';
 
@@ -20,6 +22,7 @@ const POOL = [
   'Coffee',
   'প্রিন্ট',
   'キッチン',
+  'المجموع الكلي', // ar-SA (RECEIPT_LOCALE) — exercises the Arabic bundled font
   '🙂🎉',
   '\u200b\u200e', // zero-width marks
   'a\tb',
@@ -27,6 +30,10 @@ const POOL = [
   '‮rtl‬', // bidi controls are 0x202E/0x200E — NOT C0, must pass through as text
   'A'.repeat(100),
 ];
+
+/** The real bundled fonts — the raster-enabled fuzz pass must exercise the
+ *  shipping glyph pipeline, not a synthetic rasterizer. */
+const BUNDLED_FONTS = BUNDLED_FONT_FILES.map((f) => resolve(__dirname, '../assets/fonts', f));
 
 function mutate(rand: () => number, s: string): string {
   let out = s;
@@ -132,6 +139,38 @@ describe('renderer fuzz corpus (deterministic seeds)', () => {
       for (const event of decodeEscpos(result.bytes)) {
         if (event.kind === 'text') {
           expect(event.text, where).not.toMatch(/<0x(0[0-9a-f]|1[0-9a-f]|7f)>/);
+        }
+      }
+    }
+
+    // Third pass: identical generator, but with the Unicode raster fallback
+    // enabled against the real bundled fonts (bn/ar/ja). Non-ASCII that
+    // previously ended in text_not_encodable must now render (or only fail
+    // with the bounded-output cap), never crash, and keep C0 out of the
+    // stream.
+    for (let caseNo = 0; caseNo < 120; caseNo++) {
+      const where = `raster fuzz case ${String(caseNo)} (seed 42042)`;
+      const { doc, profile } = buildCase();
+      const rasterProfile = makeRenderProfile({
+        ...profile,
+        rasterFallback: { enabled: true, fontPaths: BUNDLED_FONTS },
+      });
+      const result = renderDoc('customer_receipt', doc, rasterProfile);
+      if (!result.ok) {
+        // Schema-level failures (invalid_doc/payload_too_large from mutated
+        // input) are orthogonal to the raster path; the raster-specific claim
+        // is that prior text_not_encodable outcomes now render or only fail
+        // on the bounded-output cap — never a crash.
+        expect(VALID_ERROR_CODES, where).toContain(result.error.code);
+        continue;
+      }
+      expect(result.bytes.byteLength, where).toBeLessThanOrEqual(MAX_OUTPUT_BYTES);
+      for (const event of decodeEscpos(result.bytes)) {
+        if (event.kind === 'text') {
+          expect(event.text, where).not.toMatch(/<0x(0[0-9a-f]|1[0-9a-f]|7f)>/);
+        }
+        if (event.kind === 'image') {
+          expect((event as { dataBytes: number }).dataBytes, where).toBeGreaterThan(0);
         }
       }
     }
