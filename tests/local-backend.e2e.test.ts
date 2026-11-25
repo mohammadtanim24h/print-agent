@@ -45,7 +45,6 @@ function passthroughSafeStorage(): SafeStorageLike {
 }
 
 function log(message: string): void {
-  // eslint-disable-next-line no-console -- this file exists to produce evidence
   console.log(`[e2e] ${message}`);
 }
 
@@ -93,7 +92,7 @@ d('live backend E2E', () => {
     dir = await mkdtemp(join(tmpdir(), 'print-agent-e2e-'));
     const host = lanIpv4();
     printer = await startVirtualPrinter(host);
-    log(`capture printer on ${host}:${printer.port}`);
+    log(`capture printer on ${host}:${String(printer.port)}`);
 
     db = openDatabase({ file: join(dir, 'agent.db') });
     migrate(db);
@@ -158,10 +157,10 @@ d('live backend E2E', () => {
       // HTML body = the pair rate limiter's 429 page (backend finding: not the
       // contract's JSON envelope). Single-use was already proven on a run that
       // stayed under the limiter — tolerate this on rapid reruns.
-      log(`reused code → ${res.status} non-JSON body (rate limiter page)`);
+      log(`reused code → ${String(res.status)} non-JSON body (rate limiter page)`);
       return;
     }
-    log(`reused code → ${res.status} ${JSON.stringify(code)}`);
+    log(`reused code → ${String(res.status)} ${JSON.stringify(code)}`);
     expect(code).toBeDefined();
   }, 30_000);
 
@@ -181,7 +180,7 @@ d('live backend E2E', () => {
     const res = await fetch(`${AGENT_API}/config`, {
       headers: agentHeaders(identity.deviceToken, identity.deviceId),
     });
-    log(`GET /config → ${res.status}`);
+    log(`GET /config → ${String(res.status)}`);
     expect(res.status).toBe(200);
     const parsed = ConfigUpdateSchema.safeParse(await res.json());
     if (!parsed.success) {
@@ -207,12 +206,14 @@ d('live backend E2E', () => {
     expect(result.ok).toBe(true);
     const bytes = await Promise.race([
       printer.received,
-      new Promise<Uint8Array>((resolve) => setTimeout(() => resolve(new Uint8Array(0)), 5_000)),
+      new Promise<Uint8Array>((resolve) => setTimeout(() => {
+          resolve(new Uint8Array(0));
+        }, 5_000)),
     ]);
     expect(bytes.length).toBeGreaterThan(0);
     expect(bytes[0]).toBe(0x1b);
     expect(bytes[1]).toBe(0x40); // ESC @ — ESC/POS init
-    log(`captured ${bytes.length} bytes of ESC/POS`);
+    log(`captured ${String(bytes.length)} bytes of ESC/POS`);
   }, 30_000);
 
   // ---- job delivery (needs dashboard credentials) --------------------------
@@ -293,7 +294,7 @@ d('live backend E2E', () => {
         }),
       });
       const body = (await res.json()) as { data?: { id?: string } };
-      log(`printer create → ${res.status} ${JSON.stringify(body)}`);
+      log(`printer create → ${String(res.status)} ${JSON.stringify(body)}`);
       expect(res.status).toBe(201);
       cloudPrinterId = body.data?.id;
       expect(cloudPrinterId).toBeDefined();
@@ -326,7 +327,7 @@ d('live backend E2E', () => {
 
       // Config stream: the agent's 60 s periodic refresh must pick up the new
       // printer (config_version bump); allow two refresh intervals + margin.
-      await until('cloud printer in agent printer store', 150_000, async () => {
+      await until('cloud printer in agent printer store', 150_000, () => {
         const list = runtime.printers.list();
         const found = list.find((p) => p.config.printerId === cloudPrinterId);
         if (found === undefined) {
@@ -348,7 +349,7 @@ d('live backend E2E', () => {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (ordersRes.status !== 200) {
-        log(`orders list → ${ordersRes.status}: ${await ordersRes.text()}`);
+        log(`orders list → ${String(ordersRes.status)}: ${await ordersRes.text()}`);
       }
       expect(ordersRes.status).toBe(200);
       const ordersBody = (await ordersRes.json()) as { data: unknown };
@@ -368,11 +369,11 @@ d('live backend E2E', () => {
           order_id: orderId,
           printer_id: cloudPrinterId,
           doc_type: 'customer_receipt',
-          idempotency_key: `e2e-${Date.now()}`,
+          idempotency_key: `e2e-${String(Date.now())}`,
         }),
       });
       const jobBody = (await jobRes.json()) as { data?: { id?: string; status?: string } };
-      log(`job create → ${jobRes.status} ${JSON.stringify(jobBody)}`);
+      log(`job create → ${String(jobRes.status)} ${JSON.stringify(jobBody)}`);
       expect(jobRes.status).toBe(201);
       const jobId = jobBody.data?.id;
       expect(jobId).toBeDefined();
@@ -390,7 +391,7 @@ d('live backend E2E', () => {
         }
         return undefined;
       });
-      log(`backend job status: ${String(finalStatus)}`);
+      log(`backend job status: ${finalStatus}`);
       expect(finalStatus).toBe('completed');
 
       const local = runtime.jobs.list().find((j) => j.jobId === jobId);
@@ -399,10 +400,12 @@ d('live backend E2E', () => {
 
       const bytes = await Promise.race([
         (cloudCapture as VirtualPrinter).received,
-        new Promise<Uint8Array>((resolve) => setTimeout(() => resolve(new Uint8Array(0)), 5_000)),
+        new Promise<Uint8Array>((resolve) => setTimeout(() => {
+          resolve(new Uint8Array(0));
+        }, 5_000)),
       ]);
       expect(bytes.length).toBeGreaterThan(0);
-      log(`captured ${bytes.length} bytes for job ${String(jobId)}`);
+      log(`captured ${String(bytes.length)} bytes for job ${String(jobId)}`);
     },
     90_000,
   );

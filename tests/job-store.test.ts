@@ -196,8 +196,12 @@ describe('sqlite JobStore', () => {
       expect(row?.attempts).toBe(0);
       expect(row?.status).toBe('accepted');
 
-      expect(() => timed.persistRedelivery('ghost', 2, null)).toThrow(/no such job/);
-      expect(() => timed.persistRedelivery('ghost', 2, null)).toThrow(StoreError);
+      expect(() => {
+        timed.persistRedelivery('ghost', 2, null);
+      }).toThrow(/no such job/);
+      expect(() => {
+        timed.persistRedelivery('ghost', 2, null);
+      }).toThrow(StoreError);
     } finally {
       closeDatabase(db);
     }
