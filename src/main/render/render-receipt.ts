@@ -75,10 +75,20 @@ export function renderReceipt(doc: DocV1, ctx: RenderContext): void {
   if (doc.totals.length > 0) {
     separator(ctx);
     for (const total of doc.totals) {
+      // Currency (ISO 4217 ASCII, ≤ 8 bytes) renders as a suffix on the right
+      // column: "1,250.00 BDT". Width math: the suffix counts fully against
+      // the 48-char line — splitTwoColumns shrinks the left column by
+      // right.length + gap, so a 12-char right side leaves ~34 chars for the
+      // label and wraps longer labels onto continuation lines. Absent key
+      // renders exactly as before.
+      const amount =
+        total.currency !== undefined
+          ? `${formatMinorUnits(total.amount_minor)} ${sanitizeText(total.currency).text}`
+          : formatMinorUnits(total.amount_minor);
       writeTwoColumns(
         ctx,
         sanitizeText(total.label).text,
-        formatMinorUnits(total.amount_minor),
+        amount,
         total.emphasis === 'bold' ? 'bold' : 'none',
       );
     }

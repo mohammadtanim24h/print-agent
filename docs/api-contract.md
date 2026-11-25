@@ -133,15 +133,17 @@ rejected, not ignored, within `data` payloads (envelope may gain additive fields
               "phone": "string<=24?", "tax_id": "string<=32?", "logo_asset_id": "uuid?" },
   "meta":   { "title": "KITCHEN" | "RECEIPT" | "string<=24",
               "order_ref": "string<=24", "created_at": "rfc3339",
+              "order_time": "string<=64 (server-formatted, REQUIRED)",
               "server_name": "string<=32?", "table": "string<=16?" },
   "lines": [ { "text": "string<=96", "qty": "number?", "unit_price": "integer-minor-units?",
                "note": "string<=64?", "emphasis": "none|bold|double_height|double|reverse",
                "align": "left|center|right" } ],
-  "totals": [ { "label": "string<=24", "amount_minor": "integer",
+  "totals": [ { "label": "string<=64", "amount_minor": "integer",
+                "currency": "string<=8? (ISO 4217 code, e.g. \"BDT\")",
                 "emphasis": "none|bold" } ],
   "payments": [ { "method": "string<=16", "amount_minor": "integer",
                   "change_minor": "integer?" } ],
-  "footer": { "text_lines": ["string<=48"], "qr_data": "string<=512?",
+  "footer": { "text_lines": ["string<=96"], "qr_data": "string<=512?",
               "barcode_data": "string<=48?" },
   "station_hints": { "copies": "1..4", "cut": "full|partial|none" }
 }
@@ -173,10 +175,36 @@ lines and the tax id; other stations accept and ignore it. Receipt `totals`
 labels are free strings — the server encodes the deployment's tax mode as
 label text: `Subtotal` / `VAT x%` / `Total` when VAT-exclusive,
 `Total` / `"VAT x% included"` when VAT-inclusive. The renderer iterates the
-labels verbatim (≤ 24 bytes, emphasis `none|bold`) with no label allowlist.
+labels verbatim (≤ 64 bytes, emphasis `none|bold`) with no label allowlist.
 Older agents reject `phone` payloads with `rejected{code:"invalid_doc"}`
 (strict schema) — deploy updated agents to every paired device BEFORE
 restaurants enable phone in their ServePro settings.
+
+Totals `currency` + localized-string caps (additive 2026-11-25, **DEPLOY-ORDER**):
+every totals entry may carry optional `currency` (≤ 8 UTF-8 bytes, ISO 4217 code
+like `"BDT"`, key omitted when the deployment has no currency code). The agent
+renders it as a suffix next to the amount — `1,250.00 BDT` — shrinking the left
+column accordingly; an absent key renders exactly as before. Three byte caps
+were RAISED to fit localized (RECEIPT_LOCALE en/bn/ja/ar-SA) server strings:
+`meta.order_time` 32 → **64** bytes, totals `label` 24 → **64** bytes, and
+`footer.text_lines` entries 48 → **96** bytes. All other caps are unchanged.
+
+> **DEPLOY-ORDER (gate):** no servepro-api build that emits `currency`,
+> localized labels/times/footers, or any over-the-old-cap string may deploy to
+> a restaurant with paired devices until an agent release containing this
+> section (agent ≥ 0.1.3) is installed on EVERY paired device at that
+> restaurant. The strict agent schema rejects unknown keys and over-cap
+> strings with `rejected{code:"invalid_doc"}` — a newer server against older
+> agents rejects ALL prints at that deployment.
+
+Unicode raster fallback (agent printer capability `unicodeRaster`, default
+OFF): agents ≥ 0.1.3 can render non-ASCII text (bn/ja/ar-SA) by rasterizing
+affected lines with bundled OFL fonts into GS v 0 bit images; ASCII lines stay
+ESC/POS text (hybrid, per-line raster). The capability is per-printer, off by
+default, and stays off until hardware validation closes R-VAL-1 (shaping
+fidelity). With the capability off, non-ASCII text still fails with
+`text_not_encodable` as before. This is an agent-local rendering detail — the
+§2 payload contract is unchanged by it.
 
 ## 3. Agent → server messages
 
@@ -377,6 +405,14 @@ cp437/cp850 (R-VAL-1).
 - Ack: all statuses / batch idempotency (same ack twice = same result server-side).
 - Pairing: expired code / reused code / rate limit.
 - Config: version regression ignored / invalid transport address rejected.
+- Doc schema (2026-11-25 additions): totals `currency` accepted ≤ 8 bytes /
+  rejected > 8 bytes or unknown keys; raised caps (`order_time` 64, totals
+  `label` 64, footer lines 96) accepted at-cap / rejected over-cap; renderer
+  emits the `1,250.00 BDT`-style suffix when `currency` is present and is
+  byte-identical to the legacy layout when absent; Unicode raster: non-ASCII
+  lines → GS v 0 images and ASCII lines → text when the `unicodeRaster`
+  capability is on, `text_not_encodable` when off; zero-panic fuzz corpus
+  including bn/ar/ja strings (raster on and off).
 - WSS: upgrade with a valid token / with a bad token (4401 or 401 upgrade rejection) /
   job delivered over WSS == job delivered over the poll batch (idempotent by
   `job_id`+`attempt`, where `attempt` is the §2 envelope's delivery-attempt

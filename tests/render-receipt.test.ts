@@ -166,6 +166,47 @@ describe('customer receipt template', () => {
     expect(t).toContain('19.00');
   });
 
+  it('suffixes the totals currency next to the amount, absent key unchanged', () => {
+    const withCurrency = makeDoc({
+      totals: [{ label: 'TOTAL', amount_minor: 125000, currency: 'BDT', emphasis: 'bold' }],
+    });
+    const r = renderDoc('customer_receipt', withCurrency, makeRenderProfile());
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    // ISO-code suffix on the same physical line as the amount.
+    const line = texts(r.bytes).find((t) => t.includes('1,250.00'));
+    if (line === undefined) throw new Error('expected a totals line');
+    expect(line.endsWith('1,250.00 BDT')).toBe(true);
+
+    // No currency key → byte-identical rendering to the pre-currency layout.
+    const without = makeDoc({
+      totals: [{ label: 'TOTAL', amount_minor: 125000, emphasis: 'bold' }],
+    });
+    const r2 = renderDoc('customer_receipt', without, makeRenderProfile());
+    expect(r2.ok).toBe(true);
+    if (r2.ok) {
+      const line2 = texts(r2.bytes).find((t) => t.includes('1,250.00'));
+      if (line2 === undefined) throw new Error('expected a totals line');
+      expect(line2.endsWith('1,250.00')).toBe(true);
+    }
+  });
+
+  it('wraps a long label under a currency suffix onto continuation lines', () => {
+    // 50-char ASCII label + 12-char right column: the left column wraps
+    // within its shrunk budget (splitTwoColumns) instead of overflowing 48.
+    const label = 'TOTAL INCL. VAT AND SERVICE CHARGE (VAT-INCLUSIVE)'.slice(0, 50);
+    const doc = makeDoc({
+      totals: [{ label, amount_minor: 125000, currency: 'BDT', emphasis: 'bold' }],
+    });
+    const r = renderDoc('customer_receipt', doc, makeRenderProfile());
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(texts(r.bytes).some((t) => t.endsWith('1,250.00 BDT'))).toBe(true);
+    expect(
+      texts(r.bytes).every((t) => t.length <= makeRenderProfile().charsPerLine),
+    ).toBe(true);
+  });
+
   it('bolds totals marked bold (ESC E 1 precedes the total text)', () => {
     const r = renderDoc('customer_receipt', makeDoc(), makeRenderProfile());
     expect(r.ok).toBe(true);

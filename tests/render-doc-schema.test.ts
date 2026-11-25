@@ -93,6 +93,62 @@ describe('doc model v1 schema', () => {
     expect(DocV1Schema.safeParse(bad).success).toBe(false);
   });
 
+  it('accepts totals currency up to 8 UTF-8 bytes and rejects over-cap/unknown keys', () => {
+    // Omitted (server strips nulls — never an explicit null on the wire).
+    expect(DocV1Schema.safeParse(makeDoc()).success).toBe(true);
+    // At the cap: 8 ASCII bytes.
+    const atCap = makeDoc({
+      totals: [{ label: 'TOTAL', amount_minor: 1, currency: 'ABCDEFGH', emphasis: 'bold' }],
+    });
+    expect(DocV1Schema.safeParse(atCap).success).toBe(true);
+    // 9 bytes is over the cap.
+    const overCap = makeDoc({
+      totals: [{ label: 'TOTAL', amount_minor: 1, currency: 'ABCDEFGHI', emphasis: 'bold' }],
+    });
+    expect(DocV1Schema.safeParse(overCap).success).toBe(false);
+    // Byte cap, not char cap: 3 Bengali chars = 9 UTF-8 bytes.
+    const bangla = makeDoc({
+      totals: [{ label: 'TOTAL', amount_minor: 1, currency: 'টাকা', emphasis: 'bold' }],
+    });
+    expect(DocV1Schema.safeParse(bangla).success).toBe(false);
+    // Unknown sibling key still rejected (strict).
+    const unknown = makeDoc({
+      totals: [{ label: 'TOTAL', amount_minor: 1, emphasis: 'bold', symbol: '$' } as never],
+    });
+    expect(DocV1Schema.safeParse(unknown).success).toBe(false);
+  });
+
+  it('enforces the 2026-11-25 cap raises: order_time 64, totals label 64, footer 96 bytes', () => {
+    // order_time: 45-byte Bangla server format is accepted; 65 bytes rejected.
+    const bnTime = '07 মার্চ 2026, 3:45 দুপুর';
+    expect(Buffer.byteLength(bnTime, 'utf8')).toBe(45);
+    expect(
+      DocV1Schema.safeParse(makeDoc({ meta: { ...makeDoc().meta, order_time: bnTime } })).success,
+    ).toBe(true);
+    expect(
+      DocV1Schema.safeParse(
+        makeDoc({ meta: { ...makeDoc().meta, order_time: 'x'.repeat(65) } }),
+      ).success,
+    ).toBe(false);
+    // totals label: ~50-byte Bangla VAT-included label accepted; 65 rejected.
+    const bnLabel = 'ভ্যাট সহ সর্বমোট';
+    expect(Buffer.byteLength(bnLabel, 'utf8')).toBeLessThanOrEqual(64);
+    expect(
+      DocV1Schema.safeParse(makeDoc({ totals: [{ label: bnLabel, amount_minor: 1 }] })).success,
+    ).toBe(true);
+    expect(
+      DocV1Schema.safeParse(makeDoc({ totals: [{ label: 'x'.repeat(65), amount_minor: 1 }] }))
+        .success,
+    ).toBe(false);
+    // footer.text_lines: 96 bytes accepted, 97 rejected.
+    expect(
+      DocV1Schema.safeParse(makeDoc({ footer: { text_lines: ['x'.repeat(96)] } })).success,
+    ).toBe(true);
+    expect(
+      DocV1Schema.safeParse(makeDoc({ footer: { text_lines: ['x'.repeat(97)] } })).success,
+    ).toBe(false);
+  });
+
   it('exposes the normative constants', () => {
     expect(DOC_TYPES).toEqual([
       'customer_receipt',

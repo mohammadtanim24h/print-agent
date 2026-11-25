@@ -54,7 +54,9 @@ export const DocV1Schema = z.strictObject({
     // so there is deliberately NO fallback — a payload without it is a
     // contract violation and must reject (invalid_doc), never silently
     // re-convert created_at on the device clock.
-    order_time: bytes(32),
+    // 64 B: localized formats exceed 32 (e.g. bn "07 মার্চ 2026, 3:45 দুপুর"
+    // = 45 bytes; api-contract §2 cap raise 2026-11-25).
+    order_time: bytes(64),
     server_name: bytes(32).optional(),
     table: bytes(16).optional(),
   }),
@@ -62,8 +64,13 @@ export const DocV1Schema = z.strictObject({
   totals: z
     .array(
       z.strictObject({
-        label: bytes(24),
+        // 64 B: localized labels (ar-SA "المجموع الكلي" etc., api-contract §2
+        // cap raise 2026-11-25) overflowed the old 24-byte cap.
+        label: bytes(64),
         amount_minor: z.number().int().max(Number.MAX_SAFE_INTEGER),
+        // ISO 4217 code rendered as a suffix next to the amount
+        // ("1,250.00 BDT"); omitted when the server has no currency code.
+        currency: bytes(8).optional(),
         emphasis: z.enum(['none', 'bold']).default('none'),
       }),
     )
@@ -79,7 +86,9 @@ export const DocV1Schema = z.strictObject({
     .default([]),
   footer: z
     .strictObject({
-      text_lines: z.array(bytes(48)).max(8),
+      // 96 B per entry: customer footer defaults + delta chrome are
+      // localized (api-contract §2 cap raise 2026-11-25).
+      text_lines: z.array(bytes(96)).max(8),
       qr_data: bytes(512).optional(),
       barcode_data: bytes(48).optional(),
     })
