@@ -30,6 +30,49 @@ describe('customer receipt template', () => {
     expect(texts(r.bytes)).toContain('Tax ID: TIN-9');
   });
 
+  it('renders Tel: centered between the address and tax id lines', () => {
+    const doc = makeDoc({
+      header: {
+        restaurant_name: 'Test Cafe',
+        address_lines: ['12 Main St'],
+        phone: '+880 1712-345678',
+        tax_id: 'TIN-9',
+      },
+    });
+    const r = renderDoc('customer_receipt', doc, makeRenderProfile());
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    const events = decodeEscpos(r.bytes);
+    const t = texts(r.bytes);
+    expect(t).toContain('Tel: +880 1712-345678');
+    // Tel line sits after the address and before the tax id.
+    const addrIdx = t.findIndex((x) => x === '12 Main St');
+    const telIdx = t.findIndex((x) => x.startsWith('Tel:'));
+    const taxIdx = t.findIndex((x) => x.startsWith('Tax ID:'));
+    expect(telIdx).toBeGreaterThan(addrIdx);
+    expect(taxIdx).toBeGreaterThan(telIdx);
+    // Centered (ESC a 1), no emphasis.
+    const telEvIdx = events.findIndex(
+      (e) => e.kind === 'text' && (e as { text: string }).text.startsWith('Tel:'),
+    );
+    const alignBefore = events
+      .slice(0, telEvIdx)
+      .filter((e) => e.kind === 'align')
+      .at(-1);
+    expect(alignBefore).toEqual({ kind: 'align', value: 1 });
+    const boldBefore = events
+      .slice(0, telEvIdx)
+      .filter((e) => e.kind === 'bold')
+      .at(-1);
+    expect(boldBefore).toEqual({ kind: 'bold', on: false });
+  });
+
+  it('omits the Tel: line when header.phone is absent', () => {
+    const r = renderDoc('customer_receipt', makeDoc(), makeRenderProfile());
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(texts(r.bytes).some((x) => x.startsWith('Tel:'))).toBe(false);
+  });
+
   it('warns when a logo is requested but no asset store exists', () => {
     const doc = makeDoc({
       header: {

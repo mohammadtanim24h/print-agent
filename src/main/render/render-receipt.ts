@@ -32,6 +32,9 @@ export function renderReceipt(doc: DocV1, ctx: RenderContext): void {
   for (const address of doc.header.address_lines) {
     writeText(ctx, sanitizeText(address).text, 'center', 'none');
   }
+  if (doc.header.phone !== undefined) {
+    writeText(ctx, `Tel: ${sanitizeText(doc.header.phone).text}`, 'center', 'none');
+  }
   if (doc.header.tax_id !== undefined) {
     writeText(ctx, `Tax ID: ${sanitizeText(doc.header.tax_id).text}`, 'center', 'none');
   }

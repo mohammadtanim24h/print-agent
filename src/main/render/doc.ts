@@ -37,6 +37,7 @@ export const DocV1Schema = z.strictObject({
   header: z.strictObject({
     restaurant_name: bytes(64),
     address_lines: z.array(bytes(48)).max(6),
+    phone: bytes(24).optional(),
     tax_id: bytes(32).optional(),
     logo_asset_id: z.uuid().optional(),
   }),

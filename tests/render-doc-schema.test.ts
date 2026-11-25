@@ -17,6 +17,36 @@ describe('doc model v1 schema', () => {
     expect(DocV1Schema.safeParse(doc).success).toBe(false);
   });
 
+  it('accepts header.phone present or absent, capping at 24 UTF-8 bytes', () => {
+    // Absent (server strips nulls — never an explicit null on the wire).
+    expect(DocV1Schema.safeParse(makeDoc()).success).toBe(true);
+    // Present.
+    const withPhone = makeDoc({
+      header: { restaurant_name: 'Test Cafe', address_lines: [], phone: '+8801712345678' },
+    });
+    expect(DocV1Schema.safeParse(withPhone).success).toBe(true);
+    // 24 ASCII bytes is the cap.
+    const atCap = makeDoc({
+      header: { restaurant_name: 'T', address_lines: [], phone: 'a'.repeat(24) },
+    });
+    expect(DocV1Schema.safeParse(atCap).success).toBe(true);
+    // 25 bytes is over the cap.
+    const overCap = makeDoc({
+      header: { restaurant_name: 'T', address_lines: [], phone: 'a'.repeat(25) },
+    });
+    expect(DocV1Schema.safeParse(overCap).success).toBe(false);
+    // Byte cap, not char cap: 12 Bengali chars = 36 UTF-8 bytes.
+    const bangla = makeDoc({
+      header: { restaurant_name: 'T', address_lines: [], phone: 'ফোন'.repeat(12) },
+    });
+    expect(DocV1Schema.safeParse(bangla).success).toBe(false);
+    // Non-string phone.
+    const nonString = makeDoc({
+      header: { restaurant_name: 'T', address_lines: [], phone: 123 } as never,
+    });
+    expect(DocV1Schema.safeParse(nonString).success).toBe(false);
+  });
+
   it('rejects more than 200 lines', () => {
     const doc = makeDoc({
       lines: Array.from({ length: 201 }, () => ({ text: 'x' })),

@@ -130,7 +130,7 @@ rejected, not ignored, within `data` payloads (envelope may gain additive fields
 ```jsonc
 {
   "header": { "restaurant_name": "string<=64", "address_lines": ["string<=48"],
-              "tax_id": "string<=32?", "logo_asset_id": "uuid?" },
+              "phone": "string<=24?", "tax_id": "string<=32?", "logo_asset_id": "uuid?" },
   "meta":   { "title": "KITCHEN" | "RECEIPT" | "string<=24",
               "order_ref": "string<=24", "created_at": "rfc3339",
               "server_name": "string<=32?", "table": "string<=16?" },
@@ -165,6 +165,18 @@ the kitchen-delta void treatment: servers MUST put the verb in the line text
 clears reverse (GS B 0); styles never leak across lines. Older agents reject
 `reverse` payloads with `rejected{code:"invalid_doc"}` (strict schema) —
 deploy updated agents before the server emits it.
+
+Header `phone` and totals layouts (additive 2026-11-25, DEPLOY-ORDER): the
+header gained optional `phone` (≤ 24 UTF-8 bytes, key omitted when absent).
+Customer receipts render it centered as `Tel: <phone>` between the address
+lines and the tax id; other stations accept and ignore it. Receipt `totals`
+labels are free strings — the server encodes the deployment's tax mode as
+label text: `Subtotal` / `VAT x%` / `Total` when VAT-exclusive,
+`Total` / `"VAT x% included"` when VAT-inclusive. The renderer iterates the
+labels verbatim (≤ 24 bytes, emphasis `none|bold`) with no label allowlist.
+Older agents reject `phone` payloads with `rejected{code:"invalid_doc"}`
+(strict schema) — deploy updated agents to every paired device BEFORE
+restaurants enable phone in their ServePro settings.
 
 ## 3. Agent → server messages
 
