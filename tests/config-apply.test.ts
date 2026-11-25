@@ -21,6 +21,9 @@ describe('mapCloudPrinters', () => {
     expect(p.charsPerLine).toBe(48);
     expect(p.capabilities).toEqual({
       cut: true, qrCode: true, barcode128: true, statusPolling: true,
+      // Cloud config cannot enable the Unicode raster fallback (R-VAL-1
+      // unvalidated; local config only — config-apply.ts).
+      unicodeRaster: false,
     });
     expect(p.transport).toEqual({ kind: 'tcp_raw', host: '192.168.1.87', port: 9100 });
     // Cloud-only fields preserved for FR-14 / C1.

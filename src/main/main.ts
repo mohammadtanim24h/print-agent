@@ -12,6 +12,7 @@ import {
   type SettingsUpdatePayload,
 } from '../shared/ipc-contract';
 import { createAgentRuntime } from './agent-runtime';
+import { resolveBundledFontPaths } from './render/font-bundle';
 import { closeDatabase, openDatabase } from './local-store/db';
 import { migrate } from './local-store/migrations';
 import { createSenderGuard } from './security/sender-guard';
@@ -127,6 +128,11 @@ async function start(): Promise<void> {
     },
     log,
     agentVersion: app.getVersion(),
+    fontPaths: resolveBundledFontPaths({
+      isPackaged: app.isPackaged,
+      resourcesPath: process.resourcesPath,
+      appPath: app.getAppPath(),
+    }),
     deviceName: hostname(),
     safeStorage,
     cloud: {

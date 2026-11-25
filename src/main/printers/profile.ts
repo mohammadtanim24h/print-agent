@@ -111,6 +111,11 @@ export const PrinterCapabilitiesSchema = z.strictObject({
   qrCode: z.boolean(),
   barcode128: z.boolean(),
   statusPolling: z.boolean(),
+  /** Unicode raster fallback (bn/ja/ar-SA receipts): non-ASCII lines render
+   *  as GS v 0 bit images from bundled OFL fonts. HARDWARE-DEPENDENT
+   *  (printer-compatibility.md §6 R-VAL-1 — shaping fidelity unvalidated):
+   *  default false, and cloud config cannot enable it in v1 (config-apply). */
+  unicodeRaster: z.boolean().default(false),
 });
 export type PrinterCapabilities = z.output<typeof PrinterCapabilitiesSchema>;
 

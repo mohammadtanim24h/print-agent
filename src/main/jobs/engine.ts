@@ -45,6 +45,9 @@ export interface JobEngineDeps {
   readonly limits?: Partial<EngineLimits>;
   /** C1: best-effort cached printer status for acks; omitted → always 'unknown'. */
   readonly printerStatus?: (printerId: string) => PrinterStatus;
+  /** Absolute paths of the bundled Unicode raster fonts (font-bundle.ts).
+   *  Only consulted for printers with the `unicodeRaster` capability on. */
+  readonly fontPaths?: readonly string[];
 }
 
 export interface JobEngine {
@@ -486,7 +489,11 @@ export function createJobEngine(deps: JobEngineDeps): JobEngine {
       failJob(jobId, 'invalid_doc', 'stored payload failed re-validation', row.attempts + 1);
       return;
     }
-    const result = renderDoc(row.docType, parsed.data, renderProfileFromPrinterConfig(profile));
+    const result = renderDoc(
+      row.docType,
+      parsed.data,
+      renderProfileFromPrinterConfig(profile, deps.fontPaths ?? []),
+    );
     if (!result.ok) {
       failJob(jobId, result.error.code, result.error.message, row.attempts + 1);
       return;

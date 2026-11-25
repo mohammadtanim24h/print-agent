@@ -157,6 +157,18 @@ describe('profile schema: source tag + cloud-sourced fields', () => {
     expect(parsed.duplicatePolicy).toBeUndefined();
   });
 
+  it('defaults a missing capabilities.unicodeRaster to false (legacy file upgrade path)', () => {
+    const legacy = PrinterProfileSchema.parse({
+      ...makeProfile(),
+      capabilities: { cut: true, qrCode: false, barcode128: false, statusPolling: false },
+    });
+    expect(legacy.capabilities.unicodeRaster).toBe(false);
+    // Explicit enablement parses (local UI/config only — cloud never sends it).
+    expect(PrinterProfileSchema.safeParse(makeProfile({ capabilities: {
+      cut: true, qrCode: false, barcode128: false, statusPolling: false, unicodeRaster: true,
+    } })).success).toBe(true);
+  });
+
   it('accepts a cloud-sourced profile with the cloud-only fields', () => {
     const parsed = PrinterProfileSchema.parse({
       ...makeProfile({ source: 'cloud' }),

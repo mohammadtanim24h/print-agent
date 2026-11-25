@@ -25,7 +25,20 @@ export const DEFAULT_80MM_PROFILE: RenderProfile = {
   rasterFallback: { enabled: false, fontPaths: [] },
 };
 
-export function renderProfileFromPrinterConfig(p: PrinterProfile): RenderProfile {
+/**
+ * Maps the stored printer profile to the renderer view. `fontPaths` carries
+ * the absolute bundled-font locations resolved by the caller (font-bundle.ts
+ * — app paths live at the composition root, not here). Enabling the Unicode
+ * raster fallback requires the printer's `unicodeRaster` capability
+ * (HARDWARE-DEPENDENT: printer-compatibility.md §6 R-VAL-1 — shaping
+ * fidelity unvalidated on real heads); when enabled but the fonts cannot
+ * load, rendering fails with `text_not_encodable` rather than printing
+ * mojibake (raster.ts).
+ */
+export function renderProfileFromPrinterConfig(
+  p: PrinterProfile,
+  fontPaths: readonly string[] = [],
+): RenderProfile {
   return {
     paperWidthMm: p.paperWidthMm,
     printableDots: p.printableDots,
@@ -36,6 +49,8 @@ export function renderProfileFromPrinterConfig(p: PrinterProfile): RenderProfile
       qrCode: p.capabilities.qrCode,
       barcode128: p.capabilities.barcode128,
     },
-    rasterFallback: { enabled: false, fontPaths: [] },
+    rasterFallback: p.capabilities.unicodeRaster
+      ? { enabled: true, fontPaths: [...fontPaths] }
+      : { enabled: false, fontPaths: [] },
   };
 }

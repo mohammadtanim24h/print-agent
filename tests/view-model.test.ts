@@ -34,7 +34,13 @@ const profile: PrinterProfile = {
   paperWidthMm: 80,
   printableDots: 576,
   charsPerLine: 48,
-  capabilities: { cut: true, qrCode: true, barcode128: false, statusPolling: false },
+  capabilities: {
+    cut: true,
+    qrCode: true,
+    barcode128: false,
+    statusPolling: false,
+    unicodeRaster: false,
+  },
   transport: { kind: 'tcp_raw', host: '192.168.1.87', port: 9100 },
   source: 'local',
 };

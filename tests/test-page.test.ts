@@ -36,6 +36,7 @@ describe('test page', () => {
       qrCode: false,
       barcode128: false,
       statusPolling: false,
+      unicodeRaster: false,
     };
     const withoutCut = [...buildTestPage(makeProfile({ capabilities: capabilitiesOff }), NOW)];
     expect(withCut.slice(-3)).toEqual([0x1d, 0x56, 0x01]);

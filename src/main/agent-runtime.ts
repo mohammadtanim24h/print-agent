@@ -69,6 +69,9 @@ export interface RuntimeDeps {
   };
   readonly log: Logger;
   readonly agentVersion: string;
+  /** Bundled Unicode raster font paths (font-bundle.ts); forwarded to the
+   *  job engine for printers with the `unicodeRaster` capability on. */
+  readonly fontPaths?: readonly string[];
   /** Defaults to os.hostname(). */
   readonly deviceName?: string;
   readonly safeStorage: SafeStorageLike;
@@ -242,6 +245,7 @@ export async function createAgentRuntime(deps: RuntimeDeps): Promise<AgentRuntim
     transports: registry,
     acks: ackSink,
     printerStatus: (printerId) => statusPoller.get(printerId),
+    ...(deps.fontPaths !== undefined ? { fontPaths: deps.fontPaths } : {}),
     now,
     // Pass-through: the channel's cancellation (cancelDial/heartbeat/keepalive)
     // depends on the cancel fn this seam returns — dropping it (as a previous

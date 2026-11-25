@@ -32,6 +32,7 @@ const emptyDraft: PrinterDraft = {
     qrCode: true,
     barcode128: false,
     statusPolling: false,
+    unicodeRaster: false,
   },
   transport: { kind: 'tcp_raw', host: '', port: 9100 },
 };
@@ -48,11 +49,18 @@ const PAPER_DEFAULTS: Readonly<
   58: { printableDots: 384, charsPerLine: 32 },
 };
 
-const CAPABILITIES: ReadonlyArray<{ readonly key: keyof Capabilities; readonly label: string }> = [
+const CAPABILITIES: ReadonlyArray<{
+  readonly key: keyof Capabilities;
+  readonly label: string;
+  readonly hint?: string;
+}> = [
   { key: 'cut', label: 'Auto cut' },
   { key: 'qrCode', label: 'QR code' },
   { key: 'barcode128', label: 'Code128' },
   { key: 'statusPolling', label: 'Status polling' },
+  // R-VAL-1 (printer-compatibility.md §6): shaping fidelity on real hardware
+  // unvalidated — surface the experiment status to the operator.
+  { key: 'unicodeRaster', label: 'Unicode raster (beta)', hint: 'For Bangla/Arabic/Japanese text' },
 ];
 
 /** Keeps the previous value when a number input is momentarily empty/invalid.
@@ -447,7 +455,7 @@ function PrinterFormDialog(props: {
             <span className="field-label">Capabilities</span>
             <div className="check-row">
               {CAPABILITIES.map((cap) => (
-                <label key={cap.key} className="check-item">
+                <label key={cap.key} className="check-item" title={cap.hint}>
                   <input
                     type="checkbox"
                     checked={capabilities[cap.key]}

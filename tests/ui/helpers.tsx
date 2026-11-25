@@ -46,6 +46,7 @@ function profile(input: {
         qrCode: true,
         barcode128: false,
         statusPolling: false,
+        unicodeRaster: false,
       },
       transport: { kind: 'tcp_raw', host: input.host, port: input.port },
       source: 'local',

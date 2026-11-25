@@ -12,6 +12,7 @@ export function makeDraft(overrides: Partial<PrinterDraft> = {}): PrinterDraft {
       qrCode: false,
       barcode128: false,
       statusPolling: false,
+      unicodeRaster: false,
     },
     transport: { kind: 'tcp_raw', host: '192.168.1.50', port: 9100 },
     ...overrides,

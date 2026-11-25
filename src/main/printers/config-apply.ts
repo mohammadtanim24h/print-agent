@@ -61,6 +61,9 @@ function toProfile(pc: PrinterConfig): PrinterProfile | { readonly error: string
       qrCode: true,
       barcode128: true,
       statusPolling: pc.status_polling === 'auto',
+      // §4 PrinterConfig has no raster field — cloud never enables the
+      // Unicode fallback (R-VAL-1 unvalidated; local config only).
+      unicodeRaster: false,
     },
     transport,
     station: pc.station,

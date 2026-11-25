@@ -45,6 +45,8 @@ export interface HarnessOptions {
   readonly wrapStore?: (base: JobStore) => JobStore;
   /** C1 seam: cached printer status source for acks (default: always 'unknown'). */
   readonly printerStatus?: (printerId: string) => PrinterStatus;
+  /** Bundled raster font paths forwarded to the engine (font-bundle seam). */
+  readonly fontPaths?: readonly string[];
 }
 
 let printerCounter = 0;
@@ -93,6 +95,7 @@ export async function makeHarness(options: HarnessOptions = {}): Promise<Harness
     schedule,
     limits: options.limits ?? {},
     ...(options.printerStatus !== undefined ? { printerStatus: options.printerStatus } : {}),
+    ...(options.fontPaths !== undefined ? { fontPaths: options.fontPaths } : {}),
   });
   return {
     engine,

@@ -78,6 +78,11 @@ updated whenever a dependency is added or bumped.
 
 1. **R-VAL-1 Codepage round-trip:** render sample receipts with accented/non-Latin
    restaurant names per codepage config on each real model; assert correct glyphs.
+   Agent ≥ 0.1.3 ships the Unicode raster fallback for this risk — non-ASCII lines
+   rasterize to GS v 0 bit images from bundled OFL fonts (Noto Sans Bengali /
+   Arabic / JP) — but it is OFF by default behind the per-printer `unicodeRaster`
+   capability until shaped bn/ja/ar-SA output is verified on real heads (bitmaps
+   must not be scaled, cropped, or dropped by the firmware's image path).
 2. **R-VAL-2 Cut command variants:** full/partial cut behavior and noise on generic
    OEM firmware; pick per-model defaults.
 3. **R-VAL-3 DLE EOT reality check:** which fleet models actually answer status polls
