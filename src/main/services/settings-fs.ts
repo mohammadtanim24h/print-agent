@@ -1,15 +1,18 @@
 import { randomUUID } from 'node:crypto';
 import { readFile, readdir, rename, unlink, writeFile } from 'node:fs/promises';
+import type { PathLike } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import type { SettingsFileAdapter } from './settings';
 
-/** Injectable I/O; production defaults to node's fs/crypto (used by tests). */
+/** Injectable I/O; production defaults to node's fs/crypto (used by tests).
+ *  readdir is string-names only (the orphan sweep filters file names); the
+ *  full `typeof readdir` overload set makes test stubs assignability-hostile. */
 export interface SettingsFsDeps {
   readFile: typeof readFile;
   writeFile: typeof writeFile;
   rename: typeof rename;
   unlink: typeof unlink;
-  readdir: typeof readdir;
+  readdir: (path: PathLike) => Promise<string[]>;
   randomUUID: () => string;
 }
 

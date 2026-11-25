@@ -245,7 +245,7 @@ d('live backend E2E', () => {
   async function until<T>(
     what: string,
     timeoutMs: number,
-    probe: () => Promise<T | undefined>,
+    probe: () => T | undefined | Promise<T | undefined>,
   ): Promise<T> {
     const deadline = Date.now() + timeoutMs;
     for (;;) {
