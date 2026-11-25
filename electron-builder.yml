@@ -11,6 +11,14 @@ asar: true
 asarUnpack:
   - '**/node_modules/better-sqlite3/**/*.node' # native module must live on disk
   - '**/node_modules/print-agent-spooler-raw/**/*.node' # same (ADR-4 spooler shim)
+# Unicode raster-fallback fonts (OFL 1.1 — dependency rule 10) for the
+# R-VAL-1-gated non-ASCII render path (src/main/render/font-bundle.ts resolves
+# <resources>/fonts in packaged builds; assets/fonts in dev).
+extraResources:
+  - from: assets/fonts
+    to: fonts
+    filter:
+      - '**/*.ttf'
 win:
   target:
     - target: nsis
